@@ -49,3 +49,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# dev-only JWT signing keys (scripts/dev-auth.mjs)
+.dev-keys/

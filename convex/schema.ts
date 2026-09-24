@@ -1,5 +1,43 @@
-import { defineSchema } from "convex/server";
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
+import { auditChangesValidator } from "./lib/validation";
 
-// Phase 0: intentionally empty. Tables are introduced from Phase 1 (tenancy)
-// and Phase 2 (canonical domain model). See docs/adr/0001-convex-as-backend.md.
-export default defineSchema({});
+// Phase 1: tenancy tables only. Domain tables arrive in Phase 2.
+// Convention: every tenant-owned table carries `orgId` and its indexes start with it.
+export default defineSchema({
+  /** Parent applications allowed to call this service (one per trusted JWT issuer). */
+  integrationApps: defineTable({
+    issuer: v.string(),
+    slug: v.string(),
+    name: v.string(),
+    status: v.union(v.literal("active"), v.literal("disabled")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_issuer", ["issuer"])
+    .index("by_slug", ["slug"]),
+
+  /** A tenant. Identity = (issuer, externalOrgId) from the verified JWT. */
+  organizations: defineTable({
+    issuer: v.string(),
+    externalOrgId: v.string(),
+    appId: v.id("integrationApps"),
+    displayName: v.string(),
+    reportingCurrency: v.string(),
+    timezone: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_issuer_external", ["issuer", "externalOrgId"]),
+
+  /** Successful state changes, written in the same transaction as the change. */
+  auditLog: defineTable({
+    orgId: v.id("organizations"),
+    issuer: v.string(),
+    subject: v.string(),
+    action: v.string(),
+    targetType: v.optional(v.string()),
+    targetId: v.optional(v.string()),
+    changes: v.optional(auditChangesValidator),
+    at: v.number(),
+  }).index("by_org_at", ["orgId", "at"]),
+});

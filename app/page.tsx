@@ -1,4 +1,5 @@
 import { ConvexStatus } from "@/components/convex-status";
+import { OrgStatus } from "@/components/org-status";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 // Phase 0 placeholder. Dashboard routes arrive in Phase 7 under app/(dashboard)/.
@@ -14,9 +15,11 @@ export default function Home() {
             Unified ad spend, campaign, engagement and messaging analytics.
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex items-center gap-3 text-sm text-muted-foreground">
-          <span>Backend status</span>
+        <CardContent className="grid grid-cols-[auto_1fr] items-center gap-3 text-sm text-muted-foreground">
+          <span>Backend</span>
           <ConvexStatus />
+          <span>Organization</span>
+          <OrgStatus />
         </CardContent>
       </Card>
     </main>

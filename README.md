@@ -6,14 +6,16 @@ data into one model, and exposes spend, campaign, engagement and messaging analy
 - **Backend + database + API:** [Convex](https://convex.dev). Versioned public Convex functions
   (`convex/v1`) are the service API. No separate REST server.
 - **Dashboard:** Next.js (App Router), React, Tailwind CSS, shadcn/ui.
-- **Auth:** none of its own. Parent applications sign JWTs; the tenant is derived from the verified
-  token (Phase 1).
+- **Auth:** none of its own. Parent applications sign JWTs. The tenant (issuer + `org_id`) is derived
+  from the verified token. See [docs/api/auth.md](docs/api/auth.md).
 
 ## Quick start
 
 ```bash
 npm install
-npm run dev          # Next.js on :3000 + local Convex backend on :3210
+npm run dev:backend      # local Convex backend on :3210 (keep running)
+npm run dev:auth setup   # dev JWT issuer + dashboard token (second terminal)
+npm run dev:frontend     # Next.js on :3000
 ```
 
 Full setup, environment variables and scripts: [docs/setup.md](docs/setup.md).
@@ -25,7 +27,8 @@ app/                 Next.js routes (dashboard arrives in Phase 7)
 components/          React components (components/ui = shadcn/ui primitives)
 lib/                 Client-side utilities
 convex/              Convex backend
-  v1/                Public, versioned integration contract (Phase 1+)
+  v1/                Public, versioned integration contract (orgs, audit)
+  admin/             Internal operator functions (integration app registry)
   lib/               Shared backend helpers (tenancy, errors, money, dates)
   domain/            Canonical domain model (Phase 2)
   providers/         Platform adapters: mock, meta, google, instagram, metaMessaging
@@ -38,17 +41,20 @@ convex/              Convex backend
 packages/
   marketing-client/  Developer SDK (Phase 14)
 tests/               Unit setup + Playwright E2E
-docs/                Setup guide and architecture decision records
+scripts/             dev-auth.mjs (local stand-in for a parent app's JWT issuer)
+docs/                Setup, API conventions + auth contract, ADRs
 ```
 
 ## Scripts
 
-| Script              | Purpose                                          |
-| ------------------- | ------------------------------------------------ |
-| `npm run dev`       | Next.js + Convex dev backend together            |
-| `npm run typecheck` | TypeScript for app and Convex projects           |
-| `npm run lint`      | ESLint                                           |
-| `npm run format`    | Prettier write (`format:check` in CI)            |
-| `npm test`          | All Vitest projects (`test:unit`, `test:convex`) |
-| `npm run test:e2e`  | Playwright smoke tests                           |
-| `npm run check`     | typecheck + lint + format check + tests          |
+| Script              | Purpose                                        |
+| ------------------- | ---------------------------------------------- |
+| `npm run dev`       | Next.js + Convex dev backend together          |
+| `npm run typecheck` | TypeScript for app and Convex projects         |
+| `npm run lint`      | ESLint                                         |
+| `npm run format`    | Prettier write (`format:check` in CI)          |
+| `npm test`          | Vitest: unit, convex, tooling                  |
+| `npm run test:live` | Real JWT + tenancy tests against local backend |
+| `npm run dev:auth`  | Dev JWT issuer tooling (`setup`, `token`, …)   |
+| `npm run test:e2e`  | Playwright smoke tests                         |
+| `npm run check`     | typecheck + lint + format check + tests        |

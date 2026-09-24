@@ -10,7 +10,9 @@
 
 ```bash
 npm install
-npm run dev
+npm run dev:backend        # first run creates the Convex deployment (see below); leave it running
+npm run dev:auth setup     # second terminal: dev JWT issuer (see "Authentication" below)
+npm run dev:frontend       # or stop dev:backend and use `npm run dev` for both
 ```
 
 `npm run dev` starts two processes:
@@ -33,6 +35,28 @@ Either way, `convex dev` writes `CONVEX_DEPLOYMENT`, `NEXT_PUBLIC_CONVEX_URL` an
 **Windows note:** if Convex warns that the temp directory and the project are on different drives,
 set `CONVEX_TMPDIR` to a folder on the repo's drive.
 
+## Authentication (development)
+
+The service has no login. Parent applications send signed JWTs (see [api/auth.md](api/auth.md)).
+Locally, `scripts/dev-auth.mjs` stands in for the parent app:
+
+```bash
+npm run dev:auth setup                              # all of the below in one go
+npm run dev:auth keys                               # RSA key pair -> .dev-keys/ (git-ignored)
+npm run dev:auth apply                              # convex env set AUTH_ISSUERS (JWKS as data: URI)
+npm run dev:auth seed                               # register the dev issuer in integrationApps
+npm run dev:auth -- token --org acme --role viewer  # mint a token for any org/role
+```
+
+`setup` also writes a 30-day `NEXT_PUBLIC_DEV_AUTH_TOKEN` (org `dev-org`, role `admin`) to
+`.env.local`. Restart `dev:frontend` afterwards. The home page then shows the resolved organization
+and role. Production builds ignore this variable.
+
+`AUTH_ISSUERS` must be set before Convex will deploy (`[]` = trust no issuer). A brand-new
+deployment reports `Environment variable AUTH_ISSUERS is used in auth config file but its value was
+not set`; run `npm run dev:auth setup` while `dev:backend` is running and it redeploys on the next
+file change.
+
 ## Environment variables
 
 Two separate places. Never mix them.
@@ -47,12 +71,13 @@ secrets introduced by each later phase.
 
 ## Tests
 
-| Command               | Runs                                                                           |
-| --------------------- | ------------------------------------------------------------------------------ |
-| `npm run test:unit`   | Vitest + jsdom: `lib/`, `components/`, `app/`, `tests/unit/`                   |
-| `npm run test:convex` | Vitest + edge-runtime + `convex-test` in-memory backend: `convex/**/*.test.ts` |
-| `npm test`            | Both projects                                                                  |
-| `npm run test:e2e`    | Playwright (`tests/e2e`); starts `next dev` on port 3100 itself                |
+| Command               | Runs                                                                                 |
+| --------------------- | ------------------------------------------------------------------------------------ |
+| `npm run test:unit`   | Vitest + jsdom: `lib/`, `components/`, `app/`, `tests/unit/`                         |
+| `npm run test:convex` | Vitest + edge-runtime + `convex-test` in-memory backend: `convex/**/*.test.ts`       |
+| `npm test`            | `unit` + `convex` + `tooling` (ESLint guard tests); not `live`                       |
+| `npm run test:live`   | Real JWT verification + isolation over HTTP (needs `dev:backend` + `dev:auth setup`) |
+| `npm run test:e2e`    | Playwright (`tests/e2e`); starts `next dev` on port 3100 itself                      |
 
 Convex tests don't need a running backend. The E2E smoke test works with or without one.
 
