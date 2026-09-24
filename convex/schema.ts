@@ -1,43 +1,18 @@
-import { defineSchema, defineTable } from "convex/server";
-import { v } from "convex/values";
-import { auditChangesValidator } from "./lib/validation";
+import { defineSchema } from "convex/server";
+import { adTables } from "./tables/ads";
+import { metricTables } from "./tables/metrics";
+import { socialTables } from "./tables/social";
+import { tenancyTables } from "./tables/tenancy";
 
-// Phase 1: tenancy tables only. Domain tables arrive in Phase 2.
-// Convention: every tenant-owned table carries `orgId` and its indexes start with it.
+// Conventions (enforced by convex/schema.test.ts):
+// - Every table except the global integrationApps/organizations carries `orgId`,
+//   and every index on those tables starts with `orgId`.
+// - Money fields (*Micros) are int64 micros; calendar dates are "YYYY-MM-DD" strings.
+// Tables for later phases (connections, sync, rollups, inbox, alerts) are added
+// by the phase that writes them. See docs/data-model.md.
 export default defineSchema({
-  /** Parent applications allowed to call this service (one per trusted JWT issuer). */
-  integrationApps: defineTable({
-    issuer: v.string(),
-    slug: v.string(),
-    name: v.string(),
-    status: v.union(v.literal("active"), v.literal("disabled")),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  })
-    .index("by_issuer", ["issuer"])
-    .index("by_slug", ["slug"]),
-
-  /** A tenant. Identity = (issuer, externalOrgId) from the verified JWT. */
-  organizations: defineTable({
-    issuer: v.string(),
-    externalOrgId: v.string(),
-    appId: v.id("integrationApps"),
-    displayName: v.string(),
-    reportingCurrency: v.string(),
-    timezone: v.string(),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  }).index("by_issuer_external", ["issuer", "externalOrgId"]),
-
-  /** Successful state changes, written in the same transaction as the change. */
-  auditLog: defineTable({
-    orgId: v.id("organizations"),
-    issuer: v.string(),
-    subject: v.string(),
-    action: v.string(),
-    targetType: v.optional(v.string()),
-    targetId: v.optional(v.string()),
-    changes: v.optional(auditChangesValidator),
-    at: v.number(),
-  }).index("by_org_at", ["orgId", "at"]),
+  ...tenancyTables,
+  ...adTables,
+  ...metricTables,
+  ...socialTables,
 });

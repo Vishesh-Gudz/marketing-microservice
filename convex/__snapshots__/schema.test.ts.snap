@@ -1,0 +1,162 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`schema inventory > declares the approved indexes 1`] = `
+{
+  "actionMetricsDaily": {
+    "by_org_account_date": [
+      "orgId",
+      "adAccountId",
+      "date",
+    ],
+    "by_org_entity_placement_date_action": [
+      "orgId",
+      "entityId",
+      "placement",
+      "date",
+      "rawActionType",
+      "attributionWindow",
+    ],
+  },
+  "adAccounts": {
+    "by_org_platform_external": [
+      "orgId",
+      "platform",
+      "externalId",
+    ],
+  },
+  "adGroups": {
+    "by_org_account_external": [
+      "orgId",
+      "adAccountId",
+      "externalId",
+    ],
+    "by_org_campaign": [
+      "orgId",
+      "campaignId",
+    ],
+  },
+  "ads": {
+    "by_org_account_external": [
+      "orgId",
+      "adAccountId",
+      "externalId",
+    ],
+    "by_org_adGroup": [
+      "orgId",
+      "adGroupId",
+    ],
+    "by_org_campaign": [
+      "orgId",
+      "campaignId",
+    ],
+  },
+  "auditLog": {
+    "by_org_at": [
+      "orgId",
+      "at",
+    ],
+  },
+  "campaigns": {
+    "by_org_account_external": [
+      "orgId",
+      "adAccountId",
+      "externalId",
+    ],
+    "by_org_status": [
+      "orgId",
+      "status",
+    ],
+  },
+  "creatives": {
+    "by_org_account_external": [
+      "orgId",
+      "adAccountId",
+      "externalId",
+    ],
+    "by_org_igMedia": [
+      "orgId",
+      "instagramMediaExternalId",
+    ],
+  },
+  "integrationApps": {
+    "by_issuer": [
+      "issuer",
+    ],
+    "by_slug": [
+      "slug",
+    ],
+  },
+  "metricsDaily": {
+    "by_org_account_level_placement_date": [
+      "orgId",
+      "adAccountId",
+      "level",
+      "placement",
+      "date",
+    ],
+    "by_org_campaign_level_placement_date": [
+      "orgId",
+      "campaignId",
+      "level",
+      "placement",
+      "date",
+    ],
+    "by_org_entity_placement_date": [
+      "orgId",
+      "entityId",
+      "placement",
+      "date",
+    ],
+    "by_org_level_placement_date": [
+      "orgId",
+      "level",
+      "placement",
+      "date",
+    ],
+  },
+  "organizations": {
+    "by_issuer_external": [
+      "issuer",
+      "externalOrgId",
+    ],
+  },
+  "socialAccountMetricsDaily": {
+    "by_org_account_date": [
+      "orgId",
+      "socialAccountId",
+      "date",
+    ],
+  },
+  "socialAccounts": {
+    "by_org_platform_external": [
+      "orgId",
+      "platform",
+      "externalId",
+    ],
+  },
+  "socialPostMetricSnapshots": {
+    "by_org_post_date": [
+      "orgId",
+      "postId",
+      "capturedDate",
+    ],
+  },
+  "socialPosts": {
+    "by_org_account_external": [
+      "orgId",
+      "socialAccountId",
+      "externalId",
+    ],
+    "by_org_account_published": [
+      "orgId",
+      "socialAccountId",
+      "publishedAt",
+    ],
+    "by_org_platform_external": [
+      "orgId",
+      "platform",
+      "externalId",
+    ],
+  },
+}
+`;

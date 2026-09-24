@@ -6,4 +6,7 @@ Shared backend helpers.
 - `auth.ts`: JWT claim validation; `authIssuers.ts`: `AUTH_ISSUERS` parser
 - `errors.ts`: standard `MarketingError`; `audit.ts`, `dto.ts`, `validation.ts`
 
-**Phase 2** adds money, date and KPI helpers.
+- `money.ts`: int64 micros parsing, formatting, sums, Money DTO
+- `dates.ts`: DateKey (`YYYY-MM-DD`), time-zone days, ranges, buckets
+
+KPI helpers arrive in Phase 6.
