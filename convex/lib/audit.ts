@@ -5,7 +5,22 @@ import type { AuditChanges } from "./validation";
 export const AUDIT_ACTIONS = {
   orgProvisioned: "org.provisioned",
   orgSettingsUpdated: "org.settings.updated",
+  // Phase 4: connections. Entries carry ids/statuses/counts only, never secrets.
+  connectionOAuthStarted: "connection.oauth_started",
+  connectionOAuthFailed: "connection.oauth_failed",
+  connectionConnected: "connection.connected",
+  connectionReconnected: "connection.reconnected",
+  connectionAssetsDiscovered: "connection.assets_discovered",
+  connectionDisconnected: "connection.disconnected",
+  connectionNeedsReauth: "connection.needs_reauth",
+  credentialDeleted: "credential.deleted",
+  adAccountLinked: "adAccount.linked",
+  adAccountRelinked: "adAccount.relinked",
+  adAccountUnlinked: "adAccount.unlinked",
 } as const;
+
+/** Actor used for audit entries written by scheduled system jobs. */
+export const SYSTEM_SWEEP_SUBJECT = "system:connection-sweep";
 
 export type AuditEntryInput = {
   action: string;

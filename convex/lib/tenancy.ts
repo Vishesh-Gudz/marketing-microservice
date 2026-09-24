@@ -1,8 +1,16 @@
-import { customCtx, customMutation, customQuery } from "convex-helpers/server/customFunctions";
+import {
+  customAction,
+  customCtx,
+  customMutation,
+  customQuery,
+} from "convex-helpers/server/customFunctions";
+import { makeFunctionReference } from "convex/server";
 import type { Doc, Id, TableNames } from "../_generated/dataModel";
 import {
+  action,
   mutation,
   query,
+  type ActionCtx,
   type DatabaseReader,
   type MutationCtx,
   type QueryCtx,
@@ -125,7 +133,8 @@ function toTenant(org: Doc<"organizations">, claims: VerifiedClaims): Tenant {
   };
 }
 
-async function resolveForQuery(ctx: QueryCtx, minRole: Role): Promise<Tenant> {
+/** Resolves the caller's tenant for read-only contexts (queries, and actions via tenancy:resolve). */
+export async function resolveForQuery(ctx: QueryCtx, minRole: Role): Promise<Tenant> {
   const claims = await requireClaims(ctx);
   await requireActiveApp(ctx.db, claims.issuer);
   requireRole(claims, minRole);
@@ -183,6 +192,36 @@ export const authedMutation = customMutation(
   mutation,
   customCtx(async (ctx: MutationCtx) => ({
     tenant: await resolveForMutation(ctx, "viewer"),
+  })),
+);
+
+/**
+ * Actions cannot touch the database, so they resolve the tenant through the
+ * internal query `tenancy:resolve`, which sees the same verified identity
+ * (Convex propagates auth to ctx.runQuery). Actions never provision orgs:
+ * an unprovisioned org gets ORG_NOT_PROVISIONED, like queries.
+ */
+const resolveTenantRef = makeFunctionReference<"query", { minRole: Role }, Tenant>(
+  "tenancy:resolve",
+);
+
+async function resolveForAction(ctx: ActionCtx, minRole: Role): Promise<Tenant> {
+  return await ctx.runQuery(resolveTenantRef, { minRole });
+}
+
+/** Tenant action (external I/O, secure randomness). Default minimum role: viewer. */
+export const orgAction = customAction(
+  action,
+  customCtx(async (ctx: ActionCtx, extra: TenantOptions) => ({
+    tenant: await resolveForAction(ctx, extra.minRole ?? "viewer"),
+  })),
+);
+
+/** Tenant action restricted to admins (e.g. starting a platform connection). */
+export const orgAdminAction = customAction(
+  action,
+  customCtx(async (ctx: ActionCtx) => ({
+    tenant: await resolveForAction(ctx, "admin"),
   })),
 );
 

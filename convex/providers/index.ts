@@ -1,4 +1,5 @@
 import { createMockAdsProvider } from "./mock";
+import { createMockOAuthSpec } from "./mock/oauth";
 import { createProviderRegistry, type ProviderRegistry } from "./registry";
 
 export {
@@ -9,6 +10,7 @@ export {
 export * from "./errors";
 export type * from "./types";
 export type { AdsProviderCapabilities } from "./capabilities";
+export type * from "./oauth";
 
 /**
  * The registry the rest of the service uses. Phase 3: the deterministic mock
@@ -21,5 +23,7 @@ export function createDefaultRegistry(): ProviderRegistry {
       createMockAdsProvider({ platform: "meta" }),
       createMockAdsProvider({ platform: "google_ads" }),
     ],
+    // Phase 4: mock "instant consent" OAuth. Real specs: Phase 8 (Meta) / Phase 9 (Google).
+    oauth: [createMockOAuthSpec("meta"), createMockOAuthSpec("google_ads")],
   });
 }

@@ -11,6 +11,8 @@ export const tenancyTables = {
     slug: v.string(),
     name: v.string(),
     status: v.union(v.literal("active"), v.literal("disabled")),
+    /** OAuth return targets (exact origin + path prefix). Absent = no redirects (Phase 4). */
+    allowedReturnUrls: v.optional(v.array(v.string())),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

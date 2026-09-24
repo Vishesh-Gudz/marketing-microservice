@@ -58,6 +58,47 @@ const eslintConfig = defineConfig([
       ],
     },
   },
+  // Credentials (Phase 4): only convex/connections/credentialStore.ts may touch the
+  // `credentials` table or decrypt. Everything else goes through withConnectionCredential.
+  {
+    files: ["convex/**/*.ts"],
+    ignores: [
+      "convex/connections/credentialStore.ts",
+      "convex/lib/crypto.ts",
+      "convex/tables/**",
+      "convex/schema.ts",
+      "convex/_generated/**",
+      "**/*.test.ts",
+      "**/*.suite.ts",
+    ],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "Literal[value='credentials']",
+          message: "Only convex/connections/credentialStore.ts may access the credentials table.",
+        },
+      ],
+      "@typescript-eslint/no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/lib/crypto"],
+              importNames: ["decryptJson"],
+              message: "Decryption is only allowed in convex/connections/credentialStore.ts.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  // No logging in the connection layer (credentials, codes and states must never reach logs).
+  {
+    files: ["convex/connections/**/*.ts"],
+    ignores: ["**/*.test.ts"],
+    rules: { "no-console": "error" },
+  },
   // convex/providers and convex/mapping are pure: no database, no Convex function
   // builders, no tenancy runtime. Type-only imports (Doc/Id, Tenant) stay allowed.
   {
@@ -84,6 +125,11 @@ const eslintConfig = defineConfig([
               group: ["convex/server", "convex-test", "convex/browser", "convex/react"],
               allowTypeImports: true,
               message: "Providers and mapping must not depend on Convex runtime or client APIs.",
+            },
+            {
+              group: ["**/lib/crypto"],
+              importNames: ["decryptJson"],
+              message: "Decryption is only allowed in convex/connections/credentialStore.ts.",
             },
           ],
         },

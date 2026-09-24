@@ -6,11 +6,13 @@
 //   node scripts/dev-auth.mjs keys [--force]        generate RSA key pair + JWKS
 //   node scripts/dev-auth.mjs env                   print AUTH_ISSUERS JSON for the dev issuer
 //   node scripts/dev-auth.mjs apply                 npx convex env set AUTH_ISSUERS <json>
-//   node scripts/dev-auth.mjs seed                  register the dev issuer in integrationApps
+//   node scripts/dev-auth.mjs seed                  register the dev issuer (+ localhost OAuth return URLs)
+//   node scripts/dev-auth.mjs encryption-key [--force]  set TOKEN_ENCRYPTION_KEYS in the Convex env (never on disk)
 //   node scripts/dev-auth.mjs token --org acme --role admin [--sub user_1] [--name "Acme"]
 //                                   [--issuer <iss>] [--aud <aud>] [--ttl 15m|30d|3600]
 
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +22,7 @@ export const DEV_ISSUER = "https://dev-issuer.marketing.local";
 export const DEV_AUDIENCE = "marketing-service";
 export const DEV_KID = "dev-1";
 export const DEV_APP_SLUG = "dev";
+export const DEV_RETURN_URLS = ["http://localhost:3000/", "http://127.0.0.1:3000/"];
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const KEY_DIR = join(ROOT, ".dev-keys");
@@ -76,6 +79,38 @@ export function seedDevApp() {
     "admin/integrationApps:register",
     JSON.stringify({ issuer: DEV_ISSUER, slug: DEV_APP_SLUG, name: "Local dev issuer" }),
   ]);
+  convex([
+    "run",
+    "admin/integrationApps:setAllowedReturnUrls",
+    JSON.stringify({ issuer: DEV_ISSUER, urls: DEV_RETURN_URLS }),
+  ]);
+}
+
+/**
+ * Credential encryption key for the DEV deployment. Generated here and written
+ * straight into the Convex env (never to disk, never printed). Existing keys
+ * are kept unless --force (rotating would make stored dev credentials unreadable).
+ */
+export function ensureEncryptionKey({ force = false } = {}) {
+  const current = spawnSync(process.execPath, [CONVEX_BIN, "env", "get", "TOKEN_ENCRYPTION_KEYS"], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  if (!force && current.status === 0 && current.stdout.trim() !== "") {
+    console.log("TOKEN_ENCRYPTION_KEYS already set (use --force to replace).");
+    return;
+  }
+  const value = JSON.stringify({ 1: randomBytes(32).toString("base64") });
+  const result = spawnSync(
+    process.execPath,
+    [CONVEX_BIN, "env", "set", "TOKEN_ENCRYPTION_KEYS", value],
+    {
+      cwd: ROOT,
+      stdio: ["ignore", "ignore", "inherit"],
+    },
+  );
+  if (result.status !== 0) throw new Error("convex env set TOKEN_ENCRYPTION_KEYS failed");
+  console.log("TOKEN_ENCRYPTION_KEYS set in the Convex deployment env.");
 }
 
 function parseTtl(value) {
@@ -168,6 +203,9 @@ async function main() {
     case "seed":
       seedDevApp();
       break;
+    case "encryption-key":
+      ensureEncryptionKey({ force: flags.force === true });
+      break;
     case "token": {
       if (!flags.org || !flags.role) throw new Error("token requires --org and --role");
       console.log(
@@ -186,6 +224,7 @@ async function main() {
     case "setup": {
       await generateKeys();
       applyAuthIssuers();
+      ensureEncryptionKey();
       seedDevApp();
       const org = flags.org ? String(flags.org) : "dev-org";
       const token = await mintToken({

@@ -54,6 +54,10 @@ export const PROVIDER_OPERATIONS = [
   "listCreatives",
   "fetchDailyMetrics",
   "fetchActionMetrics",
+  // OAuth (Phase 4)
+  "oauthExchange",
+  "oauthRefresh",
+  "oauthRevoke",
 ] as const;
 export type ProviderOperation = (typeof PROVIDER_OPERATIONS)[number];
 
@@ -74,7 +78,8 @@ type Canonical<T extends TableNames, Drop extends string = never> = Omit<
 
 type MetricRefs = "adAccountId" | "entityId" | "campaignId" | "adGroupId" | "adId" | "syncedAt";
 
-export type ProviderAdAccount = Canonical<"adAccounts">;
+/** Connection linkage (Phase 4) is internal state, never part of a provider record. */
+export type ProviderAdAccount = Canonical<"adAccounts", "connectionId" | "linkedAt">;
 
 export type ProviderCampaign = Canonical<"campaigns", "adAccountId"> & {
   accountExternalId: string;

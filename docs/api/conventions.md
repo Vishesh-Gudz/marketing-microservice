@@ -27,6 +27,16 @@ parent applications all call the same functions.
 | `orgMutation`      | editor (`minRole` opt.) | provisions it           |
 | `orgAdminMutation` | admin                   | provisions it           |
 | `authedMutation`   | any                     | provisions it           |
+| `orgAction`        | viewer (`minRole` opt.) | `ORG_NOT_PROVISIONED`   |
+| `orgAdminAction`   | admin                   | `ORG_NOT_PROVISIONED`   |
+
+Actions resolve the tenant through the internal query `tenancy:resolve`, which runs with the caller's
+verified identity. Use actions only for external I/O or secure randomness.
+
+**Secrets:** no v1 argument or return type may contain secret-like fields (token, code, iv,
+credential, state, …secret…, …cipher…, …verifier…, …nonce…). This is contract-tested. The Phase 4
+connection functions (`v1/connections:*`, `v1/adAccounts:list`) are documented in
+[../connections.md](../connections.md).
 
 `health:ping` is the only public function outside `v1`. It is unauthenticated on purpose.
 

@@ -21,6 +21,11 @@ export default defineConfig({
           include: ["convex/**/*.test.ts"],
           environment: "edge-runtime",
           server: { deps: { inline: ["convex-test"] } },
+          env: {
+            // TEST-ONLY key (bytes 0..31); never used by any deployment.
+            TOKEN_ENCRYPTION_KEYS: '{"1":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="}',
+            CONVEX_SITE_URL: "https://marketing-tests.convex.site",
+          },
         },
       },
       {

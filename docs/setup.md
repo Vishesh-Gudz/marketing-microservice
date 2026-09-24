@@ -48,7 +48,9 @@ npm run dev:auth seed                               # register the dev issuer in
 npm run dev:auth -- token --org acme --role viewer  # mint a token for any org/role
 ```
 
-`setup` also writes a 30-day `NEXT_PUBLIC_DEV_AUTH_TOKEN` (org `dev-org`, role `admin`) to
+`setup` also generates `TOKEN_ENCRYPTION_KEYS` in the dev deployment's Convex env (Phase 4
+connections; never written to disk) and allowlists `http://localhost:3000/` as an OAuth return URL
+for the dev app. It writes a 30-day `NEXT_PUBLIC_DEV_AUTH_TOKEN` (org `dev-org`, role `admin`) to
 `.env.local`. Restart `dev:frontend` afterwards. The home page then shows the resolved organization
 and role. Production builds ignore this variable.
 

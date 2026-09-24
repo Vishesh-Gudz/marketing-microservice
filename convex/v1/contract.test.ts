@@ -70,7 +70,16 @@ const FORBIDDEN_ARG_NAMES = new Set([
 describe("public API contract", () => {
   it("exposes the expected v1 surface", () => {
     expect(v1Fns.map((r) => r.name).sort()).toEqual([
+      "v1/adAccounts:list",
       "v1/audit:list",
+      "v1/connections:beginConnect",
+      "v1/connections:disconnect",
+      "v1/connections:get",
+      "v1/connections:linkAdAccounts",
+      "v1/connections:list",
+      "v1/connections:listDiscoveredAssets",
+      "v1/connections:refreshAssets",
+      "v1/connections:unlinkAdAccount",
       "v1/orgs:ensure",
       "v1/orgs:me",
       "v1/orgs:updateSettings",
@@ -106,6 +115,35 @@ describe("public API contract", () => {
       expect(names.filter((n) => FORBIDDEN_ARG_NAMES.has(n))).toEqual([]);
     },
   );
+
+  it("never returns or accepts secret-like fields in v1", () => {
+    // Exact names (normalized) and substrings that indicate credential/OAuth material.
+    const exact = new Set([
+      "token",
+      "accesstoken",
+      "refreshtoken",
+      "code",
+      "iv",
+      "credential",
+      "credentials",
+      "state",
+      "authorizationcode",
+    ]);
+    const fragments = ["secret", "cipher", "verifier", "nonce", "password"];
+    for (const { name, fn } of v1Fns) {
+      for (const json of [fn.exportArgs(), fn.exportReturns()]) {
+        for (const field of fieldNames(JSON.parse(json)).map((n) =>
+          n.toLowerCase().replace(/[_-]/g, ""),
+        )) {
+          expect(exact.has(field), `${name}: ${field}`).toBe(false);
+          expect(
+            fragments.some((f) => field.includes(f)),
+            `${name}: ${field}`,
+          ).toBe(false);
+        }
+      }
+    }
+  });
 
   it("never returns internal document fields from v1", () => {
     for (const { name, fn } of v1Fns) {

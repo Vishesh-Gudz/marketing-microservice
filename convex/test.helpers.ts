@@ -321,3 +321,37 @@ export async function seedAdHierarchy(
     };
   });
 }
+
+// ---------------------------------------------------------------------------
+// Phase 4 connection-flow helpers (mock "instant consent" OAuth)
+// ---------------------------------------------------------------------------
+
+export const RETURN_URL = "https://app.example.test/settings/connections";
+
+/** Registers an app with an OAuth return-URL allowlist. */
+export async function registerAppWithReturnUrls(
+  t: Backend,
+  issuer: string,
+  slug: string,
+  urls: string[] = ["https://app.example.test/settings/"],
+) {
+  await registerApp(t, issuer, slug);
+  await t.mutation(internal.admin.integrationApps.setAllowedReturnUrls, { issuer, urls });
+}
+
+/** Path + query of an absolute callback URL, for t.fetch. */
+export function callbackPath(url: string): string {
+  const parsed = new URL(url);
+  return `${parsed.pathname}${parsed.search}`;
+}
+
+export async function followCallback(t: Backend, url: string): Promise<Response> {
+  return await t.fetch(callbackPath(url), { method: "GET", redirect: "manual" });
+}
+
+/** Parses the redirect produced by the callback. */
+export function redirectParams(response: Response): URLSearchParams {
+  const location = response.headers.get("location");
+  if (!location) throw new Error(`expected a redirect, got ${response.status}`);
+  return new URL(location).searchParams;
+}

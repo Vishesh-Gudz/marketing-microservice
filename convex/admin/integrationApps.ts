@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { apiError } from "../lib/errors";
+import { isValidReturnUrlEntry } from "../connections/returnUrls";
 import { isValidAppSlug, normalizeDisplayName } from "../lib/validation";
 
 // INTERNAL ONLY. Operator tooling, invoked with `npx convex run` or from the
@@ -63,6 +64,31 @@ export const setStatus = internalMutation({
       .unique();
     if (app === null) throw apiError("NOT_FOUND", "No integration app for this issuer.");
     await ctx.db.patch(app._id, { status: args.status, updatedAt: Date.now() });
+    return null;
+  },
+});
+
+/** OAuth return-URL allowlist for an app (exact origin + path prefix). Replaces the list. */
+export const setAllowedReturnUrls = internalMutation({
+  args: { issuer: v.string(), urls: v.array(v.string()) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const app = await ctx.db
+      .query("integrationApps")
+      .withIndex("by_issuer", (q) => q.eq("issuer", args.issuer))
+      .unique();
+    if (app === null) throw apiError("NOT_FOUND", "No integration app for this issuer.");
+    const invalid = args.urls.filter((url) => !isValidReturnUrlEntry(url));
+    if (invalid.length > 0) {
+      throw apiError(
+        "INVALID_ARGUMENT",
+        "Return URLs must be https (or http on localhost) without query or fragment.",
+      );
+    }
+    await ctx.db.patch(app._id, {
+      allowedReturnUrls: [...new Set(args.urls)],
+      updatedAt: Date.now(),
+    });
     return null;
   },
 });

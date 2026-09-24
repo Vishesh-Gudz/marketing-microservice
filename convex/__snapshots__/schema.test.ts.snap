@@ -18,6 +18,10 @@ exports[`schema inventory > declares the approved indexes 1`] = `
     ],
   },
   "adAccounts": {
+    "by_org_connection": [
+      "orgId",
+      "connectionId",
+    ],
     "by_org_platform_external": [
       "orgId",
       "platform",
@@ -67,6 +71,21 @@ exports[`schema inventory > declares the approved indexes 1`] = `
       "status",
     ],
   },
+  "connections": {
+    "by_org_provider_identity": [
+      "orgId",
+      "provider",
+      "externalUserId",
+    ],
+    "by_org_status": [
+      "orgId",
+      "status",
+    ],
+    "by_status_expires": [
+      "status",
+      "tokenExpiresAt",
+    ],
+  },
   "creatives": {
     "by_org_account_external": [
       "orgId",
@@ -76,6 +95,19 @@ exports[`schema inventory > declares the approved indexes 1`] = `
     "by_org_igMedia": [
       "orgId",
       "instagramMediaExternalId",
+    ],
+  },
+  "credentials": {
+    "by_org_connection": [
+      "orgId",
+      "connectionId",
+    ],
+  },
+  "discoveredAssets": {
+    "by_org_connection_external": [
+      "orgId",
+      "connectionId",
+      "externalId",
     ],
   },
   "integrationApps": {
@@ -112,6 +144,18 @@ exports[`schema inventory > declares the approved indexes 1`] = `
       "level",
       "placement",
       "date",
+    ],
+  },
+  "oauthStates": {
+    "by_expires": [
+      "expiresAt",
+    ],
+    "by_nonce_hash": [
+      "nonceHash",
+    ],
+    "by_org_created": [
+      "orgId",
+      "createdAt",
     ],
   },
   "organizations": {

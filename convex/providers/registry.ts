@@ -1,32 +1,49 @@
 import type { AdPlatform } from "../domain/types";
+import type { OAuthSpec } from "./oauth";
 import type { AdsProvider } from "./types";
 
 export class ProviderNotRegisteredError extends Error {
-  constructor(readonly platform: string) {
-    super(`No ads provider registered for platform "${platform}"`);
+  constructor(
+    readonly platform: string,
+    readonly family: "ads" | "oauth" = "ads",
+  ) {
+    super(`No ${family} provider registered for platform "${platform}"`);
     this.name = "ProviderNotRegisteredError";
   }
 }
 
 /**
- * Resolves providers by platform. Built from a list (no platform switch):
- * adding Meta/Google later = one provider module + one list entry.
- * Later families (social in Phase 10, messaging in Phase 11) add sibling maps.
+ * Resolves providers by platform. Built from lists (no platform switch):
+ * adding Meta/Google later = one module per family + one list entry.
+ * Families: ads (Phase 3), oauth (Phase 4); social (Phase 10) and messaging
+ * (Phase 11) add sibling maps.
  */
 export type ProviderRegistry = {
   ads(platform: AdPlatform): AdsProvider;
   hasAds(platform: AdPlatform): boolean;
   adsPlatforms(): AdPlatform[];
+  /** OAuth spec used to connect a platform identity. */
+  oauth(platform: AdPlatform): OAuthSpec;
+  hasOAuth(platform: AdPlatform): boolean;
 };
 
-export function createProviderRegistry(input: { ads: readonly AdsProvider[] }): ProviderRegistry {
-  const ads = new Map<AdPlatform, AdsProvider>();
-  for (const provider of input.ads) {
-    if (ads.has(provider.platform)) {
-      throw new Error(`Duplicate ads provider registration for platform "${provider.platform}"`);
+function byPlatform<T extends { platform: AdPlatform }>(family: string, items: readonly T[]) {
+  const map = new Map<AdPlatform, T>();
+  for (const item of items) {
+    if (map.has(item.platform)) {
+      throw new Error(`Duplicate ${family} provider registration for platform "${item.platform}"`);
     }
-    ads.set(provider.platform, provider);
+    map.set(item.platform, item);
   }
+  return map;
+}
+
+export function createProviderRegistry(input: {
+  ads: readonly AdsProvider[];
+  oauth?: readonly OAuthSpec[];
+}): ProviderRegistry {
+  const ads = byPlatform("ads", input.ads);
+  const oauth = byPlatform("oauth", input.oauth ?? []);
 
   return Object.freeze({
     ads(platform: AdPlatform): AdsProvider {
@@ -36,5 +53,11 @@ export function createProviderRegistry(input: { ads: readonly AdsProvider[] }): 
     },
     hasAds: (platform: AdPlatform) => ads.has(platform),
     adsPlatforms: () => [...ads.keys()].sort(),
+    oauth(platform: AdPlatform): OAuthSpec {
+      const spec = oauth.get(platform);
+      if (spec === undefined) throw new ProviderNotRegisteredError(platform, "oauth");
+      return spec;
+    },
+    hasOAuth: (platform: AdPlatform) => oauth.has(platform),
   });
 }

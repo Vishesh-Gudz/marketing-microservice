@@ -17,6 +17,16 @@ const tableNames = Object.keys(tables).sort();
 
 /** Tables without an owner: the tenancy roots themselves. */
 const GLOBAL_TABLES = ["integrationApps", "organizations"];
+
+/**
+ * The ONLY indexes on tenant tables that may not start with orgId (approved in
+ * Phase 4): the unauthenticated OAuth callback and the system health sweep.
+ */
+const APPROVED_GLOBAL_INDEXES = [
+  "connections.by_status_expires",
+  "oauthStates.by_expires",
+  "oauthStates.by_nonce_hash",
+];
 const tenantTables = tableNames.filter((name) => !GLOBAL_TABLES.includes(name));
 
 function fields(table: string) {
@@ -28,9 +38,13 @@ function indexes(table: string) {
 }
 
 describe("schema inventory", () => {
-  it("contains exactly the Phase 1 + Phase 2 tables", () => {
+  it("contains exactly the Phase 1, 2 and 4 tables", () => {
     expect(tableNames).toEqual(
       [
+        "connections",
+        "credentials",
+        "discoveredAssets",
+        "oauthStates",
         "actionMetricsDaily",
         "adAccounts",
         "adGroups",
@@ -68,10 +82,23 @@ describe("tenant ownership", () => {
     });
   });
 
-  it.each(tenantTables)("every index on %s starts with orgId", (table) => {
-    for (const index of indexes(table)) {
-      expect(index.fields[0], `${table}.${index.indexDescriptor}`).toBe("orgId");
-    }
+  it.each(tenantTables)(
+    "every index on %s starts with orgId (or is an approved global index)",
+    (table) => {
+      for (const index of indexes(table)) {
+        if (APPROVED_GLOBAL_INDEXES.includes(`${table}.${index.indexDescriptor}`)) continue;
+        expect(index.fields[0], `${table}.${index.indexDescriptor}`).toBe("orgId");
+      }
+    },
+  );
+
+  it("has exactly the approved global indexes", () => {
+    const global = tenantTables.flatMap((table) =>
+      indexes(table)
+        .filter((index) => index.fields[0] !== "orgId")
+        .map((index) => `${table}.${index.indexDescriptor}`),
+    );
+    expect(global.sort()).toEqual(APPROVED_GLOBAL_INDEXES);
   });
 
   it("global tables do not carry orgId", () => {
@@ -93,6 +120,10 @@ describe("tenant ownership", () => {
       "socialPosts",
       "socialPostMetricSnapshots",
       "socialAccountMetricsDaily",
+      "connections",
+      "credentials",
+      "oauthStates",
+      "discoveredAssets",
     ];
     expect([...owned].sort()).toEqual(tenantTables);
   });
@@ -115,6 +146,14 @@ describe("value conventions", () => {
     for (const { table, name, field } of money) {
       expect(field.fieldType.type, `${table}.${name}`).toBe("bigint");
     }
+  });
+
+  it("stores credential material only as bytes in the credentials table", () => {
+    const bytes = allFields.filter((f) => f.field.fieldType.type === "bytes");
+    expect(bytes.map((f) => `${f.table}.${f.name}`).sort()).toEqual([
+      "credentials.ciphertext",
+      "credentials.iv",
+    ]);
   });
 
   it("uses int64 only for money", () => {

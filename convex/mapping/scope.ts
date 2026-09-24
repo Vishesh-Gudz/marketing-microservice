@@ -30,6 +30,15 @@ export function orgScopeFromTenant(tenant: Tenant): OrgScope {
   return Object.freeze({ orgId: tenant.orgId }) as OrgScope;
 }
 
+/**
+ * From a stored organization row. Used where no Tenant exists but the org is
+ * already bound by stored state (e.g. the unauthenticated OAuth callback,
+ * where the state row created by an authenticated tenant names the org).
+ */
+export function orgScopeFromOrganization(organization: Doc<"organizations">): OrgScope {
+  return Object.freeze({ orgId: organization._id }) as OrgScope;
+}
+
 /** From a stored ad account; orgId comes from the persisted row, never from a caller. */
 export function accountScopeFromDoc(account: Doc<"adAccounts">): AccountScope {
   return Object.freeze({

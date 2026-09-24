@@ -44,7 +44,11 @@ const externalRef = v.string();
 const optionalExternalRef = v.optional(v.string());
 
 export const RECORD_VALIDATORS = {
-  adAccount: recordValidator(adTables.adAccounts.validator.fields, [], {}),
+  adAccount: recordValidator(
+    adTables.adAccounts.validator.fields,
+    ["connectionId", "linkedAt"],
+    {},
+  ),
   campaign: recordValidator(adTables.campaigns.validator.fields, ["adAccountId"], {
     accountExternalId: externalRef,
   }),

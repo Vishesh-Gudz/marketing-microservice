@@ -40,8 +40,13 @@ export const adTables = {
     /** Google manager customer id / Meta business id. */
     parentExternalId: v.optional(v.string()),
     attributes: v.optional(attributesValidator),
+    /** Connection that syncs this account (Phase 4). Absent = unlinked; the row and its metrics stay. */
+    connectionId: v.optional(v.id("connections")),
+    linkedAt: v.optional(v.number()),
     ...entityLifecycleFields,
-  }).index("by_org_platform_external", ["orgId", "platform", "externalId"]),
+  })
+    .index("by_org_platform_external", ["orgId", "platform", "externalId"])
+    .index("by_org_connection", ["orgId", "connectionId"]),
 
   campaigns: defineTable({
     orgId: orgIdField,

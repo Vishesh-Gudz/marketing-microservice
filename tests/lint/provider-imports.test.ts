@@ -43,3 +43,46 @@ describe("provider / mapping isolation", () => {
     expect(await restricted(source, "convex/sync/__fixture__.ts")).toEqual([]);
   });
 });
+
+describe("credential guards (Phase 4)", () => {
+  async function violations(code: string, filePath: string) {
+    const [result] = await eslint.lintText(code, { filePath });
+    return (result?.messages ?? []).filter(
+      (m) =>
+        m.ruleId === "no-restricted-syntax" ||
+        m.ruleId === "@typescript-eslint/no-restricted-imports" ||
+        m.ruleId === "no-console",
+    );
+  }
+
+  it.each([
+    ["convex/v1/__fixture__.ts", 'export const t = "credentials";'],
+    ["convex/connections/__fixture__.ts", 'export const t = "credentials";'],
+    [
+      "convex/connections/__fixture__.ts",
+      'import { decryptJson } from "../lib/crypto";\nexport const d = decryptJson;',
+    ],
+    [
+      "convex/providers/__fixture__.ts",
+      'import { decryptJson } from "../lib/crypto";\nexport const d = decryptJson;',
+    ],
+    ["convex/connections/__fixture__.ts", 'export const f = () => console.log("x");'],
+  ])("%s rejects %s", async (filePath, source) => {
+    expect((await violations(`${source}\n`, filePath)).length).toBeGreaterThan(0);
+  });
+
+  it("allows the credential store and non-decrypt crypto helpers", async () => {
+    expect(
+      await violations(
+        'import { decryptJson } from "../lib/crypto";\nexport const t = "credentials";\nexport const d = decryptJson;\n',
+        "convex/connections/credentialStore.ts",
+      ),
+    ).toEqual([]);
+    expect(
+      await violations(
+        'import { encryptJson, randomToken } from "../lib/crypto";\nexport const x = [encryptJson, randomToken];\n',
+        "convex/connections/__fixture__.ts",
+      ),
+    ).toEqual([]);
+  });
+});

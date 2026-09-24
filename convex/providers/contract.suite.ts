@@ -42,6 +42,8 @@ const FORBIDDEN_KEYS = [
   "adGroupId",
   "adId",
   "creativeId",
+  "connectionId",
+  "linkedAt",
   "entityId",
   "syncedAt",
   "createdAt",

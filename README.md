@@ -34,7 +34,7 @@ convex/              Convex backend
   tables/            Table definitions composed by schema.ts (tenancy, ads, metrics, social)
   providers/         Platform adapters: contract, registry, errors, mock (meta, google later)
   mapping/           Provider records -> canonical rows (branded tenant scopes)
-  connections/       OAuth + encrypted credentials (Phase 4)
+  connections/       OAuth connections + encrypted credentials (mock OAuth until Phases 8/9)
   sync/              Background sync engine (Phase 5)
   analytics/         Rollups + aggregation (Phase 6)
   engagement/        Paid + organic engagement (Phases 6, 10)
@@ -44,7 +44,7 @@ packages/
   marketing-client/  Developer SDK (Phase 14)
 tests/               Unit setup + Playwright E2E
 scripts/             dev-auth.mjs (local stand-in for a parent app's JWT issuer)
-docs/                Setup, data model, providers, API conventions + auth contract, ADRs
+docs/                Setup, data model, providers, connections, security, API conventions, ADRs
 ```
 
 ## Scripts
