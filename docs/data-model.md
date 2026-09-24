@@ -1,6 +1,7 @@
 # Canonical data model
 
-The provider-neutral model every platform integration normalizes into. It is defined in
+The provider-neutral model every platform integration normalizes into (providers produce records
+that `convex/mapping` turns into these rows; see [providers/architecture.md](providers/architecture.md)). It is defined in
 `convex/tables/*` and `convex/domain/*`, and composed in `convex/schema.ts`. The rules below are
 enforced by `convex/schema.test.ts` unless noted otherwise.
 

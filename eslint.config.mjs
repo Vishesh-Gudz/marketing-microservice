@@ -58,6 +58,38 @@ const eslintConfig = defineConfig([
       ],
     },
   },
+  // convex/providers and convex/mapping are pure: no database, no Convex function
+  // builders, no tenancy runtime. Type-only imports (Doc/Id, Tenant) stay allowed.
+  {
+    files: ["convex/providers/**/*.ts", "convex/mapping/**/*.ts"],
+    ignores: ["**/*.test.ts"],
+    rules: {
+      "@typescript-eslint/no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/_generated/server", "**/_generated/api"],
+              allowTypeImports: true,
+              message:
+                "Providers and mapping are database-free: no Convex function builders, ctx, or api references.",
+            },
+            {
+              group: ["**/lib/tenancy", "**/lib/auth", "**/lib/audit"],
+              allowTypeImports: true,
+              message:
+                "Providers and mapping are tenant-free at runtime; tenant identity only enters via mapping scopes.",
+            },
+            {
+              group: ["convex/server", "convex-test", "convex/browser", "convex/react"],
+              allowTypeImports: true,
+              message: "Providers and mapping must not depend on Convex runtime or client APIs.",
+            },
+          ],
+        },
+      ],
+    },
+  },
   // Must stay last: turns off stylistic rules that Prettier owns.
   prettier,
   globalIgnores([

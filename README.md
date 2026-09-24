@@ -32,7 +32,8 @@ convex/              Convex backend
   lib/               Shared backend helpers (tenancy, errors, audit, DTO, money, dates)
   domain/            Canonical domain model: enums, validators, metric catalog, identity
   tables/            Table definitions composed by schema.ts (tenancy, ads, metrics, social)
-  providers/         Platform adapters: mock, meta, google, instagram, metaMessaging
+  providers/         Platform adapters: contract, registry, errors, mock (meta, google later)
+  mapping/           Provider records -> canonical rows (branded tenant scopes)
   connections/       OAuth + encrypted credentials (Phase 4)
   sync/              Background sync engine (Phase 5)
   analytics/         Rollups + aggregation (Phase 6)
@@ -43,7 +44,7 @@ packages/
   marketing-client/  Developer SDK (Phase 14)
 tests/               Unit setup + Playwright E2E
 scripts/             dev-auth.mjs (local stand-in for a parent app's JWT issuer)
-docs/                Setup, data model, API conventions + auth contract, ADRs
+docs/                Setup, data model, providers, API conventions + auth contract, ADRs
 ```
 
 ## Scripts
