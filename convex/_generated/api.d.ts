@@ -8,7 +8,19 @@
  * @module
  */
 
+import type * as admin_fxRates from "../admin/fxRates.js";
 import type * as admin_integrationApps from "../admin/integrationApps.js";
+import type * as analytics_actions from "../analytics/actions.js";
+import type * as analytics_aggregate from "../analytics/aggregate.js";
+import type * as analytics_comparison from "../analytics/comparison.js";
+import type * as analytics_config from "../analytics/config.js";
+import type * as analytics_coverage from "../analytics/coverage.js";
+import type * as analytics_fx from "../analytics/fx.js";
+import type * as analytics_numeric from "../analytics/numeric.js";
+import type * as analytics_periods from "../analytics/periods.js";
+import type * as analytics_queries from "../analytics/queries.js";
+import type * as analytics_reader from "../analytics/reader.js";
+import type * as analytics_scope from "../analytics/scope.js";
 import type * as connections_assets from "../connections/assets.js";
 import type * as connections_config from "../connections/config.js";
 import type * as connections_credentialStore from "../connections/credentialStore.js";
@@ -67,6 +79,7 @@ import type * as sync_upsert from "../sync/upsert.js";
 import type * as sync_validators from "../sync/validators.js";
 import type * as sync_worker from "../sync/worker.js";
 import type * as tables_ads from "../tables/ads.js";
+import type * as tables_analytics from "../tables/analytics.js";
 import type * as tables_common from "../tables/common.js";
 import type * as tables_connections from "../tables/connections.js";
 import type * as tables_metrics from "../tables/metrics.js";
@@ -75,9 +88,11 @@ import type * as tables_sync from "../tables/sync.js";
 import type * as tables_tenancy from "../tables/tenancy.js";
 import type * as tenancy from "../tenancy.js";
 import type * as v1_adAccounts from "../v1/adAccounts.js";
+import type * as v1_analytics from "../v1/analytics.js";
 import type * as v1_audit from "../v1/audit.js";
 import type * as v1_connections from "../v1/connections.js";
 import type * as v1_dto_adAccount from "../v1/dto/adAccount.js";
+import type * as v1_dto_analytics from "../v1/dto/analytics.js";
 import type * as v1_dto_audit from "../v1/dto/audit.js";
 import type * as v1_dto_connection from "../v1/dto/connection.js";
 import type * as v1_dto_org from "../v1/dto/org.js";
@@ -90,7 +105,19 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  "admin/fxRates": typeof admin_fxRates;
   "admin/integrationApps": typeof admin_integrationApps;
+  "analytics/actions": typeof analytics_actions;
+  "analytics/aggregate": typeof analytics_aggregate;
+  "analytics/comparison": typeof analytics_comparison;
+  "analytics/config": typeof analytics_config;
+  "analytics/coverage": typeof analytics_coverage;
+  "analytics/fx": typeof analytics_fx;
+  "analytics/numeric": typeof analytics_numeric;
+  "analytics/periods": typeof analytics_periods;
+  "analytics/queries": typeof analytics_queries;
+  "analytics/reader": typeof analytics_reader;
+  "analytics/scope": typeof analytics_scope;
   "connections/assets": typeof connections_assets;
   "connections/config": typeof connections_config;
   "connections/credentialStore": typeof connections_credentialStore;
@@ -149,6 +176,7 @@ declare const fullApi: ApiFromModules<{
   "sync/validators": typeof sync_validators;
   "sync/worker": typeof sync_worker;
   "tables/ads": typeof tables_ads;
+  "tables/analytics": typeof tables_analytics;
   "tables/common": typeof tables_common;
   "tables/connections": typeof tables_connections;
   "tables/metrics": typeof tables_metrics;
@@ -157,9 +185,11 @@ declare const fullApi: ApiFromModules<{
   "tables/tenancy": typeof tables_tenancy;
   tenancy: typeof tenancy;
   "v1/adAccounts": typeof v1_adAccounts;
+  "v1/analytics": typeof v1_analytics;
   "v1/audit": typeof v1_audit;
   "v1/connections": typeof v1_connections;
   "v1/dto/adAccount": typeof v1_dto_adAccount;
+  "v1/dto/analytics": typeof v1_dto_analytics;
   "v1/dto/audit": typeof v1_dto_audit;
   "v1/dto/connection": typeof v1_dto_connection;
   "v1/dto/org": typeof v1_dto_org;

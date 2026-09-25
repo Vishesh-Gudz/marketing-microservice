@@ -102,11 +102,34 @@ describe("live sync (mock providers, real runtime)", () => {
     expect(second.counts.inserted).toBe(0);
     expect(second.counts.pruned).toBe(0);
 
-    const state = convexRun<{ state: string; coveredThrough?: string }>("sync/admin:accountState", {
-      adAccountId: account!.id,
-    });
+    const state = convexRun<{ state: string; coveredFrom?: string; coveredThrough?: string }>(
+      "sync/admin:accountState",
+      {
+        adAccountId: account!.id,
+      },
+    );
     expect(state.state).toBe("idle");
     expect(state.coveredThrough).toBeDefined();
     expect(JSON.stringify([first, second, state])).not.toContain("mock-token");
+
+    // Phase 6: analytics over real HTTP (real JWT, real runtime, real read limits).
+    const range = { from: state.coveredFrom!, to: state.coveredThrough! };
+    const overview = await admin.query(api.v1.analytics.overview, {
+      range,
+      compare: "previous_period",
+    });
+    expect(overview.accountCount).toBe(1);
+    expect(overview.totals.dataState).toBe("reported");
+    expect(overview.totals.metrics.impressions).toBeGreaterThan(0);
+    expect(overview.totals.metrics.spend?.native).toHaveLength(1);
+    expect(typeof overview.totals.kpis.ctr).toBe("number");
+    const campaigns = await admin.query(api.v1.analytics.performance, {
+      level: "campaign",
+      range,
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+    expect(campaigns.page.length).toBeGreaterThan(0);
+    const actions = await admin.query(api.v1.analytics.actions, { range });
+    expect(actions.groups.length).toBeGreaterThan(0);
   });
 });

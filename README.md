@@ -36,7 +36,7 @@ convex/              Convex backend
   mapping/           Provider records -> canonical rows (branded tenant scopes)
   connections/       OAuth connections + encrypted credentials (mock OAuth until Phases 8/9)
   sync/              Sync engine: planner, runs/tasks, worker, canonical write path (Phase 5)
-  analytics/         Rollups + aggregation (Phase 6)
+  analytics/         Query-time analytics: KPIs, periods, FX, aggregation (Phase 6)
   engagement/        Paid + organic engagement (Phases 6, 10)
   inbox/             Unified inbox / messaging (Phase 11)
   monitoring/        Alerts (Phase 12)
@@ -44,7 +44,7 @@ packages/
   marketing-client/  Developer SDK (Phase 14)
 tests/               Unit setup + Playwright E2E
 scripts/             dev-auth.mjs (local stand-in for a parent app's JWT issuer)
-docs/                Setup, data model, providers, connections, sync, security, API conventions, ADRs
+docs/                Setup, data model, providers, connections, sync, analytics, security, API, ADRs
 ```
 
 ## Scripts

@@ -15,8 +15,11 @@ type TableIntrospection = {
 const tables = schema.tables as unknown as Record<string, TableIntrospection>;
 const tableNames = Object.keys(tables).sort();
 
-/** Tables without an owner: the tenancy roots themselves. */
-const GLOBAL_TABLES = ["integrationApps", "organizations"];
+/**
+ * Tables without an owner: the tenancy roots themselves, and fxRates (Phase 6:
+ * public exchange-rate reference data, written only by internal admin functions).
+ */
+const GLOBAL_TABLES = ["fxRates", "integrationApps", "organizations"];
 
 /**
  * The ONLY indexes on tenant tables that may not start with orgId: the
@@ -40,13 +43,14 @@ function indexes(table: string) {
 }
 
 describe("schema inventory", () => {
-  it("contains exactly the Phase 1, 2, 4 and 5 tables", () => {
+  it("contains exactly the Phase 1, 2, 4, 5 and 6 tables", () => {
     expect(tableNames).toEqual(
       [
         "connections",
         "credentials",
         "discoveredAssets",
         "oauthStates",
+        "fxRates",
         "actionMetricsDaily",
         "adAccounts",
         "adGroups",

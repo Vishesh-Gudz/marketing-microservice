@@ -30,13 +30,15 @@ Tables for later phases are added by the phase that writes them:
 
 - connections, credentials, OAuth state, discovered assets: Phase 4 (see [connections.md](connections.md))
 - sync state, runs and tasks: Phase 5 (see [sync.md](sync.md))
-- rollups, FX rates: Phase 6
+- FX rates (`fxRates`, global reference data): Phase 6 (see [analytics.md](analytics.md)); rollups
+  are deferred (Phase 6 aggregates at query time)
 - inbox: Phase 11
 - alerts: Phase 12
 
 ## Tenancy
 
-- Every table except `integrationApps` and `organizations` has a required `orgId`.
+- Every table except `integrationApps`, `organizations` and `fxRates` (Phase 6: public exchange-rate
+  reference data, written only by internal admin functions) has a required `orgId`.
 - Every index on those tables starts with `orgId`.
 - Every one of them is a `TenantTable`, so `getOwned()` works on it.
 - Internal references are Convex ids (`v.id(...)`). External ids never cross tables as foreign keys,
@@ -175,6 +177,9 @@ when the conversion mapping changes.
 | row absent for (entity, day) inside sync coverage | no delivery (platforms omit zero days)                 |
 | row absent outside coverage                       | unknown (coverage: `syncAccounts.coveredFrom/Through`) |
 
+Coverage only includes metric windows whose sync resolved every record (no unresolved or rejected
+rows), so "absent inside coverage" really means no delivery (Phase 6, D11).
+
 - Never write `0` for "unknown".
 - Ratios (CTR, CPC, CPM, CPA, ROAS, engagement rate) are **never stored**. Phase 6 computes them from
   summed components and omits them when the denominator is absent or zero.
@@ -209,7 +214,7 @@ when the conversion mapping changes.
 These are candidates for the Phase 16 retention job, configurable per org. They are not
 requirements.
 
-## v1 exposure (from Phase 6; nothing is exposed yet)
+## v1 exposure (Phase 6: metrics via `v1/analytics:*`, see [analytics.md](analytics.md))
 
 | Expose                                                                                     | Keep internal                                                              |
 | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |

@@ -71,6 +71,11 @@ describe("public API contract", () => {
   it("exposes the expected v1 surface", () => {
     expect(v1Fns.map((r) => r.name).sort()).toEqual([
       "v1/adAccounts:list",
+      "v1/analytics:actions",
+      "v1/analytics:breakdown",
+      "v1/analytics:overview",
+      "v1/analytics:performance",
+      "v1/analytics:timeSeries",
       "v1/audit:list",
       "v1/connections:beginConnect",
       "v1/connections:disconnect",

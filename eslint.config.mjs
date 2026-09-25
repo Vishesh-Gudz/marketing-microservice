@@ -160,6 +160,39 @@ const eslintConfig = defineConfig([
       ],
     },
   },
+  // Analytics (Phase 6) reads canonical tables only: never connections/credentials, the
+  // sync write/worker path, or provider implementations (static capabilities via the
+  // providers registry are allowed). No logging.
+  {
+    files: ["convex/analytics/**/*.ts", "convex/v1/analytics.ts", "convex/v1/dto/analytics.ts"],
+    ignores: ["**/*.test.ts"],
+    rules: {
+      "no-console": "error",
+      "@typescript-eslint/no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: [
+                "**/connections/**",
+                "**/sync/worker",
+                "**/sync/runs",
+                "**/sync/upsert",
+                "**/sync/planner",
+                "**/sync/admin",
+                "**/providers/mock",
+                "**/providers/mock/**",
+                "**/providers/oauth",
+              ],
+              message:
+                "Analytics is query-time aggregation over canonical rows: no connections, credentials, sync writes or provider calls.",
+            },
+            DECRYPT_IMPORT,
+          ],
+        },
+      ],
+    },
+  },
   // Must stay last: turns off stylistic rules that Prettier owns.
   prettier,
   globalIgnores([

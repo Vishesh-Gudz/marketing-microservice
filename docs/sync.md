@@ -201,8 +201,11 @@ parked; accounts of inactive connections are rechecked hourly; throttled account
 `throttledUntil`; blocked accounts are retried after 24 h.
 
 **Coverage:** `coveredFrom`/`coveredThrough` is the contiguous range of account-local days for which
-every planned metric task succeeded. A row absent inside coverage means "no delivery"; outside it
-means "unknown".
+every planned metric task succeeded **without unresolved or rejected records** (Phase 6, D11). A row
+absent inside coverage means "no delivery"; outside it means "unknown". A window with a skipped
+record does not advance coverage (existing coverage is kept, never shrunk); structure is marked
+stale, so a later clean run covers it. Coverage is per account, so such a window is not covered for
+any level. Analytics relies on this ([analytics.md](analytics.md)).
 
 ## Concurrency and idempotency
 

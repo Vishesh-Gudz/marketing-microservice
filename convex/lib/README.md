@@ -10,4 +10,4 @@ Shared backend helpers.
 - `money.ts`: int64 micros parsing, formatting, sums, Money DTO
 - `dates.ts`: DateKey (`YYYY-MM-DD`), time-zone days, ranges, buckets
 
-KPI helpers arrive in Phase 6.
+KPI and analytics helpers live in `convex/analytics/` (Phase 6, see docs/analytics.md).

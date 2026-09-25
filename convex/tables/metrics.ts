@@ -94,5 +94,7 @@ export const metricTables = {
       "rawActionType",
       "attributionWindow",
     ])
-    .index("by_org_account_date", ["orgId", "adAccountId", "date"]),
+    .index("by_org_account_date", ["orgId", "adAccountId", "date"])
+    // Phase 6 analytics: one level's action rows of an account without scanning ad-level rows.
+    .index("by_org_account_level_date", ["orgId", "adAccountId", "level", "date"]),
 };

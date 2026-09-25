@@ -8,6 +8,12 @@ exports[`schema inventory > declares the approved indexes 1`] = `
       "adAccountId",
       "date",
     ],
+    "by_org_account_level_date": [
+      "orgId",
+      "adAccountId",
+      "level",
+      "date",
+    ],
     "by_org_entity_placement_date_action": [
       "orgId",
       "entityId",
@@ -108,6 +114,12 @@ exports[`schema inventory > declares the approved indexes 1`] = `
       "orgId",
       "connectionId",
       "externalId",
+    ],
+  },
+  "fxRates": {
+    "by_quote_date": [
+      "quote",
+      "date",
     ],
   },
   "integrationApps": {

@@ -46,6 +46,15 @@ connection functions (`v1/connections:*`, `v1/adAccounts:list`) are documented i
 - Instants: ISO-8601 UTC strings (`"2026-09-24T09:11:25.946Z"`). Calendar dates: `"YYYY-MM-DD"`.
 - Enums: lowercase string unions.
 - Optional fields are omitted, never `null`.
+- **Money:** a single amount is `MoneyDto` `{ currency, micros: string }`. Analytics money values
+  (metrics and money KPIs such as `cpc`, `cpm`, `costPerConversion`) are always `MoneyAmountsDto`
+  `{ native: MoneyDto[]; reporting?: MoneyDto }`.
+- **Ratios** (`ctr`, `conversionRate`, `roas`, `valuePerSpend`, percent changes) are fractions
+  (`0.0123` = 1.23 %), JSON numbers with at most 6 decimals. Unavailable values are omitted and
+  explained in `unavailable*` lists as `{ metric | kpi, reason }`, never `null` or `0`. Every reason
+  and state value is a fixed, documented enum ([../analytics.md](../analytics.md) "Public enum
+  values"). Per-action KPIs use the scope's same-level spend, not row pairing
+  ([../analytics.md](../analytics.md) "Action metrics").
 - One module per resource in `convex/v1/dto/`: a validator (`orgDto`), its type
   (`OrgDto = Infer<typeof orgDto>`) and a mapper (`toOrgDto`).
 
@@ -98,3 +107,6 @@ to `convex/v2/`. The contract is formally frozen in Phase 13.
 | `v1/orgs:me`             | `orgQuery`                      | `{}`                                              | `OrgDto`                   |
 | `v1/orgs:updateSettings` | `orgAdminMutation`              | `{ displayName?, reportingCurrency?, timezone? }` | `OrgDto`                   |
 | `v1/audit:list`          | `orgQuery` (`minRole: "admin"`) | `{ paginationOpts }`                              | `Paginated<AuditEntryDto>` |
+
+Phase 6 analytics (`v1/analytics:overview`, `timeSeries`, `performance`, `breakdown`, `actions`;
+all `orgQuery`, viewer) are documented in [../analytics.md](../analytics.md).

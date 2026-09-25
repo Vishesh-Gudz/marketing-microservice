@@ -394,7 +394,12 @@ export async function cancelRun(
   }
 }
 
-/** Metric windows whose every task succeeded (coverage only grows for complete windows). */
+/**
+ * Metric windows whose every task succeeded WITHOUT unresolved or rejected
+ * records (coverage only grows for complete windows). A skipped record means a
+ * missing row inside the window would not mean "no delivery", so such a window
+ * must not be covered; the next run (structure is stale) covers it.
+ */
 function completedWindows(tasks: Doc<"syncTasks">[]) {
   const byWindow = new Map<string, { from: string; to: string; ok: boolean }>();
   for (const task of tasks) {
@@ -403,7 +408,7 @@ function completedWindows(tasks: Doc<"syncTasks">[]) {
     }
     const key = `${task.from}|${task.to}`;
     const entry = byWindow.get(key) ?? { from: task.from, to: task.to, ok: true };
-    entry.ok &&= task.status === "succeeded";
+    entry.ok &&= task.status === "succeeded" && task.counts.unresolved + task.counts.rejected === 0;
     byWindow.set(key, entry);
   }
   return [...byWindow.values()].filter((w) => w.ok).map(({ from, to }) => ({ from, to }));
