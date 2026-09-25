@@ -36,6 +36,24 @@ convex/providers/<platform>/
   strings. Use `numberToMicros` only for doubles.
 - Metric dates are account-local `YYYY-MM-DD`.
 
+## 2b. What the sync engine (Phase 5) relies on
+
+See [../sync.md](../sync.md).
+
+- [ ] `getAccount` returns the same record as the account's `listAccounts` entry, and `not_found` /
+      `permission` for inaccessible accounts. Its currency and timezone must be stable; a change
+      blocks the account.
+- [ ] Entity listings include entities that metrics may still reference (removed/archived ones);
+      otherwise their metric rows stay unresolved. A full listing (no `updatedSince`) must be
+      complete: entities it omits are marked removed.
+- [ ] A metric request is authoritative for its scope: rows it does not return are pruned. Never
+      return a partial result without an error.
+- [ ] Cursors never repeat and eventually end. An expired platform cursor is reported as
+      `invalid_request` (sync restarts the task once).
+- [ ] Only the declared placements, levels and metrics appear; the sync rejects out-of-scope rows.
+- [ ] Access-token refresh (e.g. Google refresh tokens) happens inside the provider call; the sync
+      engine does not persist refreshed tokens in Phase 5.
+
 ## 3. Capabilities
 
 Declare only what the platform really provides:
@@ -62,6 +80,8 @@ when known) and `transient`. Revoked or expired tokens are `auth`.
 - [ ] Error classification tests cover each platform error code the provider handles.
 - [ ] Mapping round trip: records map with `convex/mapping` and insert into the schema under
       convex-test.
+- [ ] A complete sync of a recorded-fixture account through the Phase 5 engine succeeds and a second
+      sync of the same window is a no-op (see `convex/sync/e2e.test.ts`).
 
 ## 6. Registration
 

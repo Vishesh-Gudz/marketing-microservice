@@ -17,10 +17,19 @@ export const AUDIT_ACTIONS = {
   adAccountLinked: "adAccount.linked",
   adAccountRelinked: "adAccount.relinked",
   adAccountUnlinked: "adAccount.unlinked",
+  // Phase 5: sync. Routine runs are NOT audited (see syncRuns); only account-level
+  // state changes are. Entries carry ids/kinds/counts only, never payloads.
+  syncAccountBlocked: "sync.account_blocked",
+  syncAccountUnblocked: "sync.account_unblocked",
+  syncAccountAttributesChanged: "sync.account_attributes_changed",
+  syncRemovalSkipped: "sync.removal_skipped",
 } as const;
 
 /** Actor used for audit entries written by scheduled system jobs. */
 export const SYSTEM_SWEEP_SUBJECT = "system:connection-sweep";
+
+/** Actor used for audit entries written by the sync engine (Phase 5). */
+export const SYSTEM_SYNC_SUBJECT = "system:sync";
 
 export type AuditEntryInput = {
   action: string;

@@ -19,13 +19,15 @@ const tableNames = Object.keys(tables).sort();
 const GLOBAL_TABLES = ["integrationApps", "organizations"];
 
 /**
- * The ONLY indexes on tenant tables that may not start with orgId (approved in
- * Phase 4): the unauthenticated OAuth callback and the system health sweep.
+ * The ONLY indexes on tenant tables that may not start with orgId: the
+ * unauthenticated OAuth callback and the system health sweep (Phase 4), and
+ * the sync planner's due-account index (Phase 5; rows re-verified on read).
  */
 const APPROVED_GLOBAL_INDEXES = [
   "connections.by_status_expires",
   "oauthStates.by_expires",
   "oauthStates.by_nonce_hash",
+  "syncAccounts.by_next_plan",
 ];
 const tenantTables = tableNames.filter((name) => !GLOBAL_TABLES.includes(name));
 
@@ -38,7 +40,7 @@ function indexes(table: string) {
 }
 
 describe("schema inventory", () => {
-  it("contains exactly the Phase 1, 2 and 4 tables", () => {
+  it("contains exactly the Phase 1, 2, 4 and 5 tables", () => {
     expect(tableNames).toEqual(
       [
         "connections",
@@ -59,6 +61,9 @@ describe("schema inventory", () => {
         "socialAccounts",
         "socialPostMetricSnapshots",
         "socialPosts",
+        "syncAccounts",
+        "syncRuns",
+        "syncTasks",
       ].sort(),
     );
   });
@@ -124,6 +129,9 @@ describe("tenant ownership", () => {
       "credentials",
       "oauthStates",
       "discoveredAssets",
+      "syncAccounts",
+      "syncRuns",
+      "syncTasks",
     ];
     expect([...owned].sort()).toEqual(tenantTables);
   });

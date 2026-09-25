@@ -428,3 +428,46 @@ describe("scenarios", () => {
     );
   });
 });
+
+describe("per-credential scenario (Phase 5 test seam)", () => {
+  it("a credential's scenario and variant override the construction options", async () => {
+    const p = provider("meta");
+    await expectProviderError(
+      p.listCampaigns(
+        { credential: mockCredential("t", { scenario: "auth_revoked" }), attempt: 1 },
+        { accountExternalId: "1001" },
+      ),
+      "auth",
+    );
+    const request = {
+      accountExternalId: "1001",
+      level: "account" as const,
+      breakdown: "none" as const,
+      ...MARCH,
+    };
+    const base = await p.fetchDailyMetrics(ctx(), request);
+    const restated = await p.fetchDailyMetrics(
+      { credential: mockCredential("t", { variant: 1 }), attempt: 1 },
+      request,
+    );
+    expect(restated.items.map((r) => r.spendMicros)).not.toEqual(
+      base.items.map((r) => r.spendMicros),
+    );
+  });
+
+  it("serves getAccount for listed accounts and not_found otherwise", async () => {
+    const p = provider("google_ads");
+    const account = await p.getAccount(ctx(), { accountExternalId: "4445556666" });
+    expect(account).toMatchObject({ externalId: "4445556666", currency: "JPY" });
+    await expectProviderError(
+      p.getAccount(ctx(), { accountExternalId: "1234567890" }),
+      "not_found",
+    );
+    await expectProviderError(
+      provider("google_ads", "permission_denied").getAccount(ctx(), {
+        accountExternalId: "4445556666",
+      }),
+      "permission",
+    );
+  });
+});

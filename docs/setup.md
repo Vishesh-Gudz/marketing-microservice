@@ -71,15 +71,28 @@ Two separate places. Never mix them.
 Secrets never live in `.env.local`, in the repo, or in Convex tables. `.env.example` lists the
 secrets introduced by each later phase.
 
+## Syncing (Phase 5)
+
+Linking an ad account schedules its initial sync; the planner cron runs every 15 minutes. To run it
+now against the mock providers:
+
+```bash
+npx convex run sync/planner:tick
+npx convex run sync/admin:requestSync '{"adAccountId":"<id>"}'
+npx convex run sync/admin:runStatus '{"runId":"<id>"}'
+```
+
+Details: [sync.md](sync.md).
+
 ## Tests
 
-| Command               | Runs                                                                                 |
-| --------------------- | ------------------------------------------------------------------------------------ |
-| `npm run test:unit`   | Vitest + jsdom: `lib/`, `components/`, `app/`, `tests/unit/`                         |
-| `npm run test:convex` | Vitest + edge-runtime + `convex-test` in-memory backend: `convex/**/*.test.ts`       |
-| `npm test`            | `unit` + `convex` + `tooling` (ESLint guard tests); not `live`                       |
-| `npm run test:live`   | Real JWT verification + isolation over HTTP (needs `dev:backend` + `dev:auth setup`) |
-| `npm run test:e2e`    | Playwright (`tests/e2e`); starts `next dev` on port 3100 itself                      |
+| Command               | Runs                                                                                                        |
+| --------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `npm run test:unit`   | Vitest + jsdom: `lib/`, `components/`, `app/`, `tests/unit/`                                                |
+| `npm run test:convex` | Vitest + edge-runtime + `convex-test` in-memory backend: `convex/**/*.test.ts`                              |
+| `npm test`            | `unit` + `convex` + `tooling` (ESLint guard tests); not `live`                                              |
+| `npm run test:live`   | Real JWT + isolation over HTTP, complete syncs on the real runtime (needs `dev:backend` + `dev:auth setup`) |
+| `npm run test:e2e`    | Playwright (`tests/e2e`); starts `next dev` on port 3100 itself                                             |
 
 Convex tests don't need a running backend. The E2E smoke test works with or without one.
 

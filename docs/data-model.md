@@ -29,7 +29,7 @@ Paid advertising and organic social are **separate trees**. There is no generic 
 Tables for later phases are added by the phase that writes them:
 
 - connections, credentials, OAuth state, discovered assets: Phase 4 (see [connections.md](connections.md))
-- sync runs: Phase 5
+- sync state, runs and tasks: Phase 5 (see [sync.md](sync.md))
 - rollups, FX rates: Phase 6
 - inbox: Phase 11
 - alerts: Phase 12
@@ -57,25 +57,30 @@ External ids are **strings**. Google ids are int64 and exceed 2^53.
 | Instagram  | account / media                   | numeric string                               |
 | Facebook   | page                              | numeric string                               |
 
-Natural keys, which Phase 5 upserts use through the matching index:
+Natural keys, which the Phase 5 write path (`convex/sync/upsert.ts`) uses through the matching index:
 
-| Table                                  | Natural key                                                        | Index                                 | Write rule                                                   |
-| -------------------------------------- | ------------------------------------------------------------------ | ------------------------------------- | ------------------------------------------------------------ |
-| adAccounts                             | orgId, platform, externalId                                        | `by_org_platform_external`            | patch                                                        |
-| campaigns / adGroups / ads / creatives | orgId, adAccountId, externalId                                     | `by_org_account_external`             | patch                                                        |
-| metricsDaily                           | orgId, entityId, placement, date                                   | `by_org_entity_placement_date`        | **replace**                                                  |
-| actionMetricsDaily                     | orgId, entityId, placement, date, rawActionType, attributionWindow | `by_org_entity_placement_date_action` | replace, and delete rows that vanish from a re-synced window |
-| socialAccounts                         | orgId, platform, externalId                                        | `by_org_platform_external`            | patch                                                        |
-| socialPosts                            | orgId, socialAccountId, externalId                                 | `by_org_account_external`             | patch                                                        |
-| socialPostMetricSnapshots              | orgId, postId, capturedDate                                        | `by_org_post_date`                    | replace                                                      |
-| socialAccountMetricsDaily              | orgId, socialAccountId, date                                       | `by_org_account_date`                 | replace                                                      |
+| Table                                  | Natural key                                                        | Index                                 | Write rule                                                       |
+| -------------------------------------- | ------------------------------------------------------------------ | ------------------------------------- | ---------------------------------------------------------------- |
+| adAccounts                             | orgId, platform, externalId                                        | `by_org_platform_external`            | replace provider-owned fields (link: field update)               |
+| campaigns / adGroups / ads / creatives | orgId, adAccountId, externalId                                     | `by_org_account_external`             | replace provider-owned fields, keep `createdAt`                  |
+| metricsDaily                           | orgId, entityId, placement, date                                   | `by_org_entity_placement_date`        | **replace**, and delete rows that vanish from a re-synced window |
+| actionMetricsDaily                     | orgId, entityId, placement, date, rawActionType, attributionWindow | `by_org_entity_placement_date_action` | replace, and delete rows that vanish from a re-synced window     |
+| socialAccounts                         | orgId, platform, externalId                                        | `by_org_platform_external`            | patch                                                            |
+| socialPosts                            | orgId, socialAccountId, externalId                                 | `by_org_account_external`             | patch                                                            |
+| socialPostMetricSnapshots              | orgId, postId, capturedDate                                        | `by_org_post_date`                    | replace                                                          |
+| socialAccountMetricsDaily              | orgId, socialAccountId, date                                       | `by_org_account_date`                 | replace                                                          |
 
 - **Why Meta and Google cannot collide:** account keys include the platform, and child keys include
   their ad account.
 - **Two orgs, one external account:** the same external account connected by two orgs gives two
   independent rows.
 - **Uniqueness:** Convex has no unique constraints. Uniqueness is guaranteed by the single Phase 5
-  write path.
+  write path (`convex/sync/upsert.ts`, ESLint-enforced): each write reads its natural-key range and
+  writes in the same serializable mutation.
+- **Replace, not patch (Phase 5):** a field the platform stops reporting disappears. Service-owned
+  fields (`createdAt`, and `connectionId`/`linkedAt` on ad accounts) are preserved. Removed entities
+  get `removedAt` after a complete full listing; they are never deleted (see [sync.md](sync.md)).
+  Social tables keep their listed rule until Phase 10 writes them.
 
 ## Money
 
@@ -163,12 +168,12 @@ when the conversion mapping changes.
 
 ### Missing data
 
-| State                                             | Meaning                                         |
-| ------------------------------------------------- | ----------------------------------------------- |
-| field absent                                      | not reported or not applicable                  |
-| `0`                                               | reported as zero                                |
-| row absent for (entity, day) inside sync coverage | no delivery (platforms omit zero days)          |
-| row absent outside coverage                       | unknown (coverage tracking is added in Phase 5) |
+| State                                             | Meaning                                                |
+| ------------------------------------------------- | ------------------------------------------------------ |
+| field absent                                      | not reported or not applicable                         |
+| `0`                                               | reported as zero                                       |
+| row absent for (entity, day) inside sync coverage | no delivery (platforms omit zero days)                 |
+| row absent outside coverage                       | unknown (coverage: `syncAccounts.coveredFrom/Through`) |
 
 - Never write `0` for "unknown".
 - Ratios (CTR, CPC, CPM, CPA, ROAS, engagement rate) are **never stored**. Phase 6 computes them from
@@ -189,9 +194,11 @@ when the conversion mapping changes.
 - There are no age, gender or device breakdown tables. A breakdown like that would get its own table
   later.
 - Instagram account-level reporting-day semantics are unverified until Phase 10.
-- Volume policy (Phase 5/8): ad-level `actionMetricsDaily` rows will likely be limited to
-  `placement = "all"` and relevant action types. The schema itself is generic.
-- `attributes` and `extras` maps will be capped at 50 keys by the Phase 5 write path.
+- Volume policy (Phase 5): `actionMetricsDaily` rows are synced with `placement = "all"` only (no
+  placement breakdown) at every supported level; Phase 8 may further limit action types. The schema
+  itself is generic.
+- `attributes` and `extras` maps are capped at 50 keys by the Phase 5 write path (attribute values at
+  1,024 characters; `headlines`/`descriptions` at 20 items).
 
 ## Retention (proposed future defaults only; not implemented)
 

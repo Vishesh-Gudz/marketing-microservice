@@ -25,10 +25,13 @@ export type PageRequest = {
 /** One page. Absent `nextCursor` means the result set is complete. */
 export type ProviderPage<T> = { items: T[]; nextCursor?: string };
 
-export type AccountRequest = PageRequest & {
+/** Single-account lookup (Phase 5 sync preflight): no pagination. */
+export type AccountLookupRequest = {
   /** Canonical account external id (as stored in adAccounts.externalId). */
   accountExternalId: string;
 };
+
+export type AccountRequest = PageRequest & AccountLookupRequest;
 
 export type EntityRequest = AccountRequest & {
   /** Only entities updated at/after this instant (epoch ms), if incrementalEntities is supported. */
@@ -48,6 +51,7 @@ export type MetricsRequest = AccountRequest & {
 
 export const PROVIDER_OPERATIONS = [
   "listAccounts",
+  "getAccount",
   "listCampaigns",
   "listAdGroups",
   "listAds",
@@ -143,6 +147,15 @@ export interface AdsProvider<TCredential = unknown> {
     ctx: ProviderContext<TCredential>,
     request: PageRequest,
   ): Promise<ProviderPage<ProviderAdAccount>>;
+  /**
+   * One account by canonical external id (sync preflight: verifies access and
+   * refreshes account metadata). Inaccessible accounts fail with "not_found" or
+   * "permission"; manager accounts are returned (isManager = true).
+   */
+  getAccount(
+    ctx: ProviderContext<TCredential>,
+    request: AccountLookupRequest,
+  ): Promise<ProviderAdAccount>;
   listCampaigns(
     ctx: ProviderContext<TCredential>,
     request: EntityRequest,

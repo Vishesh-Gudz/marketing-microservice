@@ -57,12 +57,17 @@ active | needs_reauth ─disconnect─► revoked   (credential deleted; ad acco
   identity fails with `identity_mismatch`.
 - **Relinking** an ad account to another connection of the same org is allowed and audited
   (`adAccount.relinked`).
+- **Linking starts syncing (Phase 5).** The link writes the account through the canonical write
+  path (`convex/sync/upsert.ts`) and creates or resumes its `syncAccounts` state in the same
+  transaction; the next planner tick starts the initial sync. Unlink parks the sync state; a run in
+  flight is cancelled at its next step. See [sync.md](sync.md).
 - **The health sweep** (`convex/crons.ts`, hourly):
   - deletes expired states
   - marks active connections whose `tokenExpiresAt` has passed as `needs_reauth`
   - deletes any credential still attached to a revoked connection
-- **`internal.connections.lifecycle.markNeedsReauth`** is the hook sync will call on provider `auth`
-  errors (Phase 5).
+- **Sync on provider `auth` errors (Phase 5)** calls `markConnectionNeedsReauth` (the helper behind
+  `internal.connections.lifecycle.markNeedsReauth`) inside its own failure transaction, audited as
+  subject `system:sync`, and cancels the connection's other active runs.
 
 ## Configuration
 

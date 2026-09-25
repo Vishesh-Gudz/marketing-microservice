@@ -20,6 +20,9 @@ export default defineConfig({
           name: "convex",
           include: ["convex/**/*.test.ts"],
           environment: "edge-runtime",
+          // convex-test runs fully in-process; the Phase 5 end-to-end sync files make
+          // parallel runs CPU-bound, so 5 s (the default) is too tight under load.
+          testTimeout: 30_000,
           server: { deps: { inline: ["convex-test"] } },
           env: {
             // TEST-ONLY key (bytes 0..31); never used by any deployment.

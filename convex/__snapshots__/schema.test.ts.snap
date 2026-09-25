@@ -202,5 +202,37 @@ exports[`schema inventory > declares the approved indexes 1`] = `
       "externalId",
     ],
   },
+  "syncAccounts": {
+    "by_next_plan": [
+      "nextPlanAt",
+    ],
+    "by_org_account": [
+      "orgId",
+      "adAccountId",
+    ],
+  },
+  "syncRuns": {
+    "by_org_account_created": [
+      "orgId",
+      "adAccountId",
+      "createdAt",
+    ],
+    "by_org_account_key": [
+      "orgId",
+      "adAccountId",
+      "idempotencyKey",
+    ],
+    "by_org_status": [
+      "orgId",
+      "status",
+    ],
+  },
+  "syncTasks": {
+    "by_org_run_seq": [
+      "orgId",
+      "runId",
+      "seq",
+    ],
+  },
 }
 `;

@@ -4,17 +4,18 @@ import { internalMutation, type DatabaseReader, type MutationCtx } from "../_gen
 import { AUDIT_ACTIONS, writeAudit } from "../lib/audit";
 import { apiError } from "../lib/errors";
 import { getOwned, type Tenant } from "../lib/tenancy";
-import { mapAdAccount } from "../mapping/ads";
 import { orgScopeFromTenant } from "../mapping/scope";
 import type { ProviderAdAccount } from "../providers/types";
 import { RECORD_VALIDATORS } from "../providers/validate";
+import { ensureSyncAccount } from "../sync/state";
+import { upsertLinkedAdAccount } from "../sync/upsert";
 import { MAX_LINK_BATCH } from "./config";
 
 /**
  * Discovered assets (what a connection can see) and linking them to the
- * canonical `adAccounts` table. The adAccounts write here is a NARROW,
- * connection-scoped upsert by natural key (orgId, platform, externalId);
- * the generic Phase 5 write path is separate.
+ * canonical `adAccounts` table. The adAccounts write goes through the single
+ * canonical write path (sync/upsert.ts: upsert by natural key orgId, platform,
+ * externalId), and linking creates the account's sync state (Phase 5).
  */
 
 type TenantCtx = MutationCtx & { tenant: Tenant };
@@ -157,44 +158,20 @@ export async function linkAdAccounts(
       throw apiError("INVALID_ARGUMENT", "Manager accounts cannot be linked.", { externalId });
     }
 
-    const row = mapAdAccount(assetToRecord(asset), scope, now);
-    const existing = await ctx.db
-      .query("adAccounts")
-      .withIndex("by_org_platform_external", (q) =>
-        q
-          .eq("orgId", ctx.tenant.orgId)
-          .eq("platform", asset.platform)
-          .eq("externalId", asset.externalId),
-      )
-      .unique();
+    // The single canonical write path (convex/sync/upsert.ts), by natural key.
+    const { adAccountId, created, previousConnectionId } = await upsertLinkedAdAccount(
+      ctx.db,
+      scope,
+      assetToRecord(asset),
+      connection._id,
+      now,
+    );
 
-    let adAccountId: Id<"adAccounts">;
     let action: string | undefined = AUDIT_ACTIONS.adAccountLinked;
-    if (existing) {
-      adAccountId = existing._id;
-      if (existing.connectionId === connection._id)
+    if (!created) {
+      if (previousConnectionId === connection._id)
         action = undefined; // already linked: idempotent
-      else if (existing.connectionId !== undefined) action = AUDIT_ACTIONS.adAccountRelinked;
-      await ctx.db.patch(existing._id, {
-        name: row.name,
-        currency: row.currency,
-        timezone: row.timezone,
-        status: row.status,
-        rawStatus: row.rawStatus,
-        isManager: row.isManager,
-        parentExternalId: row.parentExternalId,
-        connectionId: connection._id,
-        linkedAt: existing.connectionId === connection._id ? existing.linkedAt : now,
-        lastSeenAt: now,
-        removedAt: undefined,
-        updatedAt: now,
-      });
-    } else {
-      adAccountId = await ctx.db.insert("adAccounts", {
-        ...row,
-        connectionId: connection._id,
-        linkedAt: now,
-      });
+      else if (previousConnectionId !== undefined) action = AUDIT_ACTIONS.adAccountRelinked;
     }
 
     if (action !== undefined) {
@@ -202,12 +179,20 @@ export async function linkAdAccounts(
         action,
         targetType: "adAccount",
         targetId: adAccountId,
-        ...(existing?.connectionId !== undefined && action === AUDIT_ACTIONS.adAccountRelinked
-          ? { changes: { connectionId: { from: existing.connectionId, to: connection._id } } }
+        ...(previousConnectionId !== undefined && action === AUDIT_ACTIONS.adAccountRelinked
+          ? { changes: { connectionId: { from: previousConnectionId, to: connection._id } } }
           : {}),
       });
     }
-    linked.push((await ctx.db.get(adAccountId))!);
+    const account = (await ctx.db.get(adAccountId))!;
+    // Phase 5: the account gets (or resumes) a sync schedule in the same transaction.
+    await ensureSyncAccount(
+      ctx.db,
+      account,
+      { relinked: previousConnectionId !== undefined && previousConnectionId !== connection._id },
+      now,
+    );
+    linked.push(account);
   }
   return linked;
 }

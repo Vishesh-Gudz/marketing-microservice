@@ -1,8 +1,9 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import type { UserIdentity } from "convex/server";
-import { expect } from "vitest";
-import { internal } from "./_generated/api";
+import { expect, vi } from "vitest";
+import { api, internal } from "./_generated/api";
+import { mockAuthorizationCode } from "./providers/mock/oauth";
 import { isMarketingError, type MarketingErrorCode } from "./lib/errors";
 import type { Role } from "./lib/validation";
 import schema from "./schema";
@@ -79,7 +80,8 @@ export async function expectMarketingError(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2 data-model seeds (direct inserts; the Phase 5 write path does not exist yet)
+// Phase 2 data-model seeds (direct inserts that bypass convex/sync/upsert.ts on purpose;
+// test-only, exempt from the canonical-insert lint rule)
 // ---------------------------------------------------------------------------
 
 type SeedCtx = Parameters<Parameters<Backend["run"]>[0]>[0];
@@ -354,4 +356,72 @@ export function redirectParams(response: Response): URLSearchParams {
   const location = response.headers.get("location");
   if (!location) throw new Error(`expected a redirect, got ${response.status}`);
   return new URL(location).searchParams;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 sync helpers (mock providers end to end)
+// ---------------------------------------------------------------------------
+
+/** Registers the app, provisions the org (as admin) and returns the backend. */
+export async function setupSyncOrg(t: Backend, identityInput: IdentityInput = {}) {
+  const issuer = identityInput.issuer ?? ISSUER_ERP;
+  const existing = await t.run((ctx) =>
+    ctx.db
+      .query("integrationApps")
+      .withIndex("by_issuer", (q) => q.eq("issuer", issuer))
+      .unique(),
+  );
+  if (existing === null) {
+    await registerAppWithReturnUrls(t, issuer, `app-${Math.abs(hashCode(issuer))}`);
+  }
+  await as(t, identityInput).mutation(api.v1.orgs.ensure, {});
+}
+
+/**
+ * Connects a mock platform identity through the REAL connect flow (beginConnect
+ * -> /oauth/callback -> encrypted credential). `user` selects the mock user and
+ * optional scenario, e.g. "1", "1--rate_limited", "1--default--v1".
+ */
+export async function connectMock(
+  t: Backend,
+  provider: "meta" | "google_ads",
+  user = "1",
+  identityInput: IdentityInput = {},
+): Promise<string> {
+  const { authorizeUrl } = await as(t, identityInput).action(api.v1.connections.beginConnect, {
+    provider,
+    returnUrl: RETURN_URL,
+  });
+  const url = new URL(authorizeUrl);
+  url.searchParams.set(
+    "code",
+    mockAuthorizationCode(provider, url.searchParams.get("code_challenge") ?? undefined, user),
+  );
+  const params = redirectParams(await followCallback(t, url.toString()));
+  expect(params.get("status"), params.get("error") ?? "").toBe("connected");
+  return params.get("connection")!;
+}
+
+export async function linkMock(
+  t: Backend,
+  connectionId: string,
+  externalIds: string[],
+  identityInput: IdentityInput = {},
+) {
+  return await as(t, identityInput).mutation(api.v1.connections.linkAdAccounts, {
+    connectionId,
+    externalIds,
+  });
+}
+
+/** Runs every scheduled function (workers, finalize steps, retries) to completion. */
+export async function drainScheduler(t: Backend) {
+  await t.finishAllScheduledFunctions(vi.runAllTimers, 20_000);
+}
+
+/** One planner tick followed by all the work it scheduled. */
+export async function planAndDrain(t: Backend) {
+  const result = await t.mutation(internal.sync.planner.tick, {});
+  await drainScheduler(t);
+  return result;
 }

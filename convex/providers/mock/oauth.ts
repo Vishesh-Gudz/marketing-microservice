@@ -4,6 +4,7 @@ import { ProviderError } from "../errors";
 import { fingerprint } from "../hash";
 import type { OAuthGrant, OAuthSpec } from "../oauth";
 import { REVOKED_MOCK_TOKEN, type MockCredential } from "./credential";
+import { MOCK_SCENARIOS, type MockScenario } from "./scenarios";
 
 /**
  * Mock OAuth ("instant consent"). The authorization URL IS the callback URL,
@@ -12,7 +13,8 @@ import { REVOKED_MOCK_TOKEN, type MockCredential } from "./credential";
  *
  * Code format: mock-code.<user>.<fingerprint(platform, challenge, user)>
  *   user "limited" is granted none of the required scopes (missing-scope path);
- *   user "revoked" receives a credential the mock ads provider rejects (discovery failure path).
+ *   user "revoked" receives a credential the mock ads provider rejects (discovery failure path);
+ *   user "<id>--<scenario>[--v<n>]" gets a credential that selects a mock scenario (see parseMockUser).
  * Failure codes: MOCK_INVALID_CODE (auth / invalid_grant), MOCK_UNAVAILABLE_CODE (transient).
  */
 const SCOPES: Record<AdPlatform, { requested: string[]; required: string[]; lifetimeMs?: number }> =
@@ -29,6 +31,29 @@ const SCOPES: Record<AdPlatform, { requested: string[]; required: string[]; life
       required: ["https://www.googleapis.com/auth/adwords"],
     },
   };
+
+/**
+ * Mock user grammar: "<id>" or "<id>--<scenario>[--v<variant>]" (MOCK-ONLY test
+ * seam, Phase 5). The identity is always mock-user-<id>, so reconnecting the
+ * same id with another scenario replaces the credential of the SAME connection.
+ * Example: "1--rate_limited", "1--default--v1" (restated metric values).
+ */
+export function parseMockUser(user: string): {
+  id: string;
+  scenario?: MockScenario;
+  variant?: number;
+} {
+  const [id = "1", scenario, variant] = user.split("--");
+  const parsedScenario = (MOCK_SCENARIOS as readonly string[]).includes(scenario ?? "")
+    ? (scenario as MockScenario)
+    : undefined;
+  const parsedVariant = /^v\d{1,3}$/.test(variant ?? "") ? Number(variant!.slice(1)) : undefined;
+  return {
+    id,
+    ...(parsedScenario !== undefined ? { scenario: parsedScenario } : {}),
+    ...(parsedVariant !== undefined ? { variant: parsedVariant } : {}),
+  };
+}
 
 export const MOCK_INVALID_CODE = "mock-code-invalid";
 export const MOCK_UNAVAILABLE_CODE = "mock-code-5xx";
@@ -61,19 +86,26 @@ export function createMockOAuthSpec(platform: AdPlatform): OAuthSpec<MockCredent
     });
   };
 
-  const grantFor = (user: string, now: number): OAuthGrant<MockCredential> => ({
-    credential: {
-      kind: "mock",
-      token: user === "revoked" ? REVOKED_MOCK_TOKEN : `mock-token-${platform}-${user}`,
-    },
-    identity: { externalUserId: `mock-user-${user}`, displayName: `Mock ${platform} user ${user}` },
-    grantedScopes:
-      user === "limited"
-        ? scopes.requested.filter((scope) => !scopes.required.includes(scope))
-        : [...scopes.requested],
-    ...(scopes.lifetimeMs !== undefined ? { expiresAt: now + scopes.lifetimeMs } : {}),
-    refreshable: scopes.lifetimeMs === undefined,
-  });
+  const tokenPrefix = `mock-token-${platform}-`;
+
+  const grantFor = (user: string, now: number): OAuthGrant<MockCredential> => {
+    const { id, scenario, variant } = parseMockUser(user);
+    return {
+      credential: {
+        kind: "mock",
+        token: id === "revoked" ? REVOKED_MOCK_TOKEN : `${tokenPrefix}${user}`,
+        ...(scenario !== undefined ? { scenario } : {}),
+        ...(variant !== undefined ? { variant } : {}),
+      },
+      identity: { externalUserId: `mock-user-${id}`, displayName: `Mock ${platform} user ${id}` },
+      grantedScopes:
+        id === "limited"
+          ? scopes.requested.filter((scope) => !scopes.required.includes(scope))
+          : [...scopes.requested],
+      ...(scopes.lifetimeMs !== undefined ? { expiresAt: now + scopes.lifetimeMs } : {}),
+      refreshable: scopes.lifetimeMs === undefined,
+    };
+  };
 
   const spec: OAuthSpec<MockCredential> = {
     platform,
@@ -115,7 +147,10 @@ export function createMockOAuthSpec(platform: AdPlatform): OAuthSpec<MockCredent
           message: "User tokens of this platform cannot be refreshed",
         });
       }
-      return grantFor(credential.token.split("-").pop() ?? "1", now);
+      const user = credential.token.startsWith(tokenPrefix)
+        ? credential.token.slice(tokenPrefix.length)
+        : "1";
+      return grantFor(user, now);
     },
 
     async revoke() {

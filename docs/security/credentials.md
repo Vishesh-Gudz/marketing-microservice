@@ -45,13 +45,22 @@
 
 ## Global indexes (approved exceptions to "orgId first")
 
-| Index                           | Reason                                                               |
-| ------------------------------- | -------------------------------------------------------------------- |
-| `oauthStates.by_nonce_hash`     | The OAuth callback is unauthenticated                                |
-| `oauthStates.by_expires`        | The system sweep expires states across orgs                          |
-| `connections.by_status_expires` | The system sweep flags expired tokens and cleans revoked credentials |
+| Index                           | Reason                                                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `oauthStates.by_nonce_hash`     | The OAuth callback is unauthenticated                                                                               |
+| `oauthStates.by_expires`        | The system sweep expires states across orgs                                                                         |
+| `connections.by_status_expires` | The system sweep flags expired tokens and cleans revoked credentials                                                |
+| `syncAccounts.by_next_plan`     | The sync planner (Phase 5) finds due accounts across orgs; every row it returns is re-verified for tenant ownership |
 
 `convex/schema.test.ts` fails on any other non-`orgId`-first index.
+
+## Sync engine (Phase 5)
+
+- The worker action uses only `withConnectionCredential`; plaintext exists only inside one provider
+  call, never in mutation arguments, scheduled-function arguments, tables or logs.
+- The decrypted binding's org and platform are checked against the sync run.
+- `console` is banned in `convex/sync/`; stored sync errors are kind + optional platform code +
+  generic message.
 
 ## Operational notes
 

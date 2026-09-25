@@ -23,7 +23,7 @@ no Convex function builders, no tenant identity at runtime. An ESLint rule enfor
    platform / account / currency consistency checks
         │  canonical insert rows (WithoutSystemFields<Doc<T>>)
         ▼
- Phase 5 write path: upsert by natural key, uniqueness, attributes/extras caps   (not in Phase 3)
+ Phase 5 write path (convex/sync/upsert.ts): upsert by natural key, uniqueness, caps  (docs/sync.md)
 ```
 
 ## Tenant boundary
@@ -47,6 +47,7 @@ no Convex function builders, no tenant identity at runtime. An ESLint rule enfor
 interface AdsProvider<TCredential> {
   platform; providerId; capabilities;
   listAccounts(ctx, PageRequest)          → ProviderPage<ProviderAdAccount>
+  getAccount(ctx, AccountLookupRequest)   → ProviderAdAccount            (Phase 5)
   listCampaigns(ctx, EntityRequest)       → ProviderPage<ProviderCampaign>
   listAdGroups(ctx, EntityRequest)        → ProviderPage<ProviderAdGroup>
   listAds(ctx, EntityRequest)             → ProviderPage<ProviderAd>
@@ -57,6 +58,8 @@ interface AdsProvider<TCredential> {
 ```
 
 - **One page per call.** The caller (Phase 5 sync) owns iteration and persists cursors.
+- **`getAccount` (Phase 5)** returns one account by canonical external id; the sync preflight uses
+  it to verify access and detect currency/timezone drift.
 - **Record types** are derived type-only from the Phase 2 `Doc` types, so they cannot drift from the
   schema.
 - **References use external ids:** `accountExternalId`, `campaignExternalId`, `entityExternalId`, …
@@ -148,6 +151,12 @@ payloads, then paging, then page-local normalization, then validation.
 **Scenarios:** `default`, `empty`, `rate_limited` (later pages, attempt 1), `transient` (first page,
 attempt 1), `auth_revoked`, `permission_denied`, `malformed`, `slow_pages`. A credential token of
 `"revoked"` always fails with `auth`.
+
+**Per-connection scenarios (mock-only test seam, Phase 5):** a `MockCredential` may carry
+`scenario` and `variant`, which override the construction options per call. The mock OAuth user
+grammar `"<id>--<scenario>[--v<n>]"` (e.g. `"1--rate_limited"`, `"1--default--v1"`) issues such
+credentials for identity `mock-user-<id>`, so a whole sync can run a scenario through the real
+connect flow and encrypted credential store. Real credentials never carry these fields.
 
 ## How Meta and Google Ads plug in (Phases 8–9)
 

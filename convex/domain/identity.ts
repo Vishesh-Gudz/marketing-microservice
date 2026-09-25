@@ -4,7 +4,7 @@ import type { AdPlatform, SocialPlatform } from "./types";
  * Canonical external-id forms. External ids are ALWAYS strings: Google ids are
  * int64 and exceed Number.MAX_SAFE_INTEGER.
  *
- * Natural keys (enforced by the Phase 5 write path via the matching indexes):
+ * Natural keys (enforced by the Phase 5 write path, convex/sync/upsert.ts, via the matching indexes):
  *   adAccounts                              (orgId, platform, externalId)
  *   campaigns / adGroups / ads / creatives  (orgId, adAccountId, externalId)
  *   socialAccounts                          (orgId, platform, externalId)

@@ -5,6 +5,7 @@ import {
   MOCK_INVALID_CODE,
   MOCK_UNAVAILABLE_CODE,
   mockAuthorizationCode,
+  parseMockUser,
 } from "./mock/oauth";
 import { missingScopes } from "./oauth";
 import { runOAuthSpecContract } from "./oauth.suite";
@@ -99,5 +100,38 @@ describe("registry oauth family", () => {
         oauth: [createMockOAuthSpec("meta"), createMockOAuthSpec("meta")],
       }),
     ).toThrow(/Duplicate/);
+  });
+});
+
+describe("mock user grammar (Phase 5 test seam)", () => {
+  const now = 1_790_000_000_000;
+
+  it("parses id, scenario and variant; unknown parts are ignored", () => {
+    expect(parseMockUser("1")).toEqual({ id: "1" });
+    expect(parseMockUser("1--rate_limited")).toEqual({ id: "1", scenario: "rate_limited" });
+    expect(parseMockUser("7--default--v2")).toEqual({ id: "7", scenario: "default", variant: 2 });
+    expect(parseMockUser("1--bogus--vx")).toEqual({ id: "1" });
+  });
+
+  it("keeps the identity stable across scenarios, so reconnect targets the same connection", async () => {
+    const spec = createMockOAuthSpec("google_ads");
+    const plain = await spec.exchangeCode({
+      code: mockAuthorizationCode("google_ads", undefined, "1"),
+      redirectUri: "https://x.test/cb",
+      config: {},
+      now,
+    });
+    const scenario = await spec.exchangeCode({
+      code: mockAuthorizationCode("google_ads", undefined, "1--transient--v1"),
+      redirectUri: "https://x.test/cb",
+      config: {},
+      now,
+    });
+    expect(scenario.identity).toEqual(plain.identity);
+    expect(scenario.credential).toMatchObject({ kind: "mock", scenario: "transient", variant: 1 });
+    expect(plain.credential).not.toHaveProperty("scenario");
+    const refreshed = await spec.refresh!(scenario.credential, {}, now);
+    expect(refreshed.identity).toEqual(plain.identity);
+    expect(refreshed.credential).toMatchObject({ scenario: "transient", variant: 1 });
   });
 });

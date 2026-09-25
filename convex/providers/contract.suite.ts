@@ -152,6 +152,19 @@ export function runAdsProviderContract<C>(options: ContractOptions<C>) {
       expect(withData().length).toBeGreaterThan(0);
     });
 
+    it("returns single accounts equal to their listing (getAccount)", async () => {
+      const accounts = await all((cursor) => provider.listAccounts(ctx, cursor ? { cursor } : {}));
+      for (const account of accounts) {
+        const single = await provider.getAccount(ctx, { accountExternalId: account.externalId });
+        expectValidRecord("adAccount", single);
+        expect(single).toEqual(account);
+      }
+      await expectProviderError(
+        provider.getAccount(ctx, { accountExternalId: "9999999999" }),
+        "not_found",
+      );
+    });
+
     it("lists entities with unique ids and referential integrity", () => {
       for (const { account, campaigns, adGroups, ads, creatives } of snapshots) {
         const campaignIds = new Set(campaigns.map((c) => c.externalId));
