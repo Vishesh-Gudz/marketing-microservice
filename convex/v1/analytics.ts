@@ -20,6 +20,7 @@ import {
   toAggregateDto,
   toComparisonDto,
   toCoverageDto,
+  toEntitySummaryDto,
   toFxDto,
   toPerformanceRowDto,
 } from "./dto/analytics";
@@ -41,9 +42,18 @@ const accountFilters = {
 const filters = v.optional(v.object(accountFilters));
 const entity = v.object({ level: entityLevelValidator, id: v.string() });
 
-/** Org (or filtered) totals, KPIs, coverage and an optional comparison period. */
+/**
+ * Org (or filtered) totals, KPIs, coverage and an optional comparison period; or, with
+ * `entity` (cannot be combined with `filters`), the same for one campaign / ad group / ad
+ * plus its summary. An id the caller's org does not own is NOT_FOUND.
+ */
 export const overview = orgQuery({
-  args: { range, compare, filters },
+  args: {
+    range,
+    compare,
+    filters,
+    entity: v.optional(v.object({ level: performanceLevelValidator, id: v.string() })),
+  },
   returns: overviewDto,
   handler: async (ctx, args) => {
     const result = await analytics.overview(ctx, args);
@@ -55,6 +65,7 @@ export const overview = orgQuery({
       ...(result.comparison ? { comparison: toComparisonDto(result.comparison, currency) } : {}),
       coverage: toCoverageDto(result.coverage),
       fx: toFxDto(result.fx),
+      ...(result.entity ? { entity: toEntitySummaryDto(result.entity) } : {}),
     };
   },
 });

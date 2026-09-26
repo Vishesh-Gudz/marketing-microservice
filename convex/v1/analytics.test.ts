@@ -638,6 +638,220 @@ describe("performance", () => {
   });
 });
 
+describe("overview for one entity (D5)", () => {
+  async function tree(t: Backend, orgId: Id<"organizations">, seed: Partial<AccountSeed> = {}) {
+    const account = await seedAccount(t, orgId, {
+      externalId: "1",
+      coveredFrom: "2026-01-01",
+      coveredThrough: "2026-04-10",
+      ...seed,
+    });
+    const campaign = await seedCampaign(t, orgId, account, "11", "Spring sale");
+    const { adGroup, ad } = await t.run(async (ctx) => {
+      const now = Date.now();
+      const base = { orgId, adAccountId: account, platform: "meta" as const, campaignId: campaign };
+      const adGroup = await ctx.db.insert("adGroups", {
+        ...base,
+        externalId: "22",
+        name: "Prospecting",
+        kind: "ad_set",
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      });
+      const ad = await ctx.db.insert("ads", {
+        ...base,
+        adGroupId: adGroup,
+        externalId: "33",
+        name: "Video ad",
+        status: "paused",
+        createdAt: now,
+        updatedAt: now,
+      });
+      return { adGroup, ad };
+    });
+    await seedRows(t, orgId, account, [
+      // Account-level row: must NOT leak into entity totals.
+      { date: "2026-04-02", impressions: 9_999, spendMicros: 99_000_000n },
+      {
+        date: "2026-04-02",
+        level: "campaign",
+        entityId: campaign,
+        campaignId: campaign,
+        impressions: 100,
+        clicks: 4,
+        spendMicros: 8_000_000n,
+      },
+      {
+        date: "2026-03-25",
+        level: "campaign",
+        entityId: campaign,
+        campaignId: campaign,
+        impressions: 50,
+        clicks: 1,
+        spendMicros: 4_000_000n,
+      },
+      {
+        date: "2026-04-03",
+        level: "ad_group",
+        entityId: adGroup,
+        campaignId: campaign,
+        adGroupId: adGroup,
+        impressions: 70,
+        clicks: 2,
+      },
+      {
+        date: "2026-04-03",
+        level: "ad",
+        entityId: ad,
+        campaignId: campaign,
+        adGroupId: adGroup,
+        adId: ad,
+        impressions: 30,
+      },
+    ]);
+    return { account, campaign, adGroup, ad };
+  }
+
+  it("returns the entity's own totals, comparison and summary", async () => {
+    const t = newBackend();
+    const orgId = await orgOf(t);
+    const { account, campaign } = await tree(t, orgId);
+    const result = await overview(t, {
+      entity: { level: "campaign", id: campaign },
+      compare: "previous_period",
+    });
+    expect(result.accountCount).toBe(1);
+    expect(result.totals.dataState).toBe("reported");
+    expect(result.totals.metrics.impressions).toBe(100);
+    expect(result.totals.metrics.spend).toEqual({
+      native: [{ currency: "USD", micros: "8000000" }],
+      reporting: { currency: "USD", micros: "8000000" },
+    });
+    expect(result.totals.kpis.ctr).toBe(0.04);
+    expect(result.comparison?.deltas.impressions).toEqual({ absolute: 50, percent: 1 });
+    expect(result.coverage.accounts.map((a) => a.accountId)).toEqual([account]);
+    expect(result.fx).toEqual({ reportingCurrency: "USD", status: "not_needed" });
+    expect(result.entity).toEqual({
+      id: campaign,
+      level: "campaign",
+      externalId: "11",
+      name: "Spring sale",
+      platform: "meta",
+      status: "active",
+      accountId: account,
+      currency: "USD",
+      removed: false,
+      objective: "sales",
+      budgetType: "daily",
+      budget: { currency: "USD", micros: "25000000" },
+    });
+  });
+
+  it("supports ad groups and ads (with parent ids for breadcrumbs)", async () => {
+    const t = newBackend();
+    const orgId = await orgOf(t);
+    const { campaign, adGroup, ad } = await tree(t, orgId);
+    const group = await overview(t, { entity: { level: "ad_group", id: adGroup } });
+    expect(group.totals.metrics.impressions).toBe(70);
+    expect(group.entity).toMatchObject({
+      level: "ad_group",
+      name: "Prospecting",
+      campaignId: campaign,
+    });
+    const single = await overview(t, { entity: { level: "ad", id: ad } });
+    expect(single.totals.metrics.impressions).toBe(30);
+    expect(single.entity).toMatchObject({
+      level: "ad",
+      status: "paused",
+      campaignId: campaign,
+      adGroupId: adGroup,
+    });
+  });
+
+  it("reports no_delivery, unknown, partial and FX states for the entity's account", async () => {
+    const t = newBackend();
+    const orgId = await orgOf(t);
+    const { campaign } = await tree(t, orgId);
+    const quiet = await overview(t, {
+      entity: { level: "campaign", id: campaign },
+      range: { from: "2026-04-05", to: "2026-04-10" },
+    });
+    expect(quiet.totals.dataState).toBe("no_delivery");
+    const early = await overview(t, {
+      entity: { level: "campaign", id: campaign },
+      range: { from: "2025-06-01", to: "2025-06-10" },
+    });
+    expect(early.totals.dataState).toBe("unknown");
+    // Coverage ends on 2026-04-10: the last five days of this range are not synced.
+    const partial = await overview(t, {
+      entity: { level: "campaign", id: campaign },
+      range: { from: "2026-04-01", to: "2026-04-15" },
+    });
+    expect(partial.totals.dataState).toBe("partial");
+    expect(partial.totals.metrics.impressions).toBe(100);
+    expect(partial.coverage.accounts[0]).toMatchObject({ daysUncovered: 5 });
+
+    const e = newBackend();
+    const eOrg = await orgOf(e);
+    const eur = await tree(e, eOrg, { currency: "EUR" });
+    const missing = await overview(e, { entity: { level: "campaign", id: eur.campaign } });
+    expect(missing.fx.status).toBe("missing");
+    expect(missing.totals.metrics.spend?.reporting).toBeUndefined();
+    await e.mutation(internal.admin.fxRates.upsert, {
+      rates: [{ quote: "EUR", date: "2026-04-01", rate: "0.8" }],
+    });
+    const converted = await overview(e, { entity: { level: "campaign", id: eur.campaign } });
+    expect(converted.fx.status).toBe("complete");
+    expect(converted.totals.metrics.spend?.reporting).toEqual({
+      currency: "USD",
+      micros: "10000000",
+    });
+  });
+
+  it("rejects entity + filters and hides other tenants' or malformed ids (NOT_FOUND)", async () => {
+    const t = newBackend();
+    const erp = await orgOf(t);
+    const crm = await orgOf(t, { issuer: ISSUER_CRM });
+    const mine = await tree(t, erp);
+    const theirs = await tree(t, crm);
+    await expectMarketingError(
+      overview(t, {
+        entity: { level: "campaign", id: mine.campaign },
+        filters: { platforms: ["meta"] },
+      }),
+      "INVALID_ARGUMENT",
+    );
+    for (const entity of [
+      { level: "campaign", id: theirs.campaign }, // another tenant's campaign
+      { level: "ad", id: theirs.ad },
+      { level: "campaign", id: "not-a-convex-id" }, // malformed
+      { level: "campaign", id: mine.ad }, // an ad id is not a campaign
+    ]) {
+      await expectMarketingError(overview(t, { entity }), "NOT_FOUND");
+    }
+    // The CRM org sees its own numbers for the same external ids.
+    const crmResult = await overview(
+      t,
+      { entity: { level: "campaign", id: theirs.campaign } },
+      { issuer: ISSUER_CRM },
+    );
+    expect(crmResult.entity?.id).toBe(theirs.campaign);
+  });
+
+  it("leaves overview without entity unchanged (no entity field)", async () => {
+    const t = newBackend();
+    const orgId = await orgOf(t);
+    await tree(t, orgId);
+    const result = await overview(t);
+    expect(result).not.toHaveProperty("entity");
+    expect(result.totals.metrics.impressions).toBe(9_999); // account-level rows only
+    expect(Object.keys(result).sort()).toEqual(
+      ["accountCount", "coverage", "fx", "range", "totals"].sort(),
+    );
+  });
+});
+
 describe("tenant isolation", () => {
   it("never mixes tenants, even with identical external ids", async () => {
     const t = newBackend();

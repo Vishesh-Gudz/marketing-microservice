@@ -180,16 +180,6 @@ export const fxDto = v.object({
   missing: v.optional(v.array(v.object({ currency: v.string(), days: v.number() }))),
 });
 
-export const overviewDto = v.object({
-  range: dateRangeDto,
-  accountCount: v.number(),
-  totals: aggregateDto,
-  comparison: v.optional(comparisonDto),
-  coverage: coverageDto,
-  fx: fxDto,
-});
-export type OverviewDto = Infer<typeof overviewDto>;
-
 export const granularityValidator = v.union(
   v.literal("day"),
   v.literal("week"),
@@ -240,6 +230,22 @@ export const entitySummaryDto = v.object({
   budgetType: v.optional(budgetTypeValidator),
   budget: v.optional(moneyDto),
 });
+
+/**
+ * Overview. With `entity` (Phase 7, D5) the totals/comparison/coverage/fx describe that one
+ * campaign / ad group / ad, and `entity` carries its summary (the same EntitySummaryDto as
+ * performance rows). Without `entity` the response is unchanged and `entity` is omitted.
+ */
+export const overviewDto = v.object({
+  range: dateRangeDto,
+  accountCount: v.number(),
+  totals: aggregateDto,
+  comparison: v.optional(comparisonDto),
+  coverage: coverageDto,
+  fx: fxDto,
+  entity: v.optional(entitySummaryDto),
+});
+export type OverviewDto = Infer<typeof overviewDto>;
 
 export const performanceRowDto = v.object({
   entity: entitySummaryDto,

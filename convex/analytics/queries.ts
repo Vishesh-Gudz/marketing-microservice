@@ -139,37 +139,65 @@ const orgCtx = (ctx: TenantCtx) => ({ db: ctx.db, orgId: ctx.tenant.orgId });
 // overview
 // ---------------------------------------------------------------------------
 
-export type OverviewArgs = { range: DateRange; compare?: CompareArg; filters?: AccountFilters };
+export type OverviewArgs = {
+  range: DateRange;
+  compare?: CompareArg;
+  filters?: AccountFilters;
+  /** Phase 7 (D5): totals of ONE campaign / ad group / ad instead of the (filtered) org. */
+  entity?: { level: PerformanceLevel; id: string };
+};
 
 export async function overview(ctx: TenantCtx, args: OverviewArgs) {
   const org = await loadOrg(ctx);
   const range = validRange(args.range, "range");
   const previousRange = comparisonRange(args.compare, range);
   const budget = ReadBudget.metrics();
-  const accounts = await scopedAccounts(ctx, args.filters, budget);
 
+  let accounts: Doc<"adAccounts">[];
+  let level: EntityLevel = "account";
+  let entitySummary: EntitySummary | undefined;
   const rows: Doc<"metricsDaily">[] = [];
   const previousRows: Doc<"metricsDaily">[] = [];
-  for (const account of accounts) {
-    rows.push(
-      ...(await accountLevelRows(orgCtx(ctx), budget, account._id, "account", "all", range)),
-    );
+  if (args.entity !== undefined) {
+    if (args.filters !== undefined) {
+      throw apiError("INVALID_ARGUMENT", "filters cannot be combined with entity.", {
+        field: "filters",
+      });
+    }
+    // getOwned: another tenant's, unknown or malformed id -> NOT_FOUND.
+    const { entity, account } = await ownedEntity(ctx, args.entity.level, args.entity.id);
+    level = args.entity.level;
+    accounts = [account];
+    entitySummary = summaryOf(args.entity.level, entity as EntityDoc, account);
+    rows.push(...(await entityRows(orgCtx(ctx), budget, entity._id, "all", range)));
     if (previousRange) {
       previousRows.push(
-        ...(await accountLevelRows(
-          orgCtx(ctx),
-          budget,
-          account._id,
-          "account",
-          "all",
-          previousRange,
-        )),
+        ...(await entityRows(orgCtx(ctx), budget, entity._id, "all", previousRange)),
       );
+    }
+  } else {
+    accounts = await scopedAccounts(ctx, args.filters, budget);
+    for (const account of accounts) {
+      rows.push(
+        ...(await accountLevelRows(orgCtx(ctx), budget, account._id, "account", "all", range)),
+      );
+      if (previousRange) {
+        previousRows.push(
+          ...(await accountLevelRows(
+            orgCtx(ctx),
+            budget,
+            account._id,
+            "account",
+            "all",
+            previousRange,
+          )),
+        );
+      }
     }
   }
   const coverages = await loadCoverage(ctx.db, ctx.tenant.orgId, accounts, {
     kind: "level",
-    level: "account",
+    level,
   });
   const fx = await fxFor(ctx, org, accounts, union(range, previousRange));
   const totals = aggregate(rows, fx, coverages, range);
@@ -183,6 +211,7 @@ export async function overview(ctx: TenantCtx, args: OverviewArgs) {
     ...(comparison ? { comparison } : {}),
     coverage: coverageResult(rows.length > 0, coverages, range),
     fx: fx.status(),
+    ...(entitySummary ? { entity: entitySummary } : {}),
   };
 }
 

@@ -51,8 +51,8 @@ npm run dev:auth -- token --org acme --role viewer  # mint a token for any org/r
 `setup` also generates `TOKEN_ENCRYPTION_KEYS` in the dev deployment's Convex env (Phase 4
 connections; never written to disk) and allowlists `http://localhost:3000/` as an OAuth return URL
 for the dev app. It writes a 30-day `NEXT_PUBLIC_DEV_AUTH_TOKEN` (org `dev-org`, role `admin`) to
-`.env.local`. Restart `dev:frontend` afterwards. The home page then shows the resolved organization
-and role. Production builds ignore this variable.
+`.env.local`. Restart `dev:frontend` afterwards. The dashboard header then shows the resolved
+organization, role and reporting currency. Production builds ignore this variable.
 
 `AUTH_ISSUERS` must be set before Convex will deploy (`[]` = trust no issuer). A brand-new
 deployment reports `Environment variable AUTH_ISSUERS is used in auth config file but its value was
@@ -84,6 +84,17 @@ npx convex run sync/admin:runStatus '{"runId":"<id>"}'
 
 Details: [sync.md](sync.md).
 
+## Dashboard demo data (Phase 7)
+
+```bash
+npm run dev:seed             # connects the mock providers, links 4 accounts, runs initial syncs
+npm run dev:seed -- --resync # re-run a lookback sync for the seeded accounts
+```
+
+Local only (dev issuer, mock providers, `convex run` for the internal `sync/admin:*` functions).
+Idempotent: existing connections and synced accounts are reused. It prints no tokens or codes.
+The dashboard itself is described in [dashboard.md](dashboard.md).
+
 ## Tests
 
 | Command               | Runs                                                                                                        |
@@ -94,7 +105,9 @@ Details: [sync.md](sync.md).
 | `npm run test:live`   | Real JWT + isolation over HTTP, complete syncs on the real runtime (needs `dev:backend` + `dev:auth setup`) |
 | `npm run test:e2e`    | Playwright (`tests/e2e`); starts `next dev` on port 3100 itself                                             |
 
-Convex tests don't need a running backend. The E2E smoke test works with or without one.
+Convex tests don't need a running backend. The CI-safe E2E specs (`smoke`, `dashboard`) work with
+or without one. The data specs are local-only: after `dev:auth setup` and `dev:seed`, run
+`E2E_DASHBOARD_DATA=1 npx playwright test`.
 
 ## Conventions
 

@@ -33,6 +33,22 @@ const CREDENTIAL_EXEMPT = [
 /** May insert canonical rows: the write path itself and test seeds (never deployed). */
 const CANONICAL_WRITE_EXEMPT = ["convex/sync/upsert.ts", "convex/test.helpers.ts"];
 
+/**
+ * D23 frontend allowlist (exact). Runtime: the generated public api and four pure,
+ * secret-free modules. Type-only: the generated data model. Nothing else under convex/ may
+ * cross the frontend boundary, not even as a type.
+ */
+const FRONTEND_RUNTIME_CONVEX = [
+  "_generated/api",
+  "lib/errors",
+  "lib/money",
+  "lib/dates",
+  "analytics/periods",
+];
+const FRONTEND_TYPE_ONLY_CONVEX = ["_generated/dataModel"];
+/** `@/convex/...`, `./convex/...` or `../../convex/...` */
+const CONVEX_DIR = String.raw`^(?:@/|\./|(?:\.\./)+)convex`;
+
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -189,6 +205,47 @@ const eslintConfig = defineConfig([
             },
             DECRYPT_IMPORT,
           ],
+        },
+      ],
+    },
+  },
+  // Dashboard (Phase 7, D23): the frontend consumes application data only through the
+  // generated public API with `convex/react`. Exact allowlist for app/, components/, lib/
+  // (tests included):
+  //   runtime:   @/convex/_generated/api, convex/react, convex/lib/{errors,money,dates},
+  //              convex/analytics/periods
+  //   type-only: convex/server, convex/values, @/convex/_generated/dataModel
+  // Everything else from convex/ or the convex package (e.g. analytics internals,
+  // connections, sync, providers, admin, tables, schema, lib/crypto, convex/browser) is
+  // forbidden, including type-only imports.
+  {
+    files: ["app/**/*.{ts,tsx}", "components/**/*.{ts,tsx}", "lib/**/*.{ts,tsx}"],
+    rules: {
+      "@typescript-eslint/no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              regex: `${CONVEX_DIR}(?:$|/(?!(?:${[...FRONTEND_RUNTIME_CONVEX, ...FRONTEND_TYPE_ONLY_CONVEX].join("|")})$))`,
+              message:
+                "Not on the frontend allowlist (D23). Use the generated api (api.v1.*) with convex/react; only convex/lib/{errors,money,dates} and convex/analytics/periods may be imported, and convex/_generated/dataModel as a type.",
+            },
+            {
+              regex: `${CONVEX_DIR}/(?:${FRONTEND_TYPE_ONLY_CONVEX.join("|")})$`,
+              allowTypeImports: true,
+              message: "convex/_generated/dataModel is type-only in frontend code (D23).",
+            },
+            {
+              regex: String.raw`^convex(?:$|/(?!(?:react|server|values)$))|^convex-(?:test|helpers)(?:$|/)`,
+              message:
+                "Frontend code may use convex/react at runtime and convex/server / convex/values as types only (D23).",
+            },
+          ],
+          paths: ["convex/server", "convex/values"].map((name) => ({
+            name,
+            allowTypeImports: true,
+            message: `${name} is type-only in frontend code (D23).`,
+          })),
         },
       ],
     },

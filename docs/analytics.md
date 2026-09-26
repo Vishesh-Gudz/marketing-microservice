@@ -52,13 +52,21 @@ All are `orgQuery` (viewer and above). The org always comes from the verified JW
 
 | Function                   | Args                                                                                       | Reads                                                       |
 | -------------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
-| `v1/analytics:overview`    | `range, compare?, filters?{platforms?, accountIds?}`                                       | account-level rows of the scoped accounts                   |
+| `v1/analytics:overview`    | `range, compare?, filters?{platforms?, accountIds?}` or `entity?{level, id}` (Phase 7)     | account-level rows, or one entity's rows                    |
 | `v1/analytics:timeSeries`  | `range, granularity: day\|week\|month, filters?` or `entity?{level, id}`                   | account-level rows, or one entity's rows                    |
 | `v1/analytics:performance` | `level: campaign\|ad_group\|ad, range, parent?, filters?, sort?, compare?, paginationOpts` | one level's rows within a parent (or the org for campaigns) |
 | `v1/analytics:breakdown`   | `by: platform\|account\|placement, range, level? (placement only), filters?`               | account-level rows, or per-placement rows                   |
 | `v1/analytics:actions`     | `range, level?, entity?, filters?{…, actionTypes?, attributionWindows?, primaryOnly?}`     | action rows (new `by_org_account_level_date` index) + spend |
 
 Scopes and validation:
+
+- `overview` with `entity` (Phase 7, D5; `level`: `campaign`, `ad_group` or `ad`) aggregates that
+  entity's own rows (its level, placement `all`) with the same rules, comparison, coverage (its
+  ad account) and FX, and adds `entity` (the `EntitySummaryDto` used by performance rows: name,
+  status, platform, parents, currency, campaign budget/objective) to the response.
+  `accountCount` is 1. `entity` cannot be combined with `filters` (`INVALID_ARGUMENT`,
+  `field: "filters"`); an id the caller's org does not own, an unknown or malformed id, or an id of
+  another level is `NOT_FOUND`. Without `entity` the response is unchanged and has no `entity` key.
 
 - `filters.accountIds`: 1–50 ids, each loaded with `getOwned` (another tenant's id is `NOT_FOUND`).
   Filters cannot be combined with `parent` or `entity`.

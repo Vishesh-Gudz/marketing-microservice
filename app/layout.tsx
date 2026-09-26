@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Marketing Microservice",
+  title: { default: "Marketing Microservice", template: "%s · Marketing Microservice" },
   description: "Unified ad spend, campaign, engagement and messaging analytics.",
 };
 

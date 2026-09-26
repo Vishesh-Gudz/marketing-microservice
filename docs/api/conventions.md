@@ -109,4 +109,7 @@ to `convex/v2/`. The contract is formally frozen in Phase 13.
 | `v1/audit:list`          | `orgQuery` (`minRole: "admin"`) | `{ paginationOpts }`                              | `Paginated<AuditEntryDto>` |
 
 Phase 6 analytics (`v1/analytics:overview`, `timeSeries`, `performance`, `breakdown`, `actions`;
-all `orgQuery`, viewer) are documented in [../analytics.md](../analytics.md).
+all `orgQuery`, viewer) are documented in [../analytics.md](../analytics.md). Phase 7 added one
+optional argument, `entity`, and one optional response field, `entity`, to `v1/analytics:overview`
+(additive; no new function). The dashboard ([../dashboard.md](../dashboard.md)) uses only these
+public functions.
