@@ -493,12 +493,18 @@ async function completeRun(
   const structureOk =
     structureTasks.length > 0 && structureTasks.every((t) => t.status === "succeeded");
   const structureStartedAt = Math.min(...structureTasks.map((t) => t.fetchStartedAt ?? now), now);
+  const windows = completedWindows(tasks);
   const coverage = mergeCoverage(
     syncAccount.coveredFrom !== undefined && syncAccount.coveredThrough !== undefined
       ? { from: syncAccount.coveredFrom, through: syncAccount.coveredThrough }
       : undefined,
-    completedWindows(tasks),
+    windows,
   );
+  // Phase 8 (D34c): a backfill that ends partial WITHOUT completing any window made no
+  // progress (e.g. a deterministic metric-task failure or unresolved rows). Back off like a
+  // failed run instead of re-planning the same window at every planner tick.
+  const stalledBackfill = run.kind === "backfill" && status === "partial" && windows.length === 0;
+  const failures = stalledBackfill ? syncAccount.consecutiveFailures + 1 : 0;
 
   const schedule: Partial<Doc<"syncAccounts">> = {};
   const kind: SyncRunKind = run.kind;
@@ -528,14 +534,16 @@ async function completeRun(
     ...base,
     ...schedule,
     state: "idle",
-    consecutiveFailures: 0,
+    consecutiveFailures: failures,
     lastSuccessAt: now,
     lastError: error,
     structureStale: next.structureStale,
     ...(structureOk ? { lastStructureStartedAt: structureStartedAt } : {}),
     ...(structureOk && run.structureMode === "full" ? { lastFullStructureAt: now } : {}),
     ...(coverage ? { coveredFrom: coverage.from, coveredThrough: coverage.through } : {}),
-    nextPlanAt: nextDueAt(next, now),
+    nextPlanAt: stalledBackfill
+      ? Math.max(nextDueAt(next, now), now + failureBackoffMs(failures))
+      : nextDueAt(next, now),
   });
 }
 
@@ -965,6 +973,10 @@ export const commitPage = internalMutation({
       emptyPagesInRow: page.items.length === 0 ? task.emptyPagesInRow + 1 : 0,
       attempt: 1,
       pageTransientFailures: 0,
+      // Phase 8 (D34a): the throttle budget is per page, like the transient budget. A task
+      // that is throttled on many pages keeps progressing; 10 consecutive throttles on ONE
+      // page still fail it, and backoff restarts from the base after every commit.
+      rateLimitHits: 0,
       cursor: page.nextCursor,
       previousCursor: requestCursor,
       cursorSavedAt: now,

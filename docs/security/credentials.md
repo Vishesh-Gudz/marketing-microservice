@@ -62,9 +62,24 @@
 - `console` is banned in `convex/sync/`; stored sync errors are kind + optional platform code +
   generic message.
 
+## Meta provider (Phase 8)
+
+- The long-lived Meta user token lives only in the encrypted `MetaCredential` blob and is bound to
+  the app id; a credential for another app is an `auth` failure.
+- Graph calls send the token in the `Authorization` header with `appsecret_proof`; OAuth secrets go
+  in form bodies. The only token-in-URL exception is `debug_token`'s `input_token` (pending V2).
+- `console` is banned in all of `convex/providers/`. Provider errors carry only a kind, a
+  numeric/internal code and a generic message.
+- OAuth-failure audits carry only the D28b allowlist (`failureKind`, `failureStage`,
+  `providerCode`); tokens, codes, state, secrets, URLs, messages, bodies and `fbtrace_id` are never
+  stored.
+- Test fixtures are synthetic; a scrub guard rejects token- and secret-shaped strings.
+
 ## Operational notes
 
 - **Key rotation:** add version N+1 to `TOKEN_ENCRYPTION_KEYS`. New writes use it and old rows still
   decrypt. A re-encrypt job to retire old versions is Phase 16.
-- **Production:** never configure the dev issuer or dev keys. `PROVIDER_MODE=live` (real OAuth specs)
-  arrives in Phase 8. Until then, deployments use mock OAuth only.
+- **Production:** never configure the dev issuer or dev keys. Production must set
+  `PROVIDER_MODE=live` before its first deploy; `PROVIDER_MODE` fails closed (unset on a cloud
+  deployment or invalid = no provider calls, no OAuth), so production can never silently run the
+  mocks ([providers/meta.md](../providers/meta.md)).

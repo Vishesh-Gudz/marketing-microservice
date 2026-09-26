@@ -5,6 +5,7 @@ import { adPlatformValidator } from "../domain/validators";
 import { AUDIT_ACTIONS, writeAudit } from "../lib/audit";
 import { apiError } from "../lib/errors";
 import { MAX_PENDING_STATES_PER_ORG, OAUTH_STATE_TTL_MS } from "./config";
+import { sanitizeOAuthDiagnostics } from "./oauthDiagnostics";
 import { isAllowedReturnUrl } from "./returnUrls";
 
 /**
@@ -186,11 +187,21 @@ export const consume = internalMutation({
   },
 });
 
-/** Marks a consumed state failed (denied consent, exchange failure, ...). */
+/**
+ * Marks a consumed state failed (denied consent, exchange failure, ...). Optional
+ * `diagnostics` (D28b) are reduced to the allowlisted audit fields; anything else
+ * is dropped (see oauthDiagnostics.ts).
+ */
 export const fail = internalMutation({
-  args: { stateId: v.id("oauthStates"), code: callbackErrorValidator },
+  args: {
+    stateId: v.id("oauthStates"),
+    code: callbackErrorValidator,
+    diagnostics: v.optional(
+      v.object({ kind: v.optional(v.string()), providerCode: v.optional(v.string()) }),
+    ),
+  },
   returns: v.null(),
-  handler: async (ctx, { stateId, code }) => {
+  handler: async (ctx, { stateId, code, diagnostics }) => {
     const state = await ctx.db.get(stateId);
     if (state === null) return null;
     await ctx.db.patch(stateId, { status: "failed", failureCode: code });
@@ -201,7 +212,7 @@ export const fail = internalMutation({
         action: AUDIT_ACTIONS.connectionOAuthFailed,
         targetType: "oauthState",
         targetId: stateId,
-        changes: { reason: { from: null, to: code } },
+        changes: { ...sanitizeOAuthDiagnostics(diagnostics), reason: { from: null, to: code } },
       },
     );
     return null;

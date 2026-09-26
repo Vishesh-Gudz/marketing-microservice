@@ -67,6 +67,10 @@ describe("credential guards (Phase 4)", () => {
       'import { decryptJson } from "../lib/crypto";\nexport const d = decryptJson;',
     ],
     ["convex/connections/__fixture__.ts", 'export const f = () => console.log("x");'],
+    // Phase 8 D27: providers never log (tokens, codes, cursors, raw payloads).
+    ["convex/providers/__fixture__.ts", 'export const f = () => console.log("x");'],
+    ["convex/providers/meta/__fixture__.ts", "export const f = (e: unknown) => console.error(e);"],
+    ["convex/providers/meta/__fixture__.fixtures.ts", 'export const f = () => console.warn("x");'],
   ])("%s rejects %s", async (filePath, source) => {
     expect((await violations(`${source}\n`, filePath)).length).toBeGreaterThan(0);
   });

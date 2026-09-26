@@ -192,6 +192,15 @@ conversionActionExternalId, attributionWindow, attributionBasis, isPrimary)`. **
   `zero_denominator`, `mixed_currency`, `invalid_data`.
 
 - No placement breakdown (sync stores action rows for "all" only).
+- **Real Meta provider (Phase 8, `PROVIDER_MODE=live`), PROVISIONAL until validated on a real
+  account:** wide `conversions` / `conversionValue` are Meta's `omni_purchase` + `lead` with each ad
+  set's attribution setting (Ads Manager default); they are absent (not 0) on rows that reported
+  neither, so a range can show them as partial. Action groups are the conversion types (`omni_*`,
+  `lead`, custom conversions) in the fixed windows `1d_click`, `7d_click` and `1d_view`, each its own
+  group, with basis `impression_or_click_date` (`action_report_time=impression`). As for Google, the
+  wide conversions and the window groups are not expected to reconcile. The public contract does
+  not change ([providers/meta.md](providers/meta.md#real-account-validation-required)). The mock
+  behavior above is unchanged.
 
 ## Periods and time zones
 

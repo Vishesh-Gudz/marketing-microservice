@@ -17,7 +17,7 @@ implementation. Read [architecture.md](architecture.md) first.
 ```text
 convex/providers/<platform>/
   client.ts      HTTP, auth headers, retries NOT here (sync owns retries), rate-limit header parsing
-  schemas.ts     Zod schemas for raw responses (untrusted input)
+  schemas.ts     Convex `v` validators + convex-helpers `validate` for raw responses (untrusted input; no Zod)
   normalize.ts   raw -> provider records (reuse domain/identity, lib/money, lib/dates)
   index.ts       createXAdsProvider(): AdsProvider<XCredential>
 ```
@@ -30,7 +30,9 @@ convex/providers/<platform>/
   `ProviderContext.credential`.
 - Wrap platform cursors in the opaque cursor string. Bind them to the request fingerprint.
 - Normalize the requested page, then run `assertValidRecord` on every record before returning it.
-- Throw `ProviderError` only. Wrap anything else with `toProviderError`.
+- Throw `ProviderError` only. Wrap anything else with `toProviderError`. Classify by platform codes
+  and HTTP status, never by message text; messages stay generic (no payloads, URLs or tokens).
+- Never log (`no-console` covers `convex/providers/**`).
 - Omit metrics the platform did not report. Never write `0` for "unknown".
 - Money must be exact: use `parseDecimalToMicros` for decimal strings and `BigInt` for micros
   strings. Use `numberToMicros` only for doubles.
@@ -82,8 +84,13 @@ when known) and `transient`. Revoked or expired tokens are `auth`.
       convex-test.
 - [ ] A complete sync of a recorded-fixture account through the Phase 5 engine succeeds and a second
       sync of the same window is a no-op (see `convex/sync/e2e.test.ts`).
+- [ ] A fake platform behind a stubbed `fetch` (see `convex/providers/meta/fakeGraph.fixtures.ts`)
+      proves transport invariants (header token, request signing, no secrets in URLs) and leak
+      scans; fixtures contain no real tokens or secrets (fixture scrub guard).
 
 ## 6. Registration
 
 Add the provider to `createDefaultRegistry()` in `convex/providers/index.ts`, selected by
-`PROVIDER_MODE`. No other module changes.
+`PROVIDER_MODE` (fail-closed, `convex/providers/mode.ts`). Until a platform's real provider exists,
+live mode registers the unavailable stub (`convex/providers/unavailable.ts`). No other module
+changes. The Meta provider ([meta.md](meta.md)) is the reference implementation.

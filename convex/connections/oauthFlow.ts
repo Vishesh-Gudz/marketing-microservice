@@ -12,6 +12,7 @@ import {
   providerRegistry,
 } from "./config";
 import { encryptCredential, withConnectionCredential } from "./credentialStore";
+import type { OAuthFailureDiagnostics } from "./oauthDiagnostics";
 import type { CallbackErrorCode } from "./oauthState";
 import { withResultParams } from "./returnUrls";
 
@@ -116,10 +117,11 @@ export async function handleOAuthCallback(ctx: ActionCtx, request: Request): Pro
   });
   if (!consumed.ok) return finish(consumed.returnUrl, { status: "error", error: consumed.code });
 
-  const fail = async (error: CallbackErrorCode) => {
+  const fail = async (error: CallbackErrorCode, diagnostics?: OAuthFailureDiagnostics) => {
     await ctx.runMutation(internal.connections.oauthState.fail, {
       stateId: consumed.stateId,
       code: error,
+      ...(diagnostics !== undefined ? { diagnostics } : {}),
     });
     return finish(consumed.returnUrl, { status: "error", error });
   };
@@ -137,8 +139,18 @@ export async function handleOAuthCallback(ctx: ActionCtx, request: Request): Pro
       config: oauthClientConfig(consumed.provider),
       now: Date.now(),
     });
-  } catch {
-    return await fail("exchange_failed");
+  } catch (error) {
+    // D28b: only the error's kind and staged providerCode are passed on; the mutation
+    // keeps allowlisted values only. Messages, URLs and payloads never leave here.
+    return await fail(
+      "exchange_failed",
+      isProviderError(error)
+        ? {
+            kind: error.kind,
+            ...(error.providerCode !== undefined ? { providerCode: error.providerCode } : {}),
+          }
+        : undefined,
+    );
   }
 
   let encrypted;

@@ -4,6 +4,12 @@ import type { UserIdentity } from "convex/server";
 import { expect, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import { mockAuthorizationCode } from "./providers/mock/oauth";
+import {
+  FAKE_APP_ID,
+  FAKE_APP_SECRET,
+  FAKE_CONFIG_ID,
+  type FakeGraph,
+} from "./providers/meta/fakeGraph.fixtures";
 import { isMarketingError, type MarketingErrorCode } from "./lib/errors";
 import type { Role } from "./lib/validation";
 import schema from "./schema";
@@ -424,4 +430,43 @@ export async function planAndDrain(t: Backend) {
   const result = await t.mutation(internal.sync.planner.tick, {});
   await drainScheduler(t);
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 8 helpers: the real Meta provider in live mode against the fake Graph
+// ---------------------------------------------------------------------------
+
+/** PROVIDER_MODE=live with test-only Meta app values, and `fetch` served by the fake Graph. */
+export function stubLiveMeta(graph: FakeGraph, env: Record<string, string> = {}) {
+  vi.stubEnv("PROVIDER_MODE", "live");
+  vi.stubEnv("META_APP_ID", FAKE_APP_ID);
+  vi.stubEnv("META_APP_SECRET", FAKE_APP_SECRET);
+  vi.stubEnv("META_LOGIN_CONFIG_ID", FAKE_CONFIG_ID);
+  for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
+  vi.stubGlobal("fetch", graph.fetch);
+}
+
+/**
+ * Connects a Meta identity through the REAL connect flow (beginConnect -> fake
+ * Facebook consent -> /oauth/callback -> Meta OAuthSpec against the fake Graph).
+ * Returns the callback's redirect parameters.
+ */
+export async function connectMetaFake(
+  t: Backend,
+  graph: FakeGraph,
+  user: string,
+  identityInput: IdentityInput = {},
+): Promise<URLSearchParams> {
+  const { authorizeUrl } = await as(t, identityInput).action(api.v1.connections.beginConnect, {
+    provider: "meta",
+    returnUrl: RETURN_URL,
+  });
+  const state = new URL(authorizeUrl).searchParams.get("state")!;
+  const code = graph.issueCode(user);
+  return redirectParams(
+    await t.fetch(
+      `/oauth/callback?state=${encodeURIComponent(state)}&code=${encodeURIComponent(code)}`,
+      { method: "GET", redirect: "manual" },
+    ),
+  );
 }

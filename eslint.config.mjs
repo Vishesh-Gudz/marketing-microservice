@@ -136,10 +136,10 @@ const eslintConfig = defineConfig([
       "@typescript-eslint/no-restricted-imports": ["error", { patterns: [DECRYPT_IMPORT] }],
     },
   },
-  // No logging in the connection layer or the sync engine (credentials, codes, states,
-  // cursors and provider payloads must never reach logs).
+  // No logging in the connection layer, the sync engine or the providers (credentials,
+  // codes, states, cursors, tokens and provider payloads must never reach logs; Phase 8 D27).
   {
-    files: ["convex/connections/**/*.ts", "convex/sync/**/*.ts"],
+    files: ["convex/connections/**/*.ts", "convex/sync/**/*.ts", "convex/providers/**/*.ts"],
     ignores: ["**/*.test.ts"],
     rules: { "no-console": "error" },
   },
@@ -198,6 +198,8 @@ const eslintConfig = defineConfig([
                 "**/sync/admin",
                 "**/providers/mock",
                 "**/providers/mock/**",
+                "**/providers/meta",
+                "**/providers/meta/**",
                 "**/providers/oauth",
               ],
               message:

@@ -82,9 +82,14 @@ describe("retryable scenarios", () => {
     await syncWith(t, "google_ads", "1--rate_limited", ["1112223333"]);
     const db = await snapshot(t);
     expect(db.runs[0]!.status).toBe("succeeded");
-    const throttled = db.tasks.filter((task) => task.rateLimitHits > 0);
+    // Every page after the first was throttled once and retried. Since Phase 8 (D34a) the
+    // rate-limit budget is per page: it resets at each commit, so it ends at 0.
+    const throttled = db.tasks.filter((task) => task.pages > 1);
     expect(throttled.length).toBeGreaterThan(0);
-    for (const task of throttled) expect(task.rateLimitHits).toBe(task.pages - 1);
+    for (const task of db.tasks) {
+      expect(task.rateLimitHits, task.operation).toBe(0);
+      expect(task.totalAttempts, task.operation).toBe(2 * task.pages - 1);
+    }
     expect(db.states[0]!.throttledUntil).toBeGreaterThanOrEqual(
       NOW.getTime() + RATE_LIMIT_RETRY_AFTER_MS,
     );

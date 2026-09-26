@@ -71,6 +71,12 @@ Two separate places. Never mix them.
 Secrets never live in `.env.local`, in the repo, or in Convex tables. `.env.example` lists the
 secrets introduced by each later phase.
 
+**Provider mode (Phase 8).** The local backend runs the mock providers with `PROVIDER_MODE` unset,
+exactly as before (`dev`, `dev:auth setup`, `dev:seed` are mock-only). **Every cloud deployment
+must set `PROVIDER_MODE`** to `mock` or `live`; unset on a cloud deployment, or any other value, is
+a configuration error (no provider calls, no OAuth). Live Meta setup:
+[providers/meta.md](providers/meta.md).
+
 ## Syncing (Phase 5)
 
 Linking an ad account schedules its initial sync; the planner cron runs every 15 minutes. To run it

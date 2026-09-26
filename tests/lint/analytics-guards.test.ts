@@ -24,6 +24,10 @@ describe("analytics isolation", () => {
     'import { commitPage } from "../sync/runs";',
     'import { writeMetricPage } from "../sync/upsert";',
     'import { createMockAdsProvider } from "../providers/mock";',
+    // Phase 8: the real Meta provider is an implementation, like the mock.
+    'import { createMetaAdsProvider } from "../providers/meta";',
+    'import { META_CAPABILITIES } from "../providers/meta/capabilities";',
+    'import { classifyGraphFailure } from "../providers/meta/errors";',
     'import { decryptJson } from "../lib/crypto";',
   ])("rejects %s", async (source) => {
     for (const file of ["convex/analytics/__fixture__.ts", "convex/v1/analytics.ts"]) {

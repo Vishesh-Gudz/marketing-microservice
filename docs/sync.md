@@ -157,19 +157,19 @@ mark more than 50% **and** more than 20 entities, nothing is marked, the run is 
 
 Only `rate_limited` and `transient` are retried (the Phase 3 rule).
 
-| Failure                         | Behavior                                                                                                            |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `auth`                          | connection → `needs_reauth` (audited, subject `system:sync`); run failed; sibling runs of the connection cancelled  |
-| `permission`, `not_found`       | **only this account** is `blocked`, run failed, rechecked after 24 h; audited once                                  |
-| `rate_limited`                  | same page retried after `max(retryAfterMs, 30 s × 2^n)` + jitter, ≤ 1 h; account throttled; 10th hit fails the task |
-| `transient`                     | same page retried after 30 s × 2^n + jitter, ≤ 15 min; 5th failed attempt fails the task                            |
-| `invalid_request`               | restart from page 1 once if a cursor was involved, otherwise the task fails                                         |
-| `unsupported`                   | task skipped                                                                                                        |
-| `data`, `unknown`, guard errors | task fails (no retry); the run continues with the next task                                                         |
-| credential unavailable          | run cancelled (`connection_inactive`)                                                                               |
-| account drift                   | account `blocked`, `sync.account_attributes_changed` audited                                                        |
-| internal (e.g. missing key)     | task fails, never retried                                                                                           |
-| any failure of `getAccount`     | fatal for the run (nothing else may run without a verified account)                                                 |
+| Failure                         | Behavior                                                                                                                        |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `auth`                          | connection → `needs_reauth` (audited, subject `system:sync`); run failed; sibling runs of the connection cancelled              |
+| `permission`, `not_found`       | **only this account** is `blocked`, run failed, rechecked after 24 h; audited once                                              |
+| `rate_limited`                  | same page retried after `max(retryAfterMs, 30 s × 2^n)` + jitter, ≤ 1 h; account throttled; 10th hit on one page fails the task |
+| `transient`                     | same page retried after 30 s × 2^n + jitter, ≤ 15 min; 5th failed attempt fails the task                                        |
+| `invalid_request`               | restart from page 1 once if a cursor was involved, otherwise the task fails                                                     |
+| `unsupported`                   | task skipped                                                                                                                    |
+| `data`, `unknown`, guard errors | task fails (no retry); the run continues with the next task                                                                     |
+| credential unavailable          | run cancelled (`connection_inactive`)                                                                                           |
+| account drift                   | account `blocked`, `sync.account_attributes_changed` audited                                                                    |
+| internal (e.g. missing key)     | task fails, never retried                                                                                                       |
+| any failure of `getAccount`     | fatal for the run (nothing else may run without a verified account)                                                             |
 
 **Blocking reasons are sticky:** once an account is blocked (`permission`, `not_found`,
 `account_changed`), its `lastError` is kept through inactive-connection rechecks, cancellations and
@@ -177,7 +177,9 @@ non-blocking failures (those are still recorded on the run, the connection and t
 replaced only by a newer blocking reason, and cleared only by a successful run, which audits
 `sync.account_unblocked`. Repeated inactive-connection rechecks keep the first observation.
 
-Rate-limit hits do not consume the transient budget. `ctx.attempt` (passed to the provider) counts
+Rate-limit hits do not consume the transient budget. Since Phase 8 (D34a) the rate-limit budget is
+**per page**, like the transient budget: `rateLimitHits` resets at every page commit, so backoff
+restarts from the base and a long task throttled on many pages still completes. `ctx.attempt` (passed to the provider) counts
 every attempt of the current page. Backoff jitter is deterministic (hash of task id and attempt).
 Stored errors contain only the kind, an optional platform code (≤ 64 chars) and a **generic**
 message; provider messages and payloads are never stored or logged.
@@ -206,6 +208,17 @@ absent inside coverage means "no delivery"; outside it means "unknown". A window
 record does not advance coverage (existing coverage is kept, never shrunk); structure is marked
 stale, so a later clean run covers it. Coverage is per account, so such a window is not covered for
 any level. Analytics relies on this ([analytics.md](analytics.md)).
+
+**Stalled backfills (Phase 8, D34c):** a `backfill` run that ends `partial` without merging any
+completed window made no progress (for example a deterministic metric-task failure or unresolved
+rows). It is scheduled like a failed run: `consecutiveFailures + 1` and
+`nextPlanAt = max(nextDueAt, now + failureBackoffMs(n))` (15 min, 30 min, 60 min … ≤ 6 h) instead of
+re-planning the same window at every planner tick. Other run kinds, and backfills that merged a
+window, are unchanged; any such run resets the streak to 0.
+
+> D34 (a) and (c) are the only sync changes of Phase 8: a narrowly scoped Phase 5 compatibility
+> correction, latent with the mocks and required for real Meta traffic
+> ([ADR 0009](adr/0009-meta-ads-provider.md)). Regression tests: `convex/sync/compat.test.ts`.
 
 ## Concurrency and idempotency
 

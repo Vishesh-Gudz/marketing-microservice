@@ -180,6 +180,12 @@ when the conversion mapping changes.
 Coverage only includes metric windows whose sync resolved every record (no unresolved or rejected
 rows), so "absent inside coverage" really means no delivery (Phase 6, D11).
 
+Real Meta data (Phase 8): the live Meta provider keeps these semantics with PROVISIONAL mappings
+(D18): a field or action type Meta did not return stays absent, an explicit `"0"` is 0, and a day
+without delivery has no row. Its conversions (D19), action attribution (D20), placements, reach and
+money semantics are implemented provisionally and require validation on a real account
+([providers/meta.md](providers/meta.md#real-account-validation-required)). No schema change.
+
 - Never write `0` for "unknown".
 - Ratios (CTR, CPC, CPM, CPA, ROAS, engagement rate) are **never stored**. Phase 6 computes them from
   summed components and omits them when the denominator is absent or zero.

@@ -71,12 +71,13 @@ active | needs_reauth ─disconnect─► revoked   (credential deleted; ad acco
 
 ## Configuration
 
-| Convex env var                                           | Purpose                                                                                    |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `TOKEN_ENCRYPTION_KEYS`                                  | `{"1":"<base64 32 bytes>"}`; highest version encrypts. **Required**; missing = fail closed |
-| `CONVEX_SITE_URL`                                        | Built in; the redirect URI is `<CONVEX_SITE_URL>/oauth/callback`                           |
-| `META_APP_ID`, `META_APP_SECRET`, `META_LOGIN_CONFIG_ID` | Phase 8 (real Meta spec)                                                                   |
-| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`               | Phase 9 (real Google spec)                                                                 |
+| Convex env var                                           | Purpose                                                                                                                      |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `TOKEN_ENCRYPTION_KEYS`                                  | `{"1":"<base64 32 bytes>"}`; highest version encrypts. **Required**; missing = fail closed                                   |
+| `CONVEX_SITE_URL`                                        | Built in; the redirect URI is `<CONVEX_SITE_URL>/oauth/callback`                                                             |
+| `PROVIDER_MODE`                                          | Phase 8: `mock` or `live`; **required on every cloud deployment** (fails closed, see [providers/meta.md](providers/meta.md)) |
+| `META_APP_ID`, `META_APP_SECRET`, `META_LOGIN_CONFIG_ID` | Phase 8 (real Meta spec, `PROVIDER_MODE=live`); optional `META_GRAPH_API_VERSION`                                            |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`               | Phase 9 (real Google spec)                                                                                                   |
 
 Per app, the return-URL allowlist is set with
 `npx convex run admin/integrationApps:setAllowedReturnUrls '{"issuer":"…","urls":["https://app.example.com/settings/"]}'`.
@@ -87,10 +88,19 @@ and allowlists `http://localhost:3000/`.
 
 ## Platform requirements (for Phases 8–9)
 
-|             | Meta                                                                    | Google Ads                                                    |
-| ----------- | ----------------------------------------------------------------------- | ------------------------------------------------------------- |
-| Login       | Facebook Login for Business (`config_id`)                               | OAuth 2.0 web client, `access_type=offline`, `prompt=consent` |
-| Scopes      | `ads_read`, `business_management` (+ pages/IG/messaging later)          | `…/auth/adwords`, `openid`, `email`                           |
-| Identity    | `/me` id                                                                | ID token `sub`                                                |
-| Token model | long-lived user token (~60 days), no refresh → `needs_reauth` on expiry | refresh token; `invalid_grant` → `needs_reauth`               |
-| Also        | `appsecret_proof`; deauthorize + data-deletion callbacks (Phase 11)     | developer token; `login-customer-id` from `parentExternalId`  |
+|             | Meta                                                                     | Google Ads                                                    |
+| ----------- | ------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| Login       | Facebook Login for Business (`config_id`)                                | OAuth 2.0 web client, `access_type=offline`, `prompt=consent` |
+| Scopes      | `ads_read` only (Phase 8, D9; `business_management` only if G1 requires) | `…/auth/adwords`, `openid`, `email`                           |
+| Identity    | `/me` id                                                                 | ID token `sub`                                                |
+| Token model | long-lived user token (~60 days), no refresh → `needs_reauth` on expiry  | refresh token; `invalid_grant` → `needs_reauth`               |
+| Also        | `appsecret_proof`; deauthorize + data-deletion callbacks (Phase 11)      | developer token; `login-customer-id` from `parentExternalId`  |
+
+### Meta (Phase 8)
+
+The real Meta spec (Facebook Login for Business, long-lived user token, `ads_read` only, no PKCE,
+no platform revoke) is documented in [providers/meta.md](providers/meta.md). A failed Meta code
+exchange keeps the callback outcome `exchange_failed`; the `connection.oauth_failed` audit entry
+additionally carries only the allowlisted D28b diagnostics (`failureKind`, `failureStage`,
+`providerCode`), never tokens, codes, state, secrets, URLs, messages, bodies or `fbtrace_id`.
+With `PROVIDER_MODE` misconfigured there are no OAuth specs and `beginConnect` is refused.

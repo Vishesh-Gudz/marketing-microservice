@@ -122,7 +122,11 @@ provider actually emits.
 in `convex/providers/index.ts` is the single composition point:
 
 - **Phase 3:** the mock for both platforms.
-- **Phases 8 and 9:** the real providers behind `PROVIDER_MODE=mock|live`.
+- **Phase 8:** `createDefaultRegistry(env)` resolves `PROVIDER_MODE` fail-closed
+  (`convex/providers/mode.ts`): mock (unchanged), live (real Meta + Meta OAuth; Google is the
+  unavailable stub from `convex/providers/unavailable.ts`), or misconfigured (unavailable stubs for
+  both platforms, no OAuth). See [meta.md](meta.md).
+- **Phase 9:** the real Google Ads provider replaces the live-mode stub.
 - **Phases 10 and 11:** sibling families (`social`, `messaging`) extend the registry the same way.
 
 ## Mock provider (`convex/providers/mock/`)
@@ -161,8 +165,8 @@ connect flow and encrypted credential store. Real credentials never carry these 
 ## How Meta and Google Ads plug in (Phases 8–9)
 
 1. Create `convex/providers/meta/` (or `google/`) with `client.ts` (HTTP, auth headers, rate-limit
-   parsing, platform cursors wrapped in opaque strings), `schemas.ts` (Zod for untrusted
-   responses), `normalize.ts` (raw → provider records, reusing `domain/identity`, `lib/money` and
+   parsing, platform cursors wrapped in opaque strings), `schemas.ts` (Convex `v` validators with
+   `convex-helpers` `validate` for untrusted responses; no Zod), `normalize.ts` (raw → provider records, reusing `domain/identity`, `lib/money` and
    `lib/dates`) and `index.ts` (implements `AdsProvider`).
 2. Declare honest capabilities, for example Meta `restatementLookbackDays: 28` and Google `30`.
 3. Map platform failures to `ProviderError` kinds (HTTP 401/190 → `auth`, 17/613 or
@@ -171,4 +175,4 @@ connect flow and encrypted credential store. Real credentials never carry these 
 5. Register the provider in `createDefaultRegistry()` behind `PROVIDER_MODE`.
 
 No change is needed in mapping, the schema, sync or the dashboard. See
-[adding-a-provider.md](adding-a-provider.md).
+[adding-a-provider.md](adding-a-provider.md). Meta (Phase 8) is in [meta.md](meta.md).
