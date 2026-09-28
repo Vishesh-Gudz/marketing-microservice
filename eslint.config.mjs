@@ -200,6 +200,8 @@ const eslintConfig = defineConfig([
                 "**/providers/mock/**",
                 "**/providers/meta",
                 "**/providers/meta/**",
+                "**/providers/google",
+                "**/providers/google/**",
                 "**/providers/oauth",
               ],
               message:

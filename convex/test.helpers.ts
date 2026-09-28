@@ -10,6 +10,12 @@ import {
   FAKE_CONFIG_ID,
   type FakeGraph,
 } from "./providers/meta/fakeGraph.fixtures";
+import {
+  FAKE_DEVELOPER_TOKEN,
+  FAKE_GOOGLE_CLIENT_ID,
+  FAKE_GOOGLE_CLIENT_SECRET,
+  type FakeGoogleAds,
+} from "./providers/google/fakeGoogleAds.fixtures";
 import { isMarketingError, type MarketingErrorCode } from "./lib/errors";
 import type { Role } from "./lib/validation";
 import schema from "./schema";
@@ -466,6 +472,52 @@ export async function connectMetaFake(
   return redirectParams(
     await t.fetch(
       `/oauth/callback?state=${encodeURIComponent(state)}&code=${encodeURIComponent(code)}`,
+      { method: "GET", redirect: "manual" },
+    ),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 9 helpers: the real Google Ads provider in live mode against the fake API
+// ---------------------------------------------------------------------------
+
+/** PROVIDER_MODE=live with test-only Meta + Google values; `fetch` served by the fake Google API. */
+export function stubLiveGoogle(fake: FakeGoogleAds, env: Record<string, string> = {}) {
+  vi.stubEnv("PROVIDER_MODE", "live");
+  vi.stubEnv("META_APP_ID", FAKE_APP_ID);
+  vi.stubEnv("META_APP_SECRET", FAKE_APP_SECRET);
+  vi.stubEnv("META_LOGIN_CONFIG_ID", FAKE_CONFIG_ID);
+  vi.stubEnv("GOOGLE_CLIENT_ID", FAKE_GOOGLE_CLIENT_ID);
+  vi.stubEnv("GOOGLE_CLIENT_SECRET", FAKE_GOOGLE_CLIENT_SECRET);
+  vi.stubEnv("GOOGLE_ADS_DEVELOPER_TOKEN", FAKE_DEVELOPER_TOKEN);
+  for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
+  vi.stubGlobal("fetch", fake.fetch);
+}
+
+/**
+ * Connects a Google identity through the REAL connect flow (beginConnect -> fake Google
+ * consent bound to the PKCE challenge and redirect URI -> /oauth/callback -> Google OAuthSpec
+ * against the fake API). Returns the callback's redirect parameters.
+ */
+export async function connectGoogleFake(
+  t: Backend,
+  fake: FakeGoogleAds,
+  user: string,
+  identityInput: IdentityInput = {},
+): Promise<URLSearchParams> {
+  const { authorizeUrl } = await as(t, identityInput).action(api.v1.connections.beginConnect, {
+    provider: "google_ads",
+    returnUrl: RETURN_URL,
+  });
+  const params = new URL(authorizeUrl).searchParams;
+  const code = fake.issueCode(
+    user,
+    params.get("code_challenge")!,
+    params.get("redirect_uri") ?? undefined,
+  );
+  return redirectParams(
+    await t.fetch(
+      `/oauth/callback?state=${encodeURIComponent(params.get("state")!)}&code=${encodeURIComponent(code)}`,
       { method: "GET", redirect: "manual" },
     ),
   );

@@ -7,8 +7,10 @@ import type { AuditChanges } from "../lib/validation";
  *
  *   failureKind   a ProviderError kind
  *   failureStage  code_exchange | long_lived_exchange | debug_token | identity | config
+ *                 (Meta) and token_exchange | identity | api_access | config (Google)
  *   providerCode  a Meta numeric code, optionally with a subcode ("190", "100/36009"),
- *                 or one internal constant (INTERNAL_CODES)
+ *                 one internal constant (INTERNAL_CODES) or one allowlisted Google code
+ *                 (GOOGLE_CODES)
  *
  * Input comes from a ProviderError's `kind` and `providerCode` ("<stage>:<code>").
  * Anything that does not match exactly is DROPPED, never stored. Tokens, codes,
@@ -22,6 +24,9 @@ export const OAUTH_FAILURE_STAGES = [
   "debug_token",
   "identity",
   "config",
+  // Google Ads (Phase 9, G-D19)
+  "token_exchange",
+  "api_access",
 ] as const;
 
 const INTERNAL_CODES: ReadonlySet<string> = new Set([
@@ -29,6 +34,29 @@ const INTERNAL_CODES: ReadonlySet<string> = new Set([
   "meta_config_invalid",
   "provider_mode_missing",
   "provider_mode_invalid",
+]);
+
+/**
+ * Google Ads codes (Phase 9, G-D19): an EXPLICIT allowlist of OAuth error codes, Google Ads
+ * error enums and internal constants. Anything else (free text, request ids, emails, …) is
+ * dropped.
+ */
+const GOOGLE_CODES: ReadonlySet<string> = new Set([
+  "invalid_grant",
+  "invalid_client",
+  "invalid_request",
+  "redirect_uri_mismatch",
+  "unauthorized_client",
+  "access_denied",
+  "no_refresh_token",
+  "client_id_mismatch",
+  "NOT_ADS_USER",
+  "DEVELOPER_TOKEN_NOT_APPROVED",
+  "DEVELOPER_TOKEN_PROHIBITED",
+  "DEVELOPER_TOKEN_INVALID",
+  "USER_PERMISSION_DENIED",
+  "CUSTOMER_NOT_ENABLED",
+  "google_config_invalid",
 ]);
 
 const NUMERIC_CODE = /^\d{1,6}(\/\d{1,9})?$/;
@@ -52,7 +80,7 @@ export function sanitizeOAuthDiagnostics(input: OAuthFailureDiagnostics | undefi
     const [, stage, code] = staged as unknown as [string, string, string];
     if ((OAUTH_FAILURE_STAGES as readonly string[]).includes(stage)) {
       changes.failureStage = { from: null, to: stage };
-      if (NUMERIC_CODE.test(code) || INTERNAL_CODES.has(code)) {
+      if (NUMERIC_CODE.test(code) || INTERNAL_CODES.has(code) || GOOGLE_CODES.has(code)) {
         changes.providerCode = { from: null, to: code };
       }
     }

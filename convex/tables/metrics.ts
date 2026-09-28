@@ -73,7 +73,11 @@ export const metricTables = {
   actionMetricsDaily: defineTable({
     ...metricDimensions,
     actionType: actionTypeValidator,
-    /** Meta action_type (e.g. offsite_conversion.fb_pixel_purchase) / Google conversion action name. */
+    /**
+     * Meta action_type (e.g. offsite_conversion.fb_pixel_purchase) / Google conversion action
+     * resource name (customers/{id}/conversionActions/{id}: the stable identifier, not the
+     * mutable display name).
+     */
     rawActionType: v.string(),
     conversionActionExternalId: v.optional(v.string()),
     /** e.g. "7d_click_1d_view", "1d_click", "default". */

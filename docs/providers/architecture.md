@@ -126,7 +126,8 @@ in `convex/providers/index.ts` is the single composition point:
   (`convex/providers/mode.ts`): mock (unchanged), live (real Meta + Meta OAuth; Google is the
   unavailable stub from `convex/providers/unavailable.ts`), or misconfigured (unavailable stubs for
   both platforms, no OAuth). See [meta.md](meta.md).
-- **Phase 9:** the real Google Ads provider replaces the live-mode stub.
+- **Phase 9:** in live mode the real Google Ads provider and OAuth spec replace the stub when
+  Google is configured (see [google-ads.md](google-ads.md)).
 - **Phases 10 and 11:** sibling families (`social`, `messaging`) extend the registry the same way.
 
 ## Mock provider (`convex/providers/mock/`)

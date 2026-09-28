@@ -127,24 +127,24 @@ Helpers live in `convex/lib/dates.ts` (Intl-based, no date library).
 One row per entity × date × placement. The columns come from the `AD_METRICS` catalog
 (`convex/domain/metrics.ts`):
 
-| Column                                          | Kind  | Additive | Meta source (Phase 8)                                                       | Google source (Phase 9)       |
-| ----------------------------------------------- | ----- | -------- | --------------------------------------------------------------------------- | ----------------------------- |
-| spendMicros                                     | money | yes      | `spend`                                                                     | `cost_micros`                 |
-| impressions                                     | count | yes      | `impressions`                                                               | `impressions`                 |
-| reach                                           | count | **no**   | `reach`                                                                     | not reported                  |
-| clicks                                          | count | yes      | `clicks`                                                                    | `clicks`                      |
-| linkClicks                                      | count | yes      | `inline_link_clicks`                                                        | not reported                  |
-| videoPlays                                      | count | yes      | `video_play_actions`                                                        | —                             |
-| videoViews                                      | count | yes      | 3-second video views                                                        | TrueView video views          |
-| videoCompletions                                | count | yes      | `video_p100_watched_actions`                                                | `video_quartile_p100` derived |
-| engagements                                     | count | yes      | `post_engagement` action                                                    | `engagements`                 |
-| reactions / comments / shares / saves / follows | count | yes      | `actions` (post_reaction, comment, post, onsite_conversion.post_save, like) | —                             |
-| conversions                                     | float | yes      | primary actions per account mapping                                         | `conversions`                 |
-| conversionValueMicros                           | money | yes      | primary `action_values`                                                     | `conversions_value`           |
-| allConversions                                  | float | yes      | —                                                                           | `all_conversions`             |
-| extras                                          | map   | —        | unmapped numeric metrics                                                    | e.g. impression share         |
+| Column                                          | Kind  | Additive | Meta source (Phase 8)                                                       | Google source (Phase 9) |
+| ----------------------------------------------- | ----- | -------- | --------------------------------------------------------------------------- | ----------------------- |
+| spendMicros                                     | money | yes      | `spend`                                                                     | `cost_micros`           |
+| impressions                                     | count | yes      | `impressions`                                                               | `impressions`           |
+| reach                                           | count | **no**   | `reach`                                                                     | not reported            |
+| clicks                                          | count | yes      | `clicks`                                                                    | `clicks`                |
+| linkClicks                                      | count | yes      | `inline_link_clicks`                                                        | not reported            |
+| videoPlays                                      | count | yes      | `video_play_actions`                                                        | —                       |
+| videoViews                                      | count | yes      | 3-second video views                                                        | not reported (deferred) |
+| videoCompletions                                | count | yes      | `video_p100_watched_actions`                                                | not reported (deferred) |
+| engagements                                     | count | yes      | `post_engagement` action                                                    | not reported (deferred) |
+| reactions / comments / shares / saves / follows | count | yes      | `actions` (post_reaction, comment, post, onsite_conversion.post_save, like) | —                       |
+| conversions                                     | float | yes      | primary actions per account mapping                                         | `conversions`           |
+| conversionValueMicros                           | money | yes      | primary `action_values`                                                     | `conversions_value`     |
+| allConversions                                  | float | yes      | —                                                                           | `all_conversions`       |
+| extras                                          | map   | —        | unmapped numeric metrics                                                    | —                       |
 
-The exact mappings are confirmed when each provider is built.
+Exact mappings: [providers/meta.md](providers/meta.md) and [providers/google-ads.md](providers/google-ads.md).
 
 ### Long table `actionMetricsDaily`
 
@@ -160,6 +160,12 @@ Every conversion/action type and attribution window:
 
 `metricsDaily.conversions` is the account's primary total. It can be recomputed from this table
 when the conversion mapping changes.
+
+Google (Phase 9): `rawActionType` holds the conversion action's immutable resource name (not the
+mutable display name), `conversionActionExternalId` its id, `isPrimary` its `primary_for_goal`, and
+`attributionWindow` the bucket `action_setting` (Google reports no per-row window). Google's wide
+`conversions` also counts custom-goal actions, so it is not recomputed from `isPrimary` rows
+([providers/google-ads.md](providers/google-ads.md#conversion-actions-fetchactionmetrics)).
 
 ### Placement
 
