@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import { internalMutation, type DatabaseReader } from "../_generated/server";
-import { adPlatformValidator } from "../domain/validators";
+import { connectionProviderValidator } from "../domain/validators";
 import { AUDIT_ACTIONS, writeAudit } from "../lib/audit";
 import { apiError } from "../lib/errors";
 import { MAX_PENDING_STATES_PER_ORG, OAUTH_STATE_TTL_MS } from "./config";
@@ -44,7 +44,7 @@ export const create = internalMutation({
     orgId: v.id("organizations"),
     issuer: v.string(),
     subject: v.string(),
-    provider: adPlatformValidator,
+    provider: connectionProviderValidator,
     nonceHash: v.string(),
     codeVerifier: v.optional(v.string()),
     returnUrl: v.optional(v.string()),
@@ -132,7 +132,7 @@ export const consume = internalMutation({
       ok: v.literal(true),
       stateId: v.id("oauthStates"),
       orgId: v.id("organizations"),
-      provider: adPlatformValidator,
+      provider: connectionProviderValidator,
       initiatedBySubject: v.string(),
       codeVerifier: v.optional(v.string()),
       returnUrl: v.optional(v.string()),

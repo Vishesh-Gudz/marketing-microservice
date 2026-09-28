@@ -43,12 +43,13 @@ function indexes(table: string) {
 }
 
 describe("schema inventory", () => {
-  it("contains exactly the Phase 1, 2, 4, 5 and 6 tables", () => {
+  it("contains exactly the Phase 1, 2, 4, 5, 6 and 10 tables", () => {
     expect(tableNames).toEqual(
       [
         "connections",
         "credentials",
         "discoveredAssets",
+        "discoveredSocialAccounts",
         "oauthStates",
         "fxRates",
         "actionMetricsDaily",
@@ -133,6 +134,7 @@ describe("tenant ownership", () => {
       "credentials",
       "oauthStates",
       "discoveredAssets",
+      "discoveredSocialAccounts",
       "syncAccounts",
       "syncRuns",
       "syncTasks",

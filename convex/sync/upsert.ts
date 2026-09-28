@@ -14,6 +14,7 @@ import {
   type CanonicalInsert,
 } from "../mapping/ads";
 import type { AccountScope, OrgScope } from "../mapping/scope";
+import { mapLinkedSocialAccount } from "../mapping/social";
 import { MappingError } from "../providers/errors";
 import type {
   ProviderActionRow,
@@ -24,14 +25,16 @@ import type {
   ProviderCreative,
   ProviderMetricRow,
 } from "../providers/types";
+import type { ProviderDiscoveredSocialAccount } from "../providers/social/types";
 import type { syncCountsValidator } from "../tables/sync";
 import { applyCaps } from "./guards";
 import { buildResolver } from "./resolver";
 
 /**
  * THE canonical write path for adAccounts, campaigns, adGroups, ads, creatives,
- * metricsDaily and actionMetricsDaily (ESLint: no other module may insert into
- * these tables). Natural keys are exactly the Phase 2 keys (domain/identity.ts):
+ * metricsDaily and actionMetricsDaily, and (Phase 10) the organic social tables
+ * socialAccounts, socialPosts, socialPostMetricSnapshots and socialAccountMetricsDaily
+ * (ESLint: no other module may insert into these tables). Natural keys are exactly the Phase 2 keys (domain/identity.ts):
  *
  *   adAccounts                              (orgId, platform, externalId)
  *   campaigns / adGroups / ads / creatives  (orgId, adAccountId, externalId)
@@ -592,4 +595,62 @@ export async function markRemovedBatch(
     return { status: "continue", next: { ...cursor, c: page.continueCursor }, removed };
   }
   return { status: "done", removed };
+}
+
+// ---------------------------------------------------------------------------
+// Organic social accounts (Phase 10). Natural key: (orgId, platform, externalId).
+// Stage A writes only the link path; posts, snapshots and daily rows are Stage B.
+// ---------------------------------------------------------------------------
+
+/**
+ * Link path: upserts the canonical socialAccounts row of a discovered account and binds it
+ * to `connectionId` (mirrors upsertLinkedAdAccount). Existing rows keep their provider
+ * metadata except the discovered identity (username, account type).
+ */
+export async function upsertLinkedSocialAccount(
+  db: DatabaseWriter,
+  scope: OrgScope,
+  record: ProviderDiscoveredSocialAccount,
+  connectionId: Id<"connections">,
+  now: number,
+): Promise<{
+  socialAccountId: Id<"socialAccounts">;
+  created: boolean;
+  previousConnectionId?: Id<"connections">;
+}> {
+  const row = mapLinkedSocialAccount(record, scope);
+  const existing = await db
+    .query("socialAccounts")
+    .withIndex("by_org_platform_external", (q) =>
+      q.eq("orgId", scope.orgId).eq("platform", row.platform).eq("externalId", row.externalId),
+    )
+    .first();
+  if (existing) {
+    await db.patch(existing._id, {
+      ...(row.username !== undefined ? { username: row.username } : {}),
+      accountType: row.accountType,
+      status: "active",
+      connectionId,
+      linkedAt: existing.connectionId === connectionId ? existing.linkedAt : now,
+      lastSeenAt: now,
+      removedAt: undefined,
+      updatedAt: now,
+    });
+    return {
+      socialAccountId: existing._id,
+      created: false,
+      ...(existing.connectionId !== undefined
+        ? { previousConnectionId: existing.connectionId }
+        : {}),
+    };
+  }
+  const socialAccountId = await db.insert("socialAccounts", {
+    ...row,
+    connectionId,
+    linkedAt: now,
+    lastSeenAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+  return { socialAccountId, created: true };
 }

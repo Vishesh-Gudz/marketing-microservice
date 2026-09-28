@@ -32,15 +32,39 @@ There are **no public sync functions** in Phase 5. `convex/v1` is unchanged.
 
 ## Tables
 
-| Table          | Purpose                                                          | Indexes                                                         |
-| -------------- | ---------------------------------------------------------------- | --------------------------------------------------------------- |
-| `syncAccounts` | per ad account: state, schedule, coverage, lease (`activeRunId`) | `by_org_account`; **`by_next_plan` (global, approved)**         |
-| `syncRuns`     | one sync of one account; `connectionId` pinned at creation       | `by_org_account_created`, `by_org_account_key`, `by_org_status` |
-| `syncTasks`    | one provider operation (many pages) plus its finalize step       | `by_org_run_seq`                                                |
+| Table          | Purpose                                                                    | Indexes                                                                                                                       |
+| -------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `syncAccounts` | per ad or social account: state, schedule, coverage, lease (`activeRunId`) | `by_org_account`, `by_org_social_account`; **`by_next_plan` (global, approved)**                                              |
+| `syncRuns`     | one sync of one account; `connectionId` pinned at creation                 | `by_org_account_created`, `by_org_account_key`, `by_org_social_account_created`, `by_org_social_account_key`, `by_org_status` |
+| `syncTasks`    | one provider operation (many pages) plus its finalize step                 | `by_org_run_seq`                                                                                                              |
 
 `syncAccounts.by_next_plan` is the only exception to the orgId-first rule added in Phase 5. The
-planner re-verifies every row it returns: the row's `adAccountId` must point at an account of the
+planner re-verifies every row it returns: the row's subject must point at an account of the
 **same** org, otherwise the row is parked and nothing runs.
+
+### Sync subjects (Phase 10)
+
+- **One subject per row:** every `syncAccounts`, `syncRuns` and `syncTasks` row names **exactly
+  one** subject, `adAccountId` (an ad account) or `socialAccountId` (an organic social
+  account). `convex/sync/subject.ts` enforces this on every read and write. A row naming
+  neither or both fails closed: it is parked by the planner, and claims are refused.
+- **Operations are bound to the kind:** ad tasks run only the Phase 5 operations, and social
+  tasks only `getSocialAccount`, `listSocialPosts`, `fetchPostMetrics` and
+  `fetchAccountMetrics`.
+- **Ad subjects** behave exactly as before.
+- **Social subjects** share the run, task, lease, claim and failure machinery:
+  - they are planned by `sync/socialPlan.ts` (capability-driven, UTC days);
+  - they are executed by the `"use node"` social worker `sync/socialWorker.ts`, because the
+    Instagram provider wraps `@opencoredev/social-sdk`;
+  - the ads worker refuses social claims and the social worker refuses ad claims;
+  - `auth` failures also cancel the other social accounts' runs on the same connection.
+- **Stage A:**
+  - there is no social page write path: a social page can never be committed;
+  - every Instagram operation fails closed with `instagram_mapping_pending`, so a social run is
+    the failing preflight;
+  - coverage stays ad-only.
+
+See [providers/instagram.md](providers/instagram.md).
 
 **Internal-only fields:** cursors, `previousCursor`, `finalizeCursor`, leases, `claimSeq`,
 `idempotencyKey`, `fetchStartedAt`, per-page attempt counters and `code` (the platform error code).

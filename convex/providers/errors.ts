@@ -1,5 +1,8 @@
-import type { AdPlatform } from "../domain/types";
+import type { AdPlatform, SocialPlatform } from "../domain/types";
 import type { ProviderOperation } from "./types";
+
+/** Platforms a provider error can come from: paid ads (Phase 3) or organic social (Phase 10). */
+export type ProviderPlatform = AdPlatform | SocialPlatform;
 
 /**
  * Provider failure taxonomy. Retryability is DERIVED from the kind so it can
@@ -26,7 +29,7 @@ export function isRetryableKind(kind: ProviderErrorKind): boolean {
 
 export type ProviderErrorOptions = {
   kind: ProviderErrorKind;
-  platform: AdPlatform;
+  platform: ProviderPlatform;
   operation: ProviderOperation;
   message: string;
   retryAfterMs?: number;
@@ -37,7 +40,7 @@ export type ProviderErrorOptions = {
 
 export class ProviderError extends Error {
   readonly kind: ProviderErrorKind;
-  readonly platform: AdPlatform;
+  readonly platform: ProviderPlatform;
   readonly operation: ProviderOperation;
   readonly retryable: boolean;
   readonly retryAfterMs?: number;
@@ -67,7 +70,7 @@ export function isProviderError(error: unknown): error is ProviderError {
 /** Normalizes anything thrown inside a provider call. Unclassified errors are "unknown" (not retried). */
 export function toProviderError(
   error: unknown,
-  platform: AdPlatform,
+  platform: ProviderPlatform,
   operation: ProviderOperation,
 ): ProviderError {
   if (error instanceof ProviderError) return error;

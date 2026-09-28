@@ -3,7 +3,15 @@ import { convexTest } from "convex-test";
 import type { UserIdentity } from "convex/server";
 import { expect, vi } from "vitest";
 import { api, internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { mockAuthorizationCode } from "./providers/mock/oauth";
+import {
+  FAKE_IG_APP_ID,
+  FAKE_IG_APP_SECRET,
+  type FakeInstagram,
+} from "./providers/instagram/fakeInstagram.fixtures";
+import { mockInstagramCode } from "./providers/social/mock";
+import { subjectOf } from "./sync/subject";
 import {
   FAKE_APP_ID,
   FAKE_APP_SECRET,
@@ -426,6 +434,20 @@ export async function linkMock(
   });
 }
 
+/**
+ * The ad account of a sync row (syncAccounts / syncRuns / syncTasks). Throws — failing the
+ * test — unless the row names exactly one subject and it is an ad account (Phase 10 subject
+ * invariant), so ad-only assertions never need a non-null assertion.
+ */
+export function adSubjectOf(row: {
+  adAccountId?: Id<"adAccounts">;
+  socialAccountId?: Id<"socialAccounts">;
+}): Id<"adAccounts"> {
+  const subject = subjectOf(row);
+  if (subject.kind !== "ad") throw new Error("Expected an ad-account sync subject");
+  return subject.adAccountId;
+}
+
 /** Runs every scheduled function (workers, finalize steps, retries) to completion. */
 export async function drainScheduler(t: Backend) {
   await t.finishAllScheduledFunctions(vi.runAllTimers, 20_000);
@@ -521,4 +543,70 @@ export async function connectGoogleFake(
       { method: "GET", redirect: "manual" },
     ),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 10 helpers: Instagram (organic social) connect flows
+// ---------------------------------------------------------------------------
+
+/** PROVIDER_MODE=live with test-only Instagram app values; `fetch` served by the fake API. */
+export function stubLiveInstagram(fake: FakeInstagram, env: Record<string, string> = {}) {
+  vi.stubEnv("PROVIDER_MODE", "live");
+  vi.stubEnv("INSTAGRAM_APP_ID", FAKE_IG_APP_ID);
+  vi.stubEnv("INSTAGRAM_APP_SECRET", FAKE_IG_APP_SECRET);
+  for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
+  vi.stubGlobal("fetch", fake.fetch);
+}
+
+/**
+ * Connects an Instagram professional account through the REAL connect flow (beginConnect ->
+ * fake Instagram consent -> /oauth/callback -> Instagram OAuthSpec + SDK-free discovery
+ * against the fake API). Returns the callback's redirect parameters.
+ */
+export async function connectInstagramFake(
+  t: Backend,
+  fake: FakeInstagram,
+  user = "business",
+  identityInput: IdentityInput = {},
+  extra: { reconnectConnectionId?: string } = {},
+): Promise<URLSearchParams> {
+  const { authorizeUrl } = await as(t, identityInput).action(api.v1.connections.beginConnect, {
+    provider: "instagram",
+    returnUrl: RETURN_URL,
+    ...extra,
+  });
+  const state = new URL(authorizeUrl).searchParams.get("state")!;
+  return redirectParams(
+    await t.fetch(
+      `/oauth/callback?state=${encodeURIComponent(state)}&code=${encodeURIComponent(fake.issueCode(user))}`,
+      { method: "GET", redirect: "manual" },
+    ),
+  );
+}
+
+/** Mock mode: connects a mock Instagram user ("1", "creator", "personal", "revoked", ...). */
+export async function connectMockInstagram(
+  t: Backend,
+  user = "1",
+  identityInput: IdentityInput = {},
+): Promise<URLSearchParams> {
+  const { authorizeUrl } = await as(t, identityInput).action(api.v1.connections.beginConnect, {
+    provider: "instagram",
+    returnUrl: RETURN_URL,
+  });
+  const url = new URL(authorizeUrl);
+  url.searchParams.set("code", mockInstagramCode(user));
+  return redirectParams(await followCallback(t, url.toString()));
+}
+
+export async function linkSocial(
+  t: Backend,
+  connectionId: string,
+  externalIds: string[],
+  identityInput: IdentityInput = {},
+) {
+  return await as(t, identityInput).mutation(api.v1.connections.linkSocialAccounts, {
+    connectionId,
+    externalIds,
+  });
 }

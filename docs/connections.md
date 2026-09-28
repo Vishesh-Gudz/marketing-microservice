@@ -78,6 +78,7 @@ active | needs_reauth ─disconnect─► revoked   (credential deleted; ad acco
 | `PROVIDER_MODE`                                          | Phase 8: `mock` or `live`; **required on every cloud deployment** (fails closed, see [providers/meta.md](providers/meta.md)) |
 | `META_APP_ID`, `META_APP_SECRET`, `META_LOGIN_CONFIG_ID` | Phase 8 (real Meta spec, `PROVIDER_MODE=live`); optional `META_GRAPH_API_VERSION`                                            |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`               | Phase 9 (real Google spec)                                                                                                   |
+| `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET`               | Phase 10 (Instagram Login, organic Instagram; see [providers/instagram.md](providers/instagram.md))                          |
 
 Per app, the return-URL allowlist is set with
 `npx convex run admin/integrationApps:setAllowedReturnUrls '{"issuer":"…","urls":["https://app.example.com/settings/"]}'`.
@@ -95,6 +96,28 @@ and allowlists `http://localhost:3000/`.
 | Identity    | `/me` id                                                                 | ID token `sub`                                                |
 | Token model | long-lived user token (~60 days), no refresh → `needs_reauth` on expiry  | refresh token; `invalid_grant` → `needs_reauth`               |
 | Also        | `appsecret_proof`; deauthorize + data-deletion callbacks (Phase 11)      | developer token; `login-customer-id` from `parentExternalId`  |
+
+### Instagram (Phase 10, organic)
+
+- **Separate connection:** `provider: "instagram"`, using Instagram Login (not the Meta
+  connection).
+- **Callback:** it runs the Instagram OAuthSpec in the default runtime (code, then long-lived
+  token, then `/me` identity). Discovery then reads the same `/me` identity into
+  **`discoveredSocialAccounts`**, never `discoveredAssets`.
+- **Linking:** `v1/connections:listDiscoveredSocialAccounts`, `linkSocialAccounts` and
+  `unlinkSocialAccount` (admin) link and unlink `socialAccounts` through `sync/upsert.ts` and
+  create the account's sync state.
+- **Ad and social paths never cross:**
+  - `linkAdAccounts` on an Instagram connection returns `NOT_FOUND`;
+  - `linkSocialAccounts` on an ad connection returns `INVALID_ARGUMENT`.
+- **Disconnect:** also unlinks social accounts and drops `discoveredSocialAccounts`.
+- **Token refresh:** a daily job refreshes long-lived tokens (at least 24 h old, expiring within
+  10 days) and replaces the credential atomically. An `auth` failure moves the connection to
+  `needs_reauth`.
+- **D28b:** the diagnostics also allowlist the `token_refresh` stage and the Instagram internal
+  codes.
+
+Full details: [providers/instagram.md](providers/instagram.md).
 
 ### Meta (Phase 8)
 

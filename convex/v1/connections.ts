@@ -7,7 +7,12 @@ import {
 } from "../connections/assets";
 import { oauthClientConfig, oauthRedirectUri, providerRegistry } from "../connections/config";
 import { disconnectConnection } from "../connections/lifecycle";
-import { adPlatformValidator } from "../domain/validators";
+import {
+  discoveredSocialAccountsOf,
+  linkSocialAccounts as linkSocial,
+  unlinkSocialAccount as unlinkSocial,
+} from "../connections/socialAssets";
+import { connectionProviderValidator } from "../domain/validators";
 import { pkceChallengeS256, randomToken, sha256Base64Url } from "../lib/crypto";
 import { toIso } from "../lib/dto";
 import { apiError } from "../lib/errors";
@@ -20,10 +25,19 @@ import {
   toDiscoveredAssetDto,
   type ConnectionDto,
 } from "./dto/connection";
+import {
+  discoveredSocialAccountDto,
+  socialAccountDto,
+  toDiscoveredSocialAccountDto,
+  toSocialAccountDto,
+} from "./dto/socialAccount";
 
 /**
  * Platform connections (Phase 4). Admin-only for every connection-changing
  * operation; viewers may list. Never exposes credentials or OAuth state.
+ * Phase 10: Instagram Login connections ("instagram") discover and link organic social
+ * accounts through the *SocialAccount* functions; ad accounts and social accounts use
+ * separate functions and tables and can never be linked through each other's path.
  */
 
 function requiredScopes(provider: Parameters<ReturnType<typeof providerRegistry>["oauth"]>[0]) {
@@ -39,7 +53,7 @@ function requiredScopes(provider: Parameters<ReturnType<typeof providerRegistry>
  */
 export const beginConnect = orgAdminAction({
   args: {
-    provider: adPlatformValidator,
+    provider: connectionProviderValidator,
     returnUrl: v.optional(v.string()),
     reconnectConnectionId: v.optional(v.string()),
   },
@@ -141,6 +155,43 @@ export const unlinkAdAccount = orgAdminMutation({
   args: { adAccountId: v.string() },
   returns: adAccountDto,
   handler: async (ctx, { adAccountId }) => toAdAccountDto(await unlinkAccount(ctx, adAccountId)),
+});
+
+/** Admin only: organic social accounts this connection can access (Phase 10). */
+export const listDiscoveredSocialAccounts = orgQuery({
+  minRole: "admin",
+  args: { connectionId: v.string() },
+  returns: v.array(discoveredSocialAccountDto),
+  handler: async (ctx, { connectionId }) => {
+    const connection = await getOwned(ctx, "connections", connectionId);
+    const linked = await ctx.db
+      .query("socialAccounts")
+      .withIndex("by_org_connection", (q) =>
+        q.eq("orgId", ctx.tenant.orgId).eq("connectionId", connection._id),
+      )
+      .collect();
+    const linkedIds = new Set(linked.map((a) => `${a.platform}:${a.externalId}`));
+    const rows = await discoveredSocialAccountsOf(ctx.db, ctx.tenant.orgId, connection._id);
+    return rows.map((row) =>
+      toDiscoveredSocialAccountDto(row, linkedIds.has(`${row.platform}:${row.externalId}`)),
+    );
+  },
+});
+
+/** Admin only: link discovered social accounts (1-50 per call) to this connection (Phase 10). */
+export const linkSocialAccounts = orgAdminMutation({
+  args: { connectionId: v.string(), externalIds: v.array(v.string()) },
+  returns: v.array(socialAccountDto),
+  handler: async (ctx, { connectionId, externalIds }) =>
+    (await linkSocial(ctx, connectionId, externalIds)).map(toSocialAccountDto),
+});
+
+/** Admin only: unlink a social account (row and data are kept) (Phase 10). */
+export const unlinkSocialAccount = orgAdminMutation({
+  args: { socialAccountId: v.string() },
+  returns: socialAccountDto,
+  handler: async (ctx, { socialAccountId }) =>
+    toSocialAccountDto(await unlinkSocial(ctx, socialAccountId)),
 });
 
 /** Admin only: revoke the connection, unlink its accounts and delete its credential. */

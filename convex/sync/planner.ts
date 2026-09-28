@@ -6,7 +6,9 @@ import { providerRegistry } from "../connections/config";
 import { SYNC_CADENCE, SYNC_LIMITS } from "./config";
 import { buildRunPlan, dueKind, nextDueAt } from "./plan";
 import { isBlockingError, retainBlockingError, sanitizeFailure } from "./policy";
-import { cancelRun, createRun, recoverStalledRun } from "./runs";
+import { cancelRun, createRun, createSocialRun, recoverStalledRun } from "./runs";
+import { buildSocialRunPlan } from "./socialPlan";
+import { sameSubject, subjectOf, type SubjectAccount, type SyncSubject } from "./subject";
 
 /**
  * Cron planner (every 15 min, convex/crons.ts). Reads due accounts through the
@@ -16,6 +18,10 @@ import { cancelRun, createRun, recoverStalledRun } from "./runs";
  *
  * Invariant: every processed row leaves with nextPlanAt > now or absent, so a
  * continuation never sees the same row twice.
+ *
+ * Phase 10: rows are ad OR social subjects (sync/subject.ts). Both go through the same
+ * checks; only the plan (sync/plan.ts vs sync/socialPlan.ts) and the run creation differ.
+ * A row naming neither or both subjects is parked (fail closed), never planned.
  */
 
 type Outcome = "started" | "waiting" | "recovered" | "parked" | "deferred";
@@ -34,24 +40,48 @@ async function defer(
   await ctx.db.patch(row._id, { nextPlanAt: Math.max(until, now + 1), updatedAt: now, ...extra });
 }
 
+function safeSubject(row: {
+  adAccountId?: Doc<"syncAccounts">["adAccountId"];
+  socialAccountId?: Doc<"syncAccounts">["socialAccountId"];
+}): SyncSubject | undefined {
+  try {
+    return subjectOf(row);
+  } catch {
+    return undefined;
+  }
+}
+
+async function loadSubject(ctx: MutationCtx, subject: SyncSubject): Promise<SubjectAccount | null> {
+  if (subject.kind === "ad") {
+    const account = await ctx.db.get(subject.adAccountId);
+    return account === null ? null : { kind: "ad", account };
+  }
+  const account = await ctx.db.get(subject.socialAccountId);
+  return account === null ? null : { kind: "social", account };
+}
+
 async function planAccount(
   ctx: MutationCtx,
   row: Doc<"syncAccounts">,
   now: number,
 ): Promise<Outcome> {
   // Tenant re-verification: the global index row must point at an account of the SAME org.
-  const account = await ctx.db.get(row.adAccountId);
-  if (account === null || account.orgId !== row.orgId) {
+  const subject = safeSubject(row);
+  const target = subject === undefined ? null : await loadSubject(ctx, subject);
+  if (subject === undefined || target === null || target.account.orgId !== row.orgId) {
     await park(ctx, row, now);
     return "parked";
   }
+  const account = target.account;
 
   if (row.activeRunId !== undefined) {
     const run = await ctx.db.get(row.activeRunId);
+    const runSubject = run === null ? undefined : safeSubject(run);
     const active =
       run !== null &&
       run.orgId === row.orgId &&
-      run.adAccountId === row.adAccountId &&
+      runSubject !== undefined &&
+      sameSubject(runSubject, subject) &&
       (run.status === "queued" || run.status === "running");
     if (active) {
       if (now - run.createdAt > SYNC_LIMITS.maxRunDurationMs) {
@@ -99,7 +129,11 @@ async function planAccount(
 
   const kind = dueKind(row, now);
   const registry = providerRegistry();
-  if (kind === undefined || !registry.hasAds(account.platform)) {
+  const supported =
+    target.kind === "ad"
+      ? registry.hasAds(target.account.platform)
+      : registry.hasSocial(target.account.platform);
+  if (kind === undefined || !supported) {
     await defer(
       ctx,
       row,
@@ -109,21 +143,36 @@ async function planAccount(
     return "deferred";
   }
 
-  const plan = buildRunPlan({
-    kind,
-    state: row,
-    capabilities: registry.ads(account.platform).capabilities,
-    timezone: account.timezone,
-    now,
-  });
-  const { created } = await createRun(ctx, {
-    syncAccount: row,
-    account,
-    connection,
-    plan,
-    trigger: kind === "initial" ? "link" : "schedule",
-    now,
-  });
+  const trigger = kind === "initial" ? ("link" as const) : ("schedule" as const);
+  const { created } =
+    target.kind === "ad"
+      ? await createRun(ctx, {
+          syncAccount: row,
+          account: target.account,
+          connection,
+          plan: buildRunPlan({
+            kind,
+            state: row,
+            capabilities: registry.ads(target.account.platform).capabilities,
+            timezone: target.account.timezone,
+            now,
+          }),
+          trigger,
+          now,
+        })
+      : await createSocialRun(ctx, {
+          syncAccount: row,
+          account: target.account,
+          connection,
+          plan: buildSocialRunPlan({
+            kind,
+            state: row,
+            capabilities: registry.socialCapabilities(target.account.platform),
+            now,
+          }),
+          trigger,
+          now,
+        });
   if (!created) {
     // Same kind/window already ran in this planner slot: try again next slot.
     await defer(ctx, row, now + SYNC_CADENCE.plannerIntervalMinutes * 60_000, now);

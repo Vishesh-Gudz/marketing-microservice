@@ -116,6 +116,13 @@ exports[`schema inventory > declares the approved indexes 1`] = `
       "externalId",
     ],
   },
+  "discoveredSocialAccounts": {
+    "by_org_connection_external": [
+      "orgId",
+      "connectionId",
+      "externalId",
+    ],
+  },
   "fxRates": {
     "by_quote_date": [
       "quote",
@@ -184,6 +191,10 @@ exports[`schema inventory > declares the approved indexes 1`] = `
     ],
   },
   "socialAccounts": {
+    "by_org_connection": [
+      "orgId",
+      "connectionId",
+    ],
     "by_org_platform_external": [
       "orgId",
       "platform",
@@ -222,6 +233,10 @@ exports[`schema inventory > declares the approved indexes 1`] = `
       "orgId",
       "adAccountId",
     ],
+    "by_org_social_account": [
+      "orgId",
+      "socialAccountId",
+    ],
   },
   "syncRuns": {
     "by_org_account_created": [
@@ -232,6 +247,16 @@ exports[`schema inventory > declares the approved indexes 1`] = `
     "by_org_account_key": [
       "orgId",
       "adAccountId",
+      "idempotencyKey",
+    ],
+    "by_org_social_account_created": [
+      "orgId",
+      "socialAccountId",
+      "createdAt",
+    ],
+    "by_org_social_account_key": [
+      "orgId",
+      "socialAccountId",
       "idempotencyKey",
     ],
     "by_org_status": [

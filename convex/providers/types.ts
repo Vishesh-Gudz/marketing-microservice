@@ -62,6 +62,12 @@ export const PROVIDER_OPERATIONS = [
   "oauthExchange",
   "oauthRefresh",
   "oauthRevoke",
+  // Organic social (Phase 10, convex/providers/social/types.ts)
+  "listSocialAccounts",
+  "getSocialAccount",
+  "listSocialPosts",
+  "fetchPostMetrics",
+  "fetchAccountMetrics",
 ] as const;
 export type ProviderOperation = (typeof PROVIDER_OPERATIONS)[number];
 

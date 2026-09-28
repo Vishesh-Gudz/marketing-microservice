@@ -8,7 +8,7 @@ import {
   type DatabaseReader,
   type DatabaseWriter,
 } from "../_generated/server";
-import type { AdPlatform } from "../domain/types";
+import type { ConnectionProvider } from "../domain/types";
 import { AUDIT_ACTIONS, writeAudit } from "../lib/audit";
 import {
   CREDENTIAL_ALGORITHM,
@@ -36,7 +36,11 @@ const encryptedValidator = v.object({
   keyVersion: v.number(),
 });
 
-export type CredentialBinding = { orgId: string; provider: AdPlatform; externalUserId: string };
+export type CredentialBinding = {
+  orgId: string;
+  provider: ConnectionProvider;
+  externalUserId: string;
+};
 
 export class CredentialUnavailableError extends Error {
   constructor(readonly reason: "not_found" | "inactive" | "missing") {
@@ -62,7 +66,11 @@ export async function encryptCredential(
   );
 }
 
-export type ConnectionBinding = CredentialBinding & { connectionId: Id<"connections"> };
+export type ConnectionBinding = CredentialBinding & {
+  connectionId: Id<"connections">;
+  /** The credential generation this plaintext belongs to (Phase 10 token refresh). */
+  credentialVersion: number;
+};
 
 /**
  * The ONLY way to use a stored credential: decrypts it, hands it to `handle`,
@@ -87,6 +95,7 @@ export async function withConnectionCredential<T>(
     provider: row.provider,
     externalUserId: row.externalUserId,
     connectionId,
+    credentialVersion: row.credentialVersion,
   };
   const ring = await loadKeyRing();
   const credential = await decryptJson(
@@ -167,6 +176,7 @@ export const loadForUse = internalQuery({
       provider: connection.provider,
       externalUserId: connection.externalUserId,
       status: connection.status,
+      credentialVersion: connection.credentialVersion,
       encrypted: credential
         ? {
             ciphertext: credential.ciphertext,
@@ -274,6 +284,60 @@ export const upsertConnectionWithCredential = internalMutation({
       changes: { provider: { from: null, to: state.provider } },
     });
     return { ok: true as const, connectionId, reconnected: existing !== null };
+  },
+});
+
+/**
+ * Phase 10 token refresh: replaces the credential of an ACTIVE connection with a freshly
+ * refreshed one, atomically with the connection's expiry and credential generation. The
+ * write is refused (false) unless the connection is still active AND still on the
+ * generation the refresh started from, so a reconnect or disconnect that happened while
+ * the refresh was in flight always wins. Ciphertext only; audited without secrets.
+ * Granted scopes are left untouched (a refresh does not change them).
+ */
+export const replaceRefreshedCredential = internalMutation({
+  args: {
+    connectionId: v.id("connections"),
+    expectedCredentialVersion: v.number(),
+    tokenExpiresAt: v.optional(v.number()),
+    encrypted: encryptedValidator,
+    actorSubject: v.string(),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const connection = await ctx.db.get(args.connectionId);
+    if (
+      connection === null ||
+      connection.status !== "active" ||
+      connection.credentialVersion !== args.expectedCredentialVersion
+    ) {
+      return false;
+    }
+    const now = Date.now();
+    await writeCredential(ctx.db, connection.orgId, connection._id, args.encrypted, now);
+    await ctx.db.patch(connection._id, {
+      credentialVersion: connection.credentialVersion + 1,
+      tokenExpiresAt: args.tokenExpiresAt,
+      lastError: undefined,
+      updatedAt: now,
+    });
+    const org = await ctx.db.get(connection.orgId);
+    await writeAudit(
+      ctx.db,
+      { orgId: connection.orgId, issuer: org?.issuer ?? "", subject: args.actorSubject },
+      {
+        action: AUDIT_ACTIONS.connectionTokenRefreshed,
+        targetType: "connection",
+        targetId: connection._id,
+        changes: {
+          credentialVersion: {
+            from: connection.credentialVersion,
+            to: connection.credentialVersion + 1,
+          },
+        },
+      },
+    );
+    return true;
   },
 });
 

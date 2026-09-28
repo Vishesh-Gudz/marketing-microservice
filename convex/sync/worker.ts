@@ -6,6 +6,7 @@ import {
   CredentialUnavailableError,
   withConnectionCredential,
 } from "../connections/credentialStore";
+import { isAdPlatform } from "../domain/types";
 import { isProviderError } from "../providers/errors";
 import type { AdsProvider, ProviderContext } from "../providers/types";
 import type { ClaimResult, FailureArg, FetchRequest, ProviderPageArg } from "./validators";
@@ -72,11 +73,14 @@ async function callProvider(
       return page("metricRow", await provider.fetchDailyMetrics(ctx, metrics()));
     case "fetchActionMetrics":
       return page("actionRow", await provider.fetchActionMetrics(ctx, metrics()));
+    default:
+      // Phase 10: social operations run only in the "use node" social worker.
+      throw new TenantMismatchError();
   }
 }
 
 /** Classifies a thrown error without keeping its message (messages may carry payloads). */
-function classify(error: unknown): FailureArg {
+export function classify(error: unknown): FailureArg {
   if (isProviderError(error)) {
     return {
       source: "provider",
@@ -97,6 +101,15 @@ export const runTask = internalAction({
   handler: async (ctx, { taskId }) => {
     const claim: ClaimResult = await ctx.runMutation(internal.sync.runs.claimTask, { taskId });
     if (claim.status !== "fetch") return null;
+    if (claim.subject !== undefined) {
+      // Phase 10: a social subject scheduled on the ads worker. Fail closed; never retried.
+      await ctx.runMutation(internal.sync.runs.recordFailure, {
+        taskId,
+        claimSeq: claim.claimSeq,
+        failure: { source: "internal", kind: "internal" },
+      });
+      return null;
+    }
 
     let page: ProviderPageArg;
     try {
@@ -105,7 +118,11 @@ export const runTask = internalAction({
         claim.connectionId,
         async (credential, binding) => {
           // Defense in depth: the decrypted credential must belong to the run's org/platform.
-          if (binding.orgId !== claim.orgId || binding.provider !== claim.platform) {
+          if (
+            binding.orgId !== claim.orgId ||
+            binding.provider !== claim.platform ||
+            !isAdPlatform(binding.provider)
+          ) {
             throw new TenantMismatchError();
           }
           const provider = providerRegistry().ads(binding.provider);

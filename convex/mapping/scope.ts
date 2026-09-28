@@ -1,5 +1,5 @@
 import type { Doc, Id } from "../_generated/dataModel";
-import type { AdPlatform } from "../domain/types";
+import type { AdPlatform, SocialPlatform } from "../domain/types";
 import type { Tenant } from "../lib/tenancy";
 
 /**
@@ -7,7 +7,8 @@ import type { Tenant } from "../lib/tenancy";
  * provider -> canonical boundary. They cannot be written as object literals
  * (the brand is a type-only unique symbol), only derived from:
  *   - the authenticated tenant (OrgScope), or
- *   - a stored, org-owned adAccounts document (AccountScope).
+ *   - a stored, org-owned adAccounts document (AccountScope), or
+ *   - a stored, org-owned socialAccounts document (SocialAccountScope, Phase 10).
  * Provider code never sees either.
  */
 declare const SCOPE_BRAND: unique symbol;
@@ -49,4 +50,21 @@ export function accountScopeFromDoc(account: Doc<"adAccounts">): AccountScope {
     currency: account.currency,
     timezone: account.timezone,
   }) as AccountScope;
+}
+
+/** Phase 10: a stored, org-owned socialAccounts document (orgId from the persisted row). */
+export type SocialAccountScope = Readonly<{
+  orgId: Id<"organizations">;
+  socialAccountId: Id<"socialAccounts">;
+  platform: SocialPlatform;
+  externalId: string;
+}> & { readonly [SCOPE_BRAND]: "SocialAccountScope" };
+
+export function socialAccountScopeFromDoc(account: Doc<"socialAccounts">): SocialAccountScope {
+  return Object.freeze({
+    orgId: account.orgId,
+    socialAccountId: account._id,
+    platform: account.platform,
+    externalId: account.externalId,
+  }) as SocialAccountScope;
 }

@@ -17,6 +17,31 @@ export type AdPlatform = (typeof AD_PLATFORMS)[number];
 export const SOCIAL_PLATFORMS = ["instagram", "facebook"] as const;
 export type SocialPlatform = (typeof SOCIAL_PLATFORMS)[number];
 
+/**
+ * What an org can connect (Phase 4 connections). The ad platforms plus Instagram Login
+ * (Phase 10: organic Instagram only, never Instagram ads, which stay Meta ads).
+ */
+export const CONNECTION_PROVIDERS = ["meta", "google_ads", "instagram"] as const;
+export type ConnectionProvider = (typeof CONNECTION_PROVIDERS)[number];
+
+/**
+ * Connection providers that grant access to organic social accounts (not ad accounts).
+ * Each value is also the SocialPlatform of the accounts it discovers.
+ */
+export const SOCIAL_CONNECTION_PROVIDERS = ["instagram"] as const satisfies readonly Extract<
+  ConnectionProvider,
+  SocialPlatform
+>[];
+export type SocialConnectionProvider = (typeof SOCIAL_CONNECTION_PROVIDERS)[number];
+
+export function isAdPlatform(value: string): value is AdPlatform {
+  return (AD_PLATFORMS as readonly string[]).includes(value);
+}
+
+export function isSocialConnectionProvider(value: string): value is SocialConnectionProvider {
+  return (SOCIAL_CONNECTION_PROVIDERS as readonly string[]).includes(value);
+}
+
 // ---------------------------------------------------------------------------
 // Paid advertising
 // ---------------------------------------------------------------------------

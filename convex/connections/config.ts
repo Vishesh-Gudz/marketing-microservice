@@ -1,4 +1,4 @@
-import type { AdPlatform } from "../domain/types";
+import type { ConnectionProvider } from "../domain/types";
 import { apiError } from "../lib/errors";
 import { createDefaultRegistry, type ProviderRegistry } from "../providers";
 import type { OAuthClientConfig } from "../providers/oauth";
@@ -29,7 +29,7 @@ export function oauthRedirectUri(): string {
 
 /** Platform app credentials (Convex env vars). Mock specs need none. */
 const CLIENT_ENV: Record<
-  AdPlatform,
+  ConnectionProvider,
   { clientId: string; clientSecret: string; extra: Record<string, string> }
 > = {
   meta: {
@@ -38,9 +38,11 @@ const CLIENT_ENV: Record<
     extra: { configId: "META_LOGIN_CONFIG_ID" },
   },
   google_ads: { clientId: "GOOGLE_CLIENT_ID", clientSecret: "GOOGLE_CLIENT_SECRET", extra: {} },
+  // Phase 10: Instagram API with Instagram Login (organic Instagram only).
+  instagram: { clientId: "INSTAGRAM_APP_ID", clientSecret: "INSTAGRAM_APP_SECRET", extra: {} },
 };
 
-export function oauthClientConfig(platform: AdPlatform): OAuthClientConfig {
+export function oauthClientConfig(platform: ConnectionProvider): OAuthClientConfig {
   const names = CLIENT_ENV[platform];
   const clientId = process.env[names.clientId];
   const clientSecret = process.env[names.clientSecret];

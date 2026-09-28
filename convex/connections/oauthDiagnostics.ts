@@ -7,10 +7,12 @@ import type { AuditChanges } from "../lib/validation";
  *
  *   failureKind   a ProviderError kind
  *   failureStage  code_exchange | long_lived_exchange | debug_token | identity | config
- *                 (Meta) and token_exchange | identity | api_access | config (Google)
+ *                 (Meta), token_exchange | identity | api_access | config (Google) and
+ *                 token_exchange | long_lived_exchange | identity | config | token_refresh
+ *                 (Instagram, Phase 10)
  *   providerCode  a Meta numeric code, optionally with a subcode ("190", "100/36009"),
- *                 one internal constant (INTERNAL_CODES) or one allowlisted Google code
- *                 (GOOGLE_CODES)
+ *                 one internal constant (INTERNAL_CODES), one allowlisted Google code
+ *                 (GOOGLE_CODES) or one allowlisted Instagram code (INSTAGRAM_CODES)
  *
  * Input comes from a ProviderError's `kind` and `providerCode` ("<stage>:<code>").
  * Anything that does not match exactly is DROPPED, never stored. Tokens, codes,
@@ -27,6 +29,8 @@ export const OAUTH_FAILURE_STAGES = [
   // Google Ads (Phase 9, G-D19)
   "token_exchange",
   "api_access",
+  // Instagram (Phase 10)
+  "token_refresh",
 ] as const;
 
 const INTERNAL_CODES: ReadonlySet<string> = new Set([
@@ -59,6 +63,21 @@ const GOOGLE_CODES: ReadonlySet<string> = new Set([
   "google_config_invalid",
 ]);
 
+/**
+ * Instagram codes (Phase 10): an EXPLICIT allowlist of internal constants (numeric
+ * Graph/OAuth codes pass NUMERIC_CODE). Transport markers (network, timeout, http_*,
+ * schema) stay dropped, as for Meta and Google. Anything else is dropped.
+ */
+const INSTAGRAM_CODES: ReadonlySet<string> = new Set([
+  "instagram_config_invalid",
+  "account_type_unsupported",
+  "identity_invalid",
+  "credential_invalid",
+  "token_too_new",
+  "transport_blocked",
+  "request_budget_exceeded",
+]);
+
 const NUMERIC_CODE = /^\d{1,6}(\/\d{1,9})?$/;
 const STAGED = /^([a-z_]{1,32}):([A-Za-z0-9_/]{1,64})$/;
 
@@ -80,7 +99,12 @@ export function sanitizeOAuthDiagnostics(input: OAuthFailureDiagnostics | undefi
     const [, stage, code] = staged as unknown as [string, string, string];
     if ((OAUTH_FAILURE_STAGES as readonly string[]).includes(stage)) {
       changes.failureStage = { from: null, to: stage };
-      if (NUMERIC_CODE.test(code) || INTERNAL_CODES.has(code) || GOOGLE_CODES.has(code)) {
+      if (
+        NUMERIC_CODE.test(code) ||
+        INTERNAL_CODES.has(code) ||
+        GOOGLE_CODES.has(code) ||
+        INSTAGRAM_CODES.has(code)
+      ) {
         changes.providerCode = { from: null, to: code };
       }
     }

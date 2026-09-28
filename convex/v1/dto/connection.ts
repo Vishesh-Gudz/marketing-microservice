@@ -1,6 +1,10 @@
 import { v, type Infer } from "convex/values";
 import type { Doc } from "../../_generated/dataModel";
-import { adAccountStatusValidator, adPlatformValidator } from "../../domain/validators";
+import {
+  adAccountStatusValidator,
+  adPlatformValidator,
+  connectionProviderValidator,
+} from "../../domain/validators";
 import { toIso } from "../../lib/dto";
 import { connectionStatusValidator } from "../../tables/connections";
 
@@ -13,7 +17,8 @@ const EXPIRES_SOON_MS = 10 * 24 * 60 * 60 * 1000;
  */
 export const connectionDto = v.object({
   id: v.string(),
-  provider: adPlatformValidator,
+  /** Phase 10: widened with "instagram" (additive enum value; v1 freezes in Phase 13). */
+  provider: connectionProviderValidator,
   displayName: v.optional(v.string()),
   status: connectionStatusValidator,
   grantedScopes: v.array(v.string()),

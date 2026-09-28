@@ -88,7 +88,7 @@ export function CoverageNotice({ coverage }: { coverage: Coverage }) {
   );
 }
 
-const PROVIDER_LABEL = { meta: "Meta", google_ads: "Google Ads" } as const;
+const PROVIDER_LABEL = { meta: "Meta", google_ads: "Google Ads", instagram: "Instagram" } as const;
 
 /** Connections whose credentials stopped working (needs_reauth; read-only, D17). */
 export function ReauthBanner() {

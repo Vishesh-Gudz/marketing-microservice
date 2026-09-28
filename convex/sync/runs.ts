@@ -20,6 +20,7 @@ import {
   prunePlacements,
   removalTableFor,
   type RunPlan,
+  type SyncOperation,
   type SyncRunKind,
 } from "./plan";
 import {
@@ -30,7 +31,22 @@ import {
   toSyncFailure,
   type SyncFailure,
 } from "./policy";
-import { findSyncAccount } from "./state";
+import type { SocialRunPlan } from "./socialPlan";
+import { findSocialSyncAccount, findSyncAccount, findSyncAccountForSubject } from "./state";
+import {
+  isAdOperation,
+  isPreflightOperation,
+  operationMatchesSubject,
+  sameSubject,
+  subjectFields,
+  subjectId,
+  subjectOf,
+  subjectOfAccount,
+  subjectTargetType,
+  SyncSubjectInvariantError,
+  type SubjectAccount,
+  type SyncSubject,
+} from "./subject";
 import {
   accountDrift,
   addCounts,
@@ -64,6 +80,11 @@ import {
  *
  * Tenant identity comes ONLY from stored rows (task -> run -> account ->
  * connection); every hop is checked to belong to the same org.
+ *
+ * Phase 10: a run's subject is an ad account OR an organic social account (subject.ts).
+ * Ad subjects behave exactly as in Phase 5; social subjects share the run/task/lease/
+ * checkpoint machinery, are executed by the "use node" social worker, and (Stage A) have no
+ * canonical page write path yet: a social page can never be committed.
  */
 
 type Ctx = Pick<MutationCtx, "db" | "scheduler">;
@@ -79,31 +100,55 @@ class TenantInvariantError extends Error {
   }
 }
 
-export type Loaded = {
+type LoadedBase = {
   task: Doc<"syncTasks">;
   run: Doc<"syncRuns">;
-  account: Doc<"adAccounts">;
   syncAccount: Doc<"syncAccounts">;
 };
 
-/** Loads task -> run -> account -> sync state, verifying they share one org. */
+export type Loaded =
+  | (LoadedBase & { kind: "ad"; account: Doc<"adAccounts"> })
+  | (LoadedBase & { kind: "social"; account: Doc<"socialAccounts"> });
+
+/**
+ * Loads task -> run -> account -> sync state, verifying they share one org and name the
+ * SAME single subject (an ad task never runs against a social account, or vice versa).
+ */
 export async function loadTask(ctx: Ctx, taskId: Id<"syncTasks">): Promise<Loaded | null> {
   const task = await ctx.db.get(taskId);
   if (task === null) return null;
   const run = await ctx.db.get(task.runId);
   if (run === null) return null;
-  const account = await ctx.db.get(run.adAccountId);
+  const subject = subjectOf(run);
+  if (!operationMatchesSubject(subject.kind, task.operation)) {
+    throw new SyncSubjectInvariantError();
+  }
+  if (subject.kind === "ad") {
+    const account = await ctx.db.get(subject.adAccountId);
+    if (account === null) return null;
+    if (
+      run.orgId !== task.orgId ||
+      !sameSubject(subject, subjectOf(task)) ||
+      account.orgId !== run.orgId
+    ) {
+      throw new TenantInvariantError();
+    }
+    const syncAccount = await findSyncAccount(ctx.db, run.orgId, subject.adAccountId);
+    if (syncAccount === null) return null;
+    return { kind: "ad", task, run, account, syncAccount };
+  }
+  const account = await ctx.db.get(subject.socialAccountId);
   if (account === null) return null;
   if (
     run.orgId !== task.orgId ||
-    run.adAccountId !== task.adAccountId ||
+    !sameSubject(subject, subjectOf(task)) ||
     account.orgId !== run.orgId
   ) {
     throw new TenantInvariantError();
   }
-  const syncAccount = await findSyncAccount(ctx.db, run.orgId, run.adAccountId);
+  const syncAccount = await findSocialSyncAccount(ctx.db, run.orgId, subject.socialAccountId);
   if (syncAccount === null) return null;
-  return { task, run, account, syncAccount };
+  return { kind: "social", task, run, account, syncAccount };
 }
 
 type Linkage = "account_unlinked" | "account_relinked" | "connection_inactive";
@@ -112,7 +157,7 @@ type Linkage = "account_unlinked" | "account_relinked" | "connection_inactive";
 async function linkageProblem(
   ctx: Ctx,
   run: Doc<"syncRuns">,
-  account: Doc<"adAccounts">,
+  account: { connectionId?: Id<"connections"> },
 ): Promise<{ problem?: Linkage; connection?: Doc<"connections"> }> {
   if (account.connectionId === undefined) return { problem: "account_unlinked" };
   if (account.connectionId !== run.connectionId) return { problem: "account_relinked" };
@@ -138,6 +183,19 @@ async function setLease(ctx: Ctx, syncAccount: Doc<"syncAccounts">, until: numbe
   await ctx.db.patch(syncAccount._id, { leaseExpiresAt: until, nextPlanAt: until, updatedAt: now });
 }
 
+/**
+ * The worker action of a subject: the default-runtime ads worker, or the "use node" social
+ * worker (Phase 10: the SDK-backed social provider may only run in Node).
+ */
+function workerFor(row: {
+  adAccountId?: Id<"adAccounts">;
+  socialAccountId?: Id<"socialAccounts">;
+}) {
+  return subjectOf(row).kind === "social"
+    ? internal.sync.socialWorker.runTask
+    : internal.sync.worker.runTask;
+}
+
 /** Schedules the step that continues `task`: a worker action (fetch) or a finalize mutation. */
 async function scheduleTask(ctx: Ctx, task: Doc<"syncTasks">, delayMs: number) {
   if (task.phase === "finalize") {
@@ -146,7 +204,7 @@ async function scheduleTask(ctx: Ctx, task: Doc<"syncTasks">, delayMs: number) {
       claimSeq: task.claimSeq,
     });
   } else {
-    await ctx.scheduler.runAfter(delayMs, internal.sync.worker.runTask, { taskId: task._id });
+    await ctx.scheduler.runAfter(delayMs, workerFor(task), { taskId: task._id });
   }
 }
 
@@ -154,14 +212,19 @@ async function writeSyncAudit(
   ctx: Ctx,
   orgId: Id<"organizations">,
   action: string,
-  targetId: string,
+  subject: SyncSubject,
   changes?: AuditChanges,
 ) {
   const org = await ctx.db.get(orgId);
   await writeAudit(
     ctx.db,
     { orgId, issuer: org?.issuer ?? "", subject: SYSTEM_SYNC_SUBJECT },
-    { action, targetType: "adAccount", targetId, ...(changes ? { changes } : {}) },
+    {
+      action,
+      targetType: subjectTargetType(subject),
+      targetId: subjectId(subject),
+      ...(changes ? { changes } : {}),
+    },
   );
 }
 
@@ -189,14 +252,29 @@ function newTaskFields(now: number) {
   };
 }
 
+/** The subject's runs, newest first (org-scoped subject index). */
+function subjectRunsNewestFirst(ctx: Ctx, orgId: Id<"organizations">, subject: SyncSubject) {
+  return subject.kind === "ad"
+    ? ctx.db
+        .query("syncRuns")
+        .withIndex("by_org_account_created", (q) =>
+          q.eq("orgId", orgId).eq("adAccountId", subject.adAccountId),
+        )
+        .order("desc")
+    : ctx.db
+        .query("syncRuns")
+        .withIndex("by_org_social_account_created", (q) =>
+          q.eq("orgId", orgId).eq("socialAccountId", subject.socialAccountId),
+        )
+        .order("desc");
+}
+
 /** Deletes the oldest runs (and their tasks) beyond the per-account retention. */
-async function applyRetention(ctx: Ctx, orgId: Id<"organizations">, adAccountId: Id<"adAccounts">) {
+async function applyRetention(ctx: Ctx, orgId: Id<"organizations">, subject: SyncSubject) {
   const keep = SYNC_LIMITS.runsKeptPerAccount - 1; // the run about to be created is the newest
-  const recent = await ctx.db
-    .query("syncRuns")
-    .withIndex("by_org_account_created", (q) => q.eq("orgId", orgId).eq("adAccountId", adAccountId))
-    .order("desc")
-    .take(keep + SYNC_LIMITS.runsDeletedPerCreate);
+  const recent = await subjectRunsNewestFirst(ctx, orgId, subject).take(
+    keep + SYNC_LIMITS.runsDeletedPerCreate,
+  );
   for (const old of recent.slice(keep)) {
     if (ACTIVE_RUN.has(old.status)) continue;
     const tasks = await ctx.db
@@ -225,14 +303,64 @@ export async function createRun(
     now: number;
   },
 ): Promise<{ runId: Id<"syncRuns">; created: boolean }> {
-  const { syncAccount, account, connection, plan, now } = input;
+  const { account, ...rest } = input;
+  return await createSubjectRun(ctx, {
+    ...rest,
+    subject: { kind: "ad", account },
+    providerId: providerRegistry().ads(account.platform).providerId,
+  });
+}
+
+/** Phase 10: the same run creation for an organic social account. */
+export async function createSocialRun(
+  ctx: Ctx,
+  input: {
+    syncAccount: Doc<"syncAccounts">;
+    account: Doc<"socialAccounts">;
+    connection: Doc<"connections">;
+    plan: SocialRunPlan;
+    trigger: Doc<"syncRuns">["trigger"];
+    now: number;
+  },
+): Promise<{ runId: Id<"syncRuns">; created: boolean }> {
+  const { account, ...rest } = input;
+  // The connection must be the social account's own platform connection (Instagram Login).
+  if (input.connection.provider !== account.platform) throw new SyncSubjectInvariantError();
+  return await createSubjectRun(ctx, {
+    ...rest,
+    subject: { kind: "social", account },
+    providerId: providerRegistry().socialProviderId(account.platform),
+  });
+}
+
+type AnyTaskSpec = RunPlan["tasks"][number] | SocialRunPlan["tasks"][number];
+
+async function createSubjectRun(
+  ctx: Ctx,
+  input: {
+    syncAccount: Doc<"syncAccounts">;
+    subject: SubjectAccount;
+    connection: Doc<"connections">;
+    plan: RunPlan | SocialRunPlan;
+    providerId: string;
+    trigger: Doc<"syncRuns">["trigger"];
+    now: number;
+  },
+): Promise<{ runId: Id<"syncRuns">; created: boolean }> {
+  const { syncAccount, connection, plan, now } = input;
+  const account = input.subject.account;
+  const subject = subjectOfAccount(input.subject);
   if (
     syncAccount.orgId !== account.orgId ||
     connection.orgId !== account.orgId ||
-    syncAccount.adAccountId !== account._id ||
+    !sameSubject(subjectOf(syncAccount), subject) ||
     account.connectionId !== connection._id
   ) {
     throw new TenantInvariantError();
+  }
+  const specs: AnyTaskSpec[] = plan.tasks;
+  if (specs.some((spec) => !operationMatchesSubject(subject.kind, spec.operation))) {
+    throw new SyncSubjectInvariantError();
   }
   if (syncAccount.activeRunId !== undefined) {
     const active = await ctx.db.get(syncAccount.activeRunId);
@@ -245,33 +373,44 @@ export async function createRun(
   const idempotencyKey = `${plan.kind}:${plan.window?.from ?? "-"}:${plan.window?.to ?? "-"}:${slot}`;
   // Same kind + window in the same planner slot already ran (or runs): don't repeat it.
   // Cancelled/failed runs don't count, so a relink or reconnect can retry immediately.
-  const sameSlot = await ctx.db
-    .query("syncRuns")
-    .withIndex("by_org_account_key", (q) =>
-      q
-        .eq("orgId", account.orgId)
-        .eq("adAccountId", account._id)
-        .eq("idempotencyKey", idempotencyKey),
-    )
-    .take(10);
+  const sameSlot = await (subject.kind === "ad"
+    ? ctx.db
+        .query("syncRuns")
+        .withIndex("by_org_account_key", (q) =>
+          q
+            .eq("orgId", account.orgId)
+            .eq("adAccountId", subject.adAccountId)
+            .eq("idempotencyKey", idempotencyKey),
+        )
+        .take(10)
+    : ctx.db
+        .query("syncRuns")
+        .withIndex("by_org_social_account_key", (q) =>
+          q
+            .eq("orgId", account.orgId)
+            .eq("socialAccountId", subject.socialAccountId)
+            .eq("idempotencyKey", idempotencyKey),
+        )
+        .take(10));
   const duplicate = sameSlot.find((r) => r.status !== "cancelled" && r.status !== "failed");
   if (duplicate !== undefined) return { runId: duplicate._id, created: false };
 
-  await applyRetention(ctx, account.orgId, account._id);
+  await applyRetention(ctx, account.orgId, subject);
 
-  const provider = providerRegistry().ads(account.platform);
   const runId = await ctx.db.insert("syncRuns", {
     orgId: account.orgId,
-    adAccountId: account._id,
+    ...subjectFields(subject),
     connectionId: connection._id,
     platform: account.platform,
-    providerId: provider.providerId,
+    providerId: input.providerId,
     kind: plan.kind,
     trigger: input.trigger,
     status: "queued",
     ...(plan.window ? { window: plan.window } : {}),
     structureMode: plan.structureMode,
-    ...(plan.updatedSince !== undefined ? { updatedSince: plan.updatedSince } : {}),
+    ...("updatedSince" in plan && plan.updatedSince !== undefined
+      ? { updatedSince: plan.updatedSince }
+      : {}),
     idempotencyKey,
     taskCount: plan.tasks.length,
     tasksSucceeded: 0,
@@ -283,18 +422,20 @@ export async function createRun(
   });
 
   let firstTaskId: Id<"syncTasks"> | undefined;
-  for (const [seq, spec] of plan.tasks.entries()) {
+  for (const [seq, spec] of specs.entries()) {
     const taskId = await ctx.db.insert("syncTasks", {
       orgId: account.orgId,
       runId,
-      adAccountId: account._id,
+      ...subjectFields(subject),
       seq,
       operation: spec.operation,
-      ...(spec.level !== undefined ? { level: spec.level } : {}),
+      ...("level" in spec && spec.level !== undefined ? { level: spec.level } : {}),
       ...(spec.from !== undefined ? { from: spec.from } : {}),
       ...(spec.to !== undefined ? { to: spec.to } : {}),
-      ...(spec.breakdown !== undefined ? { breakdown: spec.breakdown } : {}),
-      ...(spec.updatedSince !== undefined ? { updatedSince: spec.updatedSince } : {}),
+      ...("breakdown" in spec && spec.breakdown !== undefined ? { breakdown: spec.breakdown } : {}),
+      ...("updatedSince" in spec && spec.updatedSince !== undefined
+        ? { updatedSince: spec.updatedSince }
+        : {}),
       fullListing: spec.fullListing,
       ...newTaskFields(now),
     });
@@ -308,7 +449,7 @@ export async function createRun(
     nextPlanAt: now + SYNC_LIMITS.taskLeaseMs,
     updatedAt: now,
   });
-  await ctx.scheduler.runAfter(0, internal.sync.worker.runTask, { taskId: firstTaskId! });
+  await ctx.scheduler.runAfter(0, workerFor(subjectFields(subject)), { taskId: firstTaskId! });
   return { runId, created: true };
 }
 
@@ -347,7 +488,7 @@ export async function cancelRun(
     finishedAt: now,
     updatedAt: now,
   });
-  const syncAccount = await findSyncAccount(ctx.db, run.orgId, run.adAccountId);
+  const syncAccount = await findSyncAccountForSubject(ctx.db, run.orgId, subjectOf(run));
   if (syncAccount === null || syncAccount.activeRunId !== run._id) return;
 
   const base = {
@@ -403,7 +544,14 @@ export async function cancelRun(
 function completedWindows(tasks: Doc<"syncTasks">[]) {
   const byWindow = new Map<string, { from: string; to: string; ok: boolean }>();
   for (const task of tasks) {
-    if (!isMetricOperation(task.operation) || task.from === undefined || task.to === undefined) {
+    const operation = task.operation;
+    // Coverage is ad-only in Phase 10 Stage A (social coverage arrives with Stage B).
+    if (
+      !isAdOperation(operation) ||
+      !isMetricOperation(operation) ||
+      task.from === undefined ||
+      task.to === undefined
+    ) {
       continue;
     }
     const key = `${task.from}|${task.to}`;
@@ -428,7 +576,7 @@ async function completeRun(
   const failed = tasks.filter((t) => t.status === "failed");
   const skipped = tasks.filter((t) => t.status === "skipped");
   const preflightFailed = tasks.some(
-    (t) => t.operation === "getAccount" && t.status !== "succeeded",
+    (t) => isPreflightOperation(t.operation) && t.status !== "succeeded",
   );
   const warning = tasks.find((t) => t.status === "succeeded" && t.lastError !== undefined);
   const unresolved = run.counts.unresolved + run.counts.rejected > 0;
@@ -453,7 +601,8 @@ async function completeRun(
     updatedAt: now,
   });
 
-  const syncAccount = await findSyncAccount(ctx.db, run.orgId, run.adAccountId);
+  const runSubject = subjectOf(run);
+  const syncAccount = await findSyncAccountForSubject(ctx.db, run.orgId, runSubject);
   if (syncAccount === null || syncAccount.activeRunId !== run._id) return;
   const base = {
     activeRunId: undefined,
@@ -484,12 +633,15 @@ async function completeRun(
   // Succeeded or partial: the account is healthy enough to advance its schedule. This is
   // the ONLY place a blocking reason is cleared, and it is audited.
   if (syncAccount.lastError !== undefined && isBlockingError(syncAccount.lastError)) {
-    await writeSyncAudit(ctx, run.orgId, AUDIT_ACTIONS.syncAccountUnblocked, run.adAccountId, {
+    await writeSyncAudit(ctx, run.orgId, AUDIT_ACTIONS.syncAccountUnblocked, runSubject, {
       reason: { from: syncAccount.lastError.kind, to: null },
     });
   }
 
-  const structureTasks = tasks.filter((t) => isStructureOperation(t.operation));
+  const structureTasks = tasks.filter((t) => {
+    const operation = t.operation;
+    return isAdOperation(operation) && isStructureOperation(operation);
+  });
   const structureOk =
     structureTasks.length > 0 && structureTasks.every((t) => t.status === "succeeded");
   const structureStartedAt = Math.min(...structureTasks.map((t) => t.fetchStartedAt ?? now), now);
@@ -555,7 +707,7 @@ async function advanceRun(ctx: Ctx, runId: Id<"syncRuns">, now: number): Promise
   const next = tasks.find((t) => t.status === "queued");
   if (next !== undefined) {
     await scheduleTask(ctx, next, 0);
-    const syncAccount = await findSyncAccount(ctx.db, run.orgId, run.adAccountId);
+    const syncAccount = await findSyncAccountForSubject(ctx.db, run.orgId, subjectOf(run));
     if (syncAccount !== null) await setLease(ctx, syncAccount, now + SYNC_LIMITS.taskLeaseMs, now);
     return;
   }
@@ -623,6 +775,15 @@ async function handleAuthFailure(ctx: Ctx, loaded: Loaded, error: SyncError, now
     consecutiveFailures: loaded.syncAccount.consecutiveFailures,
   });
 
+  // Every other account (ad or social) synced through the same connection stops too.
+  const runSubject = subjectOf(run);
+  const cancelActive = async (state: Doc<"syncAccounts"> | null) => {
+    if (state?.activeRunId === undefined) return;
+    const active = await ctx.db.get(state.activeRunId);
+    if (active !== null && active.orgId === run.orgId) {
+      await cancelRun(ctx, active, "connection_inactive", now);
+    }
+  };
   const siblings = await ctx.db
     .query("adAccounts")
     .withIndex("by_org_connection", (q) =>
@@ -630,13 +791,18 @@ async function handleAuthFailure(ctx: Ctx, loaded: Loaded, error: SyncError, now
     )
     .take(500);
   for (const sibling of siblings) {
-    if (sibling._id === run.adAccountId) continue;
-    const state = await findSyncAccount(ctx.db, run.orgId, sibling._id);
-    if (state?.activeRunId === undefined) continue;
-    const active = await ctx.db.get(state.activeRunId);
-    if (active !== null && active.orgId === run.orgId) {
-      await cancelRun(ctx, active, "connection_inactive", now);
-    }
+    if (runSubject.kind === "ad" && sibling._id === runSubject.adAccountId) continue;
+    await cancelActive(await findSyncAccount(ctx.db, run.orgId, sibling._id));
+  }
+  const socialSiblings = await ctx.db
+    .query("socialAccounts")
+    .withIndex("by_org_connection", (q) =>
+      q.eq("orgId", run.orgId).eq("connectionId", run.connectionId),
+    )
+    .take(500);
+  for (const sibling of socialSiblings) {
+    if (runSubject.kind === "social" && sibling._id === runSubject.socialAccountId) continue;
+    await cancelActive(await findSocialSyncAccount(ctx.db, run.orgId, sibling._id));
   }
 }
 
@@ -654,7 +820,7 @@ async function blockAccount(ctx: Ctx, loaded: Loaded, error: SyncError, now: num
       ctx,
       loaded.run.orgId,
       AUDIT_ACTIONS.syncAccountBlocked,
-      loaded.account._id,
+      subjectOf(loaded.run),
       {
         reason: { from: null, to: error.kind },
       },
@@ -691,7 +857,7 @@ async function applyFailure(ctx: Ctx, loaded: Loaded, failure: SyncFailure, now:
         updatedAt: now,
       };
       await ctx.db.patch(task._id, updated);
-      await ctx.scheduler.runAfter(decision.delayMs, internal.sync.worker.runTask, {
+      await ctx.scheduler.runAfter(decision.delayMs, workerFor(task), {
         taskId: task._id,
       });
       await ctx.db.patch(loaded.syncAccount._id, {
@@ -717,12 +883,12 @@ async function applyFailure(ctx: Ctx, loaded: Loaded, failure: SyncFailure, now:
         lastError: error,
         updatedAt: now,
       });
-      await ctx.scheduler.runAfter(0, internal.sync.worker.runTask, { taskId: task._id });
+      await ctx.scheduler.runAfter(0, workerFor(task), { taskId: task._id });
       await setLease(ctx, loaded.syncAccount, now + SYNC_LIMITS.taskLeaseMs, now);
       return;
     case "fail_task":
       // The preflight is fatal: without a verified account nothing else may run.
-      if (task.operation === "getAccount") await failRun(ctx, loaded, error, now);
+      if (isPreflightOperation(task.operation)) await failRun(ctx, loaded, error, now);
       else await finishTask(ctx, task, "failed", now, error);
       return;
     case "skip_task":
@@ -769,7 +935,7 @@ export const claimTask = internalMutation({
     const current = tasks.find((t) => !TERMINAL_TASK.has(t.status));
     if (current?._id !== task._id) return { status: "skip" };
     if ((task.nextAttemptAt ?? 0) > now) {
-      await ctx.scheduler.runAfter(task.nextAttemptAt! - now, internal.sync.worker.runTask, {
+      await ctx.scheduler.runAfter(task.nextAttemptAt! - now, workerFor(task), {
         taskId,
       });
       return { status: "skip" };
@@ -826,6 +992,8 @@ export const claimTask = internalMutation({
       orgId: run.orgId,
       connectionId: run.connectionId,
       platform: run.platform,
+      // Phase 10: marks a social claim; the ads worker refuses it, the social worker requires it.
+      ...(loaded.kind === "social" ? { subject: "social" as const } : {}),
       attempt: task.attempt,
       request: {
         operation: task.operation,
@@ -858,12 +1026,16 @@ async function loadClaimed(ctx: Ctx, taskId: Id<"syncTasks">, claimSeq: number) 
   return loaded;
 }
 
-function needsFinalize(task: Doc<"syncTasks">, counts: SyncCounts): boolean {
-  if (isMetricOperation(task.operation)) return true;
+function needsFinalize(
+  task: Doc<"syncTasks">,
+  operation: SyncOperation,
+  counts: SyncCounts,
+): boolean {
+  if (isMetricOperation(operation)) return true;
   // Removal marking only after a COMPLETE, fully resolved full listing.
   return (
     task.fullListing &&
-    removalTableFor(task.operation) !== undefined &&
+    removalTableFor(operation) !== undefined &&
     counts.unresolved + counts.rejected === 0
   );
 }
@@ -884,6 +1056,13 @@ export const commitPage = internalMutation({
     const now = Date.now();
     const loaded = await loadClaimed(ctx, taskId, claimSeq);
     if (loaded === null) return { ok: false, reason: "stale_claim" };
+    const operation = loaded.task.operation;
+    if (loaded.kind !== "ad" || !isAdOperation(operation)) {
+      // Phase 10 Stage A: social subjects have no canonical page write path yet. Fail
+      // closed: an ad page can never be written for a social subject.
+      await applyFailure(ctx, loaded, { source: "guard", kind: "invalid_record" }, now);
+      return { ok: false, reason: "invalid_record" };
+    }
     const { task, run, account } = loaded;
     // Duplicate or out-of-order delivery of a page: the checkpoint already moved.
     if ((task.cursor ?? null) !== (requestCursor ?? null))
@@ -897,7 +1076,7 @@ export const commitPage = internalMutation({
 
     const caps = capabilitiesOf(account.platform);
     const guard =
-      page.kind !== OPERATION_RECORD_KIND[task.operation]
+      page.kind !== OPERATION_RECORD_KIND[operation]
         ? ("invalid_record" as const)
         : (checkPageShape({
             itemCount: page.items.length,
@@ -909,7 +1088,7 @@ export const commitPage = internalMutation({
             maxPageSize: caps.maxPageSize,
           }) ??
           checkRecordsInScope(page.kind, page.items, {
-            operation: task.operation,
+            operation,
             platform: account.platform,
             accountExternalId: account.externalId,
             currency: account.currency,
@@ -936,7 +1115,7 @@ export const commitPage = internalMutation({
             ctx,
             run.orgId,
             AUDIT_ACTIONS.syncAccountAttributesChanged,
-            account._id,
+            { kind: "ad", adAccountId: account._id },
             { attribute: { from: null, to: drift } },
           );
           await applyFailure(ctx, loaded, { source: "account", kind: "account_changed" }, now);
@@ -990,13 +1169,13 @@ export const commitPage = internalMutation({
 
     if (page.nextCursor !== undefined) {
       await ctx.db.patch(task._id, { ...checkpoint, status: "queued" });
-      await ctx.scheduler.runAfter(0, internal.sync.worker.runTask, { taskId });
+      await ctx.scheduler.runAfter(0, workerFor(task), { taskId });
       await setLease(ctx, loaded.syncAccount, now + SYNC_LIMITS.taskLeaseMs, now);
       return { ok: true };
     }
 
     // Fetch complete.
-    if (needsFinalize(task, taskCounts)) {
+    if (needsFinalize(task, operation, taskCounts)) {
       await ctx.db.patch(task._id, { ...checkpoint, phase: "finalize", finalizeCursor: undefined });
       await ctx.scheduler.runAfter(0, internal.sync.runs.finalizeTask, { taskId, claimSeq });
       await setLease(ctx, loaded.syncAccount, now + SYNC_LIMITS.taskLeaseMs, now);
@@ -1031,17 +1210,24 @@ export const finalizeTask = internalMutation({
     const now = Date.now();
     const loaded = await loadTask(ctx, taskId);
     if (loaded === null) return null;
-    const { task, run, account, syncAccount } = loaded;
     if (
-      task.claimSeq !== claimSeq ||
-      task.status !== "running" ||
-      task.phase !== "finalize" ||
-      !ACTIVE_RUN.has(run.status) ||
-      syncAccount.activeRunId !== run._id ||
-      task.fetchStartedAt === undefined
+      loaded.task.claimSeq !== claimSeq ||
+      loaded.task.status !== "running" ||
+      loaded.task.phase !== "finalize" ||
+      !ACTIVE_RUN.has(loaded.run.status) ||
+      loaded.syncAccount.activeRunId !== loaded.run._id ||
+      loaded.task.fetchStartedAt === undefined
     ) {
       return null;
     }
+    const operation = loaded.task.operation;
+    if (loaded.kind !== "ad" || !isAdOperation(operation)) {
+      // Unreachable in Stage A (social pages are never committed): fail closed.
+      await finishTask(ctx, loaded.task, "failed", now, sanitizeFailure({ kind: "internal" }, now));
+      return null;
+    }
+    const { task, run, account, syncAccount } = loaded;
+    const fetchStartedAt = task.fetchStartedAt!;
     const scope = accountScopeFromDoc(account);
     const continueWith = async (finalizeCursor: string, counts: Partial<SyncCounts>) => {
       await ctx.db.patch(task._id, {
@@ -1060,15 +1246,15 @@ export const finalizeTask = internalMutation({
       await finishTask(ctx, { ...task, counts: merged }, "succeeded", now, warning);
     };
 
-    if (isMetricOperation(task.operation)) {
+    if (isMetricOperation(operation)) {
       const result = await pruneMetricsBatch(ctx.db, {
-        table: task.operation === "fetchDailyMetrics" ? "metricsDaily" : "actionMetricsDaily",
+        table: operation === "fetchDailyMetrics" ? "metricsDaily" : "actionMetricsDaily",
         scope,
         level: task.level!,
         placements: prunePlacements(task.breakdown ?? "none"),
         from: task.from!,
         to: task.to!,
-        before: task.fetchStartedAt,
+        before: fetchStartedAt,
         cursor: task.finalizeCursor ? (JSON.parse(task.finalizeCursor) as PruneCursor) : undefined,
         limit: SYNC_LIMITS.finalizeBatch,
       });
@@ -1080,7 +1266,7 @@ export const finalizeTask = internalMutation({
       return null;
     }
 
-    const table = removalTableFor(task.operation);
+    const table = removalTableFor(operation);
     if (table === undefined) {
       await done({});
       return null;
@@ -1088,7 +1274,7 @@ export const finalizeTask = internalMutation({
     const result = await markRemovedBatch(ctx.db, {
       table,
       scope,
-      before: task.fetchStartedAt,
+      before: fetchStartedAt,
       now,
       cursor: task.finalizeCursor ? (JSON.parse(task.finalizeCursor) as RemovalCursor) : undefined,
       limit: SYNC_LIMITS.finalizeBatch,
@@ -1100,7 +1286,7 @@ export const finalizeTask = internalMutation({
     } else if (result.status === "done") {
       await done({ removed: result.removed });
     } else {
-      await writeSyncAudit(ctx, run.orgId, AUDIT_ACTIONS.syncRemovalSkipped, account._id, {
+      await writeSyncAudit(ctx, run.orgId, AUDIT_ACTIONS.syncRemovalSkipped, subjectOf(run), {
         table: { from: null, to: table },
         candidates: { from: result.alive, to: result.candidates },
       });
@@ -1130,7 +1316,7 @@ export async function recoverStalledRun(ctx: Ctx, run: Doc<"syncRuns">, now: num
   if (loaded === null) return;
   if (current.staleRecoveries + 1 > SYNC_LIMITS.maxStaleRecoveries) {
     const error = sanitizeFailure({ kind: "stale_lease" }, now);
-    if (current.operation === "getAccount") await failRun(ctx, loaded, error, now);
+    if (isPreflightOperation(current.operation)) await failRun(ctx, loaded, error, now);
     else await finishTask(ctx, current, "failed", now, error);
     return;
   }

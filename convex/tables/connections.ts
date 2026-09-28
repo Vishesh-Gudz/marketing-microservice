@@ -1,6 +1,12 @@
 import { defineTable } from "convex/server";
 import { v } from "convex/values";
-import { adAccountStatusValidator, adPlatformValidator } from "../domain/validators";
+import {
+  adAccountStatusValidator,
+  adPlatformValidator,
+  connectionProviderValidator,
+  socialAccountTypeValidator,
+  socialPlatformValidator,
+} from "../domain/validators";
 import { orgIdField } from "./common";
 
 // Phase 4: platform connections and their (encrypted) credentials.
@@ -14,10 +20,13 @@ export const connectionStatusValidator = v.union(
 );
 
 export const connectionTables = {
-  /** One platform identity (Meta user / Google account) connected by an org. */
+  /**
+   * One platform identity (Meta user / Google account / Instagram professional account)
+   * connected by an org.
+   */
   connections: defineTable({
     orgId: orgIdField,
-    provider: adPlatformValidator,
+    provider: connectionProviderValidator,
     /** Platform user identity; natural key with (orgId, provider). */
     externalUserId: v.string(),
     displayName: v.optional(v.string()),
@@ -55,7 +64,7 @@ export const connectionTables = {
   /** Short-lived, single-use OAuth state. The nonce is stored only as a hash. INTERNAL-ONLY. */
   oauthStates: defineTable({
     orgId: orgIdField,
-    provider: adPlatformValidator,
+    provider: connectionProviderValidator,
     nonceHash: v.string(),
     /** PKCE verifier (short-lived; deleted by the sweep). */
     codeVerifier: v.optional(v.string()),
@@ -89,6 +98,23 @@ export const connectionTables = {
     rawStatus: v.optional(v.string()),
     isManager: v.boolean(),
     parentExternalId: v.optional(v.string()),
+    discoveredAt: v.number(),
+  }).index("by_org_connection_external", ["orgId", "connectionId", "externalId"]),
+
+  /**
+   * Organic social accounts a connection can access (Phase 10); replaced on every
+   * discovery. Minimum identity only: no profile picture, biography, website or followers
+   * (those arrive with the first sync preflight, Stage B).
+   */
+  discoveredSocialAccounts: defineTable({
+    orgId: orgIdField,
+    connectionId: v.id("connections"),
+    platform: socialPlatformValidator,
+    /** Instagram professional account id (`/me.user_id`). */
+    externalId: v.string(),
+    username: v.optional(v.string()),
+    /** Business / creator only: any other platform account type fails discovery closed. */
+    accountType: socialAccountTypeValidator,
     discoveredAt: v.number(),
   }).index("by_org_connection_external", ["orgId", "connectionId", "externalId"]),
 };

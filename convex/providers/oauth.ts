@@ -1,4 +1,4 @@
-import type { AdPlatform } from "../domain/types";
+import type { ConnectionProvider } from "../domain/types";
 
 /**
  * OAuth contract for connecting a platform identity (Phase 4). Tenant-free like
@@ -54,7 +54,8 @@ export type ExchangeCodeInput = {
 };
 
 export interface OAuthSpec<TCredential = unknown> {
-  readonly platform: AdPlatform;
+  /** The connection provider (an ad platform, or Instagram Login in Phase 10). */
+  readonly platform: ConnectionProvider;
   readonly providerId: string;
   /** Scopes requested at consent. */
   readonly requestedScopes: readonly string[];
@@ -64,7 +65,10 @@ export interface OAuthSpec<TCredential = unknown> {
 
   buildAuthorizationUrl(input: AuthorizationUrlInput): string;
   exchangeCode(input: ExchangeCodeInput): Promise<OAuthGrant<TCredential>>;
-  /** Google: mint a fresh grant from a refresh token. Absent when the platform cannot refresh. */
+  /**
+   * Google: mint a fresh grant from a refresh token. Instagram (Phase 10): exchange a
+   * long-lived token (at least 24 h old) for a new one. Absent when the platform cannot refresh.
+   */
   refresh?(
     credential: TCredential,
     config: OAuthClientConfig,

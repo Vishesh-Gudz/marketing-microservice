@@ -9,7 +9,9 @@ const CREDENTIALS_LITERAL = {
 };
 
 const CANONICAL_TABLES =
-  "adAccounts|campaigns|adGroups|ads|creatives|metricsDaily|actionMetricsDaily";
+  "adAccounts|campaigns|adGroups|ads|creatives|metricsDaily|actionMetricsDaily|" +
+  // Phase 10: the organic social tables share the single write path (convex/sync/upsert.ts).
+  "socialAccounts|socialPosts|socialPostMetricSnapshots|socialAccountMetricsDaily";
 const CANONICAL_INSERT = {
   selector: `CallExpression[callee.property.name='insert'][arguments.0.value=/^(${CANONICAL_TABLES})$/]`,
   message:
@@ -21,6 +23,32 @@ const DECRYPT_IMPORT = {
   importNames: ["decryptJson"],
   message: "Decryption is only allowed in convex/connections/credentialStore.ts.",
 };
+
+/**
+ * Phase 10 social-sdk isolation (Stage 0 decision). @opencoredev/social-sdk is ESM-only and
+ * Node-only; ONLY convex/providers/instagram/node/** may import it. That directory may be
+ * imported ONLY by convex/providers/social/nodeRegistry.ts, and the node registry ONLY by
+ * the "use node" social worker (convex/sync/socialWorker.ts). Everything else (connections,
+ * sync core, v1, analytics, dashboard, shared provider contracts) is SDK-free.
+ */
+const SOCIAL_SDK_IMPORT = {
+  group: ["@opencoredev/social-sdk", "@opencoredev/social-sdk/*"],
+  message: "Only convex/providers/instagram/node/** may import @opencoredev/social-sdk.",
+};
+const INSTAGRAM_NODE_IMPORT = {
+  group: ["**/instagram/node", "**/instagram/node/**", "./node", "./node/**"],
+  message: "Only convex/providers/social/nodeRegistry.ts may import the Instagram Node adapter.",
+};
+const NODE_REGISTRY_IMPORT = {
+  group: ["**/nodeRegistry"],
+  message:
+    'Only the "use node" social worker (convex/sync/socialWorker.ts) may import the node registry.',
+};
+const SOCIAL_NODE_FILES = [
+  "convex/providers/instagram/node/**",
+  "convex/providers/social/nodeRegistry.ts",
+  "convex/sync/socialWorker.ts",
+];
 
 /** May reference the credentials table / decrypt (still may not insert canonical rows). */
 const CREDENTIAL_EXEMPT = [
@@ -61,6 +89,40 @@ const eslintConfig = defineConfig([
       "@typescript-eslint/consistent-type-imports": ["error", { fixStyle: "inline-type-imports" }],
     },
   },
+  // Phase 10 social-sdk isolation (see SOCIAL_SDK_IMPORT). convex/v1 carries the same
+  // patterns inside its own no-restricted-imports block below (a later block would replace
+  // this one for v1 files, so v1 is excluded here).
+  {
+    files: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"],
+    ignores: ["convex/v1/**", "**/*.test.ts", ...SOCIAL_NODE_FILES],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        { patterns: [SOCIAL_SDK_IMPORT, INSTAGRAM_NODE_IMPORT, NODE_REGISTRY_IMPORT] },
+      ],
+    },
+  },
+  // Tests may exercise the node adapter / registry directly, but only tests inside the
+  // Instagram node directory may touch the SDK itself.
+  {
+    files: ["**/*.test.ts"],
+    ignores: ["convex/providers/instagram/node/**"],
+    rules: { "no-restricted-imports": ["error", { patterns: [SOCIAL_SDK_IMPORT] }] },
+  },
+  {
+    files: ["convex/providers/instagram/node/**"],
+    rules: { "no-restricted-imports": ["error", { patterns: [NODE_REGISTRY_IMPORT] }] },
+  },
+  {
+    files: ["convex/providers/social/nodeRegistry.ts"],
+    rules: { "no-restricted-imports": ["error", { patterns: [SOCIAL_SDK_IMPORT] }] },
+  },
+  {
+    files: ["convex/sync/socialWorker.ts"],
+    rules: {
+      "no-restricted-imports": ["error", { patterns: [SOCIAL_SDK_IMPORT, INSTAGRAM_NODE_IMPORT] }],
+    },
+  },
   // convex/v1 is the public contract: only tenancy wrappers from convex/lib/tenancy
   // may define functions here. Raw builders would bypass JWT/tenant resolution.
   {
@@ -84,6 +146,9 @@ const eslintConfig = defineConfig([
               message:
                 "convex/v1 must use orgQuery/orgMutation/orgAdminMutation/authedMutation from convex/lib/tenancy.",
             },
+            SOCIAL_SDK_IMPORT,
+            INSTAGRAM_NODE_IMPORT,
+            NODE_REGISTRY_IMPORT,
           ],
           paths: [
             {
@@ -203,6 +268,12 @@ const eslintConfig = defineConfig([
                 "**/providers/google",
                 "**/providers/google/**",
                 "**/providers/oauth",
+                // Phase 10: no Instagram provider, social mock, node registry or social worker.
+                "**/providers/instagram",
+                "**/providers/instagram/**",
+                "**/providers/social/mock",
+                "**/providers/social/mock/**",
+                "**/sync/socialWorker",
               ],
               message:
                 "Analytics is query-time aggregation over canonical rows: no connections, credentials, sync writes or provider calls.",

@@ -17,6 +17,11 @@ export const AUDIT_ACTIONS = {
   adAccountLinked: "adAccount.linked",
   adAccountRelinked: "adAccount.relinked",
   adAccountUnlinked: "adAccount.unlinked",
+  // Phase 10: organic social accounts and Instagram token refresh.
+  socialAccountLinked: "socialAccount.linked",
+  socialAccountRelinked: "socialAccount.relinked",
+  socialAccountUnlinked: "socialAccount.unlinked",
+  connectionTokenRefreshed: "connection.token_refreshed",
   // Phase 5: sync. Routine runs are NOT audited (see syncRuns); only account-level
   // state changes are. Entries carry ids/kinds/counts only, never payloads.
   syncAccountBlocked: "sync.account_blocked",
@@ -27,6 +32,9 @@ export const AUDIT_ACTIONS = {
 
 /** Actor used for audit entries written by scheduled system jobs. */
 export const SYSTEM_SWEEP_SUBJECT = "system:connection-sweep";
+
+/** Actor used for audit entries written by the daily token refresh job (Phase 10). */
+export const SYSTEM_TOKEN_REFRESH_SUBJECT = "system:token-refresh";
 
 /** Actor used for audit entries written by the sync engine (Phase 5). */
 export const SYSTEM_SYNC_SUBJECT = "system:sync";

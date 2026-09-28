@@ -5,6 +5,7 @@ import {
   AD_GROUP_KINDS,
   AD_PLATFORMS,
   ATTRIBUTION_BASES,
+  CONNECTION_PROVIDERS,
   BUDGET_LEVELS,
   BUDGET_TYPES,
   CHANNEL_TYPES,
@@ -36,6 +37,7 @@ export function literalUnion<const T extends readonly [string, ...string[]]>(
 
 export const adPlatformValidator = literalUnion(AD_PLATFORMS);
 export const socialPlatformValidator = literalUnion(SOCIAL_PLATFORMS);
+export const connectionProviderValidator = literalUnion(CONNECTION_PROVIDERS);
 export const entityLevelValidator = literalUnion(ENTITY_LEVELS);
 export const placementValidator = literalUnion(PLACEMENTS);
 export const adAccountStatusValidator = literalUnion(AD_ACCOUNT_STATUSES);

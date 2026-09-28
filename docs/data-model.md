@@ -198,8 +198,15 @@ money semantics are implemented provisionally and require validation on a real a
 
 ### Organic
 
+- Phase 10 Stage A adds linking only:
+  - `socialAccounts.connectionId?` and `linkedAt?`, plus the index `by_org_connection`;
+  - the discovery table `discoveredSocialAccounts` (org, connection, platform, externalId,
+    username?, accountType, discoveredAt).
+- Linked accounts are upserted by natural key `(orgId, platform, externalId)` through
+  `sync/upsert.ts`, which is also the single write path for all four social tables (ESLint).
+- `name` is the username as a label until the first sync preflight (Stage B).
 - `socialPostMetricSnapshots` stores **cumulative lifetime** values, one row per post per UTC
-  capture day. Daily deltas are computed in Phase 10.
+  capture day. Daily deltas are computed in Phase 10 Stage B.
 - `socialAccountMetricsDaily` stores daily account values.
 - Paid and organic engagement are never merged. Their engagement rates use different denominators
   (per impression versus per reach).

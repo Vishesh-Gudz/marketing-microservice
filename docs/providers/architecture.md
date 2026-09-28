@@ -163,6 +163,18 @@ grammar `"<id>--<scenario>[--v<n>]"` (e.g. `"1--rate_limited"`, `"1--default--v1
 credentials for identity `mock-user-<id>`, so a whole sync can run a scenario through the real
 connect flow and encrypted credential store. Real credentials never carry these fields.
 
+## Organic social (Phase 10)
+
+- **Contract:** `SocialProvider`, a sibling of `AdsProvider` (`convex/providers/social/types.ts`).
+  Its operations are `getAccount`, `listPosts`, `fetchPostMetrics` and `fetchAccountMetrics`,
+  plus the default-runtime `SocialAccountDiscovery`.
+- **Records** are derived from the social tables and validated against the real table
+  validators (`social/validate.ts`).
+- **Registry:** a `social` family holds static capabilities, the provider id and the SDK-free
+  discovery. The SDK-backed provider is resolved only in Node, by `social/nodeRegistry.ts`,
+  under the same PROVIDER_MODE (D8) matrix.
+- **Instagram:** [instagram.md](instagram.md).
+
 ## How Meta and Google Ads plug in (Phases 8–9)
 
 1. Create `convex/providers/meta/` (or `google/`) with `client.ts` (HTTP, auth headers, rate-limit

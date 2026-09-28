@@ -1,6 +1,11 @@
 import { defineTable } from "convex/server";
 import { v } from "convex/values";
-import { adPlatformValidator, dateKeyValidator, entityLevelValidator } from "../domain/validators";
+import {
+  adPlatformValidator,
+  dateKeyValidator,
+  entityLevelValidator,
+  socialPlatformValidator,
+} from "../domain/validators";
 import { orgIdField } from "./common";
 
 // Phase 5: sync engine state. INTERNAL-ONLY (no public function reads these
@@ -66,7 +71,22 @@ export const syncOperationValidator = v.union(
   v.literal("listAds"),
   v.literal("fetchDailyMetrics"),
   v.literal("fetchActionMetrics"),
+  // Phase 10: organic social subjects (convex/sync/socialPlan.ts).
+  v.literal("getSocialAccount"),
+  v.literal("listSocialPosts"),
+  v.literal("fetchPostMetrics"),
+  v.literal("fetchAccountMetrics"),
 );
+
+/**
+ * Phase 10 sync subject: every syncAccounts / syncRuns / syncTasks row names EXACTLY ONE
+ * subject, an ad account (adAccountId) or an organic social account (socialAccountId).
+ * The invariant is enforced by convex/sync/subject.ts on every read and write.
+ */
+const subjectFields = {
+  adAccountId: v.optional(v.id("adAccounts")),
+  socialAccountId: v.optional(v.id("socialAccounts")),
+};
 
 export const syncCancelReasonValidator = v.union(
   v.literal("connection_inactive"),
@@ -78,10 +98,13 @@ export const syncCancelReasonValidator = v.union(
 );
 
 export const syncTables = {
-  /** One row per ad account ever linked: sync state, schedule, coverage and the account lease. */
+  /**
+   * One row per ad or social account ever linked: sync state, schedule, coverage and the
+   * account lease.
+   */
   syncAccounts: defineTable({
     orgId: orgIdField,
-    adAccountId: v.id("adAccounts"),
+    ...subjectFields,
     state: v.union(
       v.literal("idle"),
       v.literal("running"),
@@ -114,17 +137,18 @@ export const syncTables = {
     updatedAt: v.number(),
   })
     .index("by_org_account", ["orgId", "adAccountId"])
+    .index("by_org_social_account", ["orgId", "socialAccountId"])
     // GLOBAL (approved exception, Phase 5): the planner finds due accounts across
     // orgs. Every row read through it is re-verified for tenant ownership.
     .index("by_next_plan", ["nextPlanAt"]),
 
-  /** One sync of one ad account; its tasks run sequentially in `seq` order. */
+  /** One sync of one ad or social account; its tasks run sequentially in `seq` order. */
   syncRuns: defineTable({
     orgId: orgIdField,
-    adAccountId: v.id("adAccounts"),
+    ...subjectFields,
     /** Pinned at creation: a relink/disconnect cancels the run instead of mixing connections. */
     connectionId: v.id("connections"),
-    platform: adPlatformValidator,
+    platform: v.union(adPlatformValidator, socialPlatformValidator),
     providerId: v.string(),
     kind: syncRunKindValidator,
     trigger: v.union(
@@ -152,13 +176,15 @@ export const syncTables = {
   })
     .index("by_org_account_created", ["orgId", "adAccountId", "createdAt"])
     .index("by_org_account_key", ["orgId", "adAccountId", "idempotencyKey"])
+    .index("by_org_social_account_created", ["orgId", "socialAccountId", "createdAt"])
+    .index("by_org_social_account_key", ["orgId", "socialAccountId", "idempotencyKey"])
     .index("by_org_status", ["orgId", "status"]),
 
   /** One provider operation (one request, many pages) plus its finalize step. */
   syncTasks: defineTable({
     orgId: orgIdField,
     runId: v.id("syncRuns"),
-    adAccountId: v.id("adAccounts"),
+    ...subjectFields,
     seq: v.number(),
     operation: syncOperationValidator,
     level: v.optional(entityLevelValidator),

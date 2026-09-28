@@ -75,6 +75,21 @@
   stored.
 - Test fixtures are synthetic; a scrub guard rejects token- and secret-shaped strings.
 
+## Instagram provider (Phase 10)
+
+- **Stored credential:** the long-lived Instagram token only, encrypted, in the existing store.
+  Codes and short-lived tokens are never stored.
+- **Refresh:** the refresh job decrypts the credential only inside its action and writes the
+  new ciphertext through `credentialStore.replaceRefreshedCredential`. That write is atomic, is
+  guarded by the credential version, and is audited as `connection.token_refreshed`.
+- **Secret-in-URL exception:** the one approved exception covers exactly the documented GET
+  forms of `graph.instagram.com/access_token` and `/refresh_access_token`, for the OAuth
+  caller only. Every other Instagram request carries the token in `Authorization: Bearer`, and
+  any secret-like query parameter is refused before the network
+  (`providers/instagram/transport.ts`).
+- **social-sdk:** it sees the token only inside the `"use node"` adapter's closure. All its
+  requests go through our allowlisted fetch.
+
 ## Operational notes
 
 - **Key rotation:** add version N+1 to `TOKEN_ENCRYPTION_KEYS`. New writes use it and old rows still

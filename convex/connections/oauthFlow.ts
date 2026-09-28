@@ -2,8 +2,10 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalAction, type ActionCtx } from "../_generated/server";
+import { isAdPlatform, isSocialConnectionProvider } from "../domain/types";
 import { sha256Base64Url } from "../lib/crypto";
 import { isProviderError } from "../providers/errors";
+import type { ProviderDiscoveredSocialAccount } from "../providers/social/types";
 import type { ProviderAdAccount } from "../providers/types";
 import {
   DISCOVERY_MAX_PAGES,
@@ -72,18 +74,43 @@ function sanitize(error: unknown): { kind: string; message: string } {
   return { kind: "internal", message: "Unexpected error" };
 }
 
-/** Lists every account the connection can see (bounded) and stores them. */
+type Discovered =
+  | { kind: "ads"; records: ProviderAdAccount[] }
+  | { kind: "social"; records: ProviderDiscoveredSocialAccount[] };
+
+/**
+ * Lists every account the connection can see (bounded) and stores them. Ad connections
+ * list ad accounts (discoveredAssets); social connections (Phase 10, Instagram Login) list
+ * organic social accounts (discoveredSocialAccounts) through the SDK-free default-runtime
+ * discovery: no Node hop, and never the ads provider.
+ */
 export async function discoverAssets(
   ctx: ActionCtx,
   connectionId: Id<"connections">,
   actorSubject: string,
 ): Promise<number> {
-  const records = await withConnectionCredential(
+  const found = await withConnectionCredential(
     ctx,
     connectionId,
-    async (credential, connection) => {
+    async (credential, connection): Promise<Discovered> => {
+      if (isSocialConnectionProvider(connection.provider)) {
+        const discovery = providerRegistry().socialDiscovery(connection.provider);
+        const accounts: ProviderDiscoveredSocialAccount[] = [];
+        let cursor: string | undefined;
+        for (let page = 0; page < DISCOVERY_MAX_PAGES; page++) {
+          const result = await discovery.listAccounts(
+            { credential, attempt: 1 },
+            cursor ? { cursor } : {},
+          );
+          accounts.push(...result.items);
+          if (result.nextCursor === undefined) break;
+          cursor = result.nextCursor;
+        }
+        return { kind: "social", records: accounts };
+      }
+      if (!isAdPlatform(connection.provider)) return { kind: "ads", records: [] };
       const provider = providerRegistry().ads(connection.provider);
-      const found: ProviderAdAccount[] = [];
+      const records: ProviderAdAccount[] = [];
       let cursor: string | undefined;
       for (let page = 0; page < DISCOVERY_MAX_PAGES; page++) {
         // Tenant-free provider call: only the credential and the attempt number.
@@ -91,16 +118,23 @@ export async function discoverAssets(
           { credential, attempt: 1 },
           cursor ? { cursor } : {},
         );
-        found.push(...result.items);
+        records.push(...result.items);
         if (result.nextCursor === undefined) break;
         cursor = result.nextCursor;
       }
-      return found;
+      return { kind: "ads", records };
     },
   );
+  if (found.kind === "social") {
+    return await ctx.runMutation(internal.connections.socialAssets.storeDiscoveredSocialAccounts, {
+      connectionId,
+      records: found.records,
+      actorSubject,
+    });
+  }
   return await ctx.runMutation(internal.connections.assets.storeDiscoveredAssets, {
     connectionId,
-    records,
+    records: found.records,
     actorSubject,
   });
 }

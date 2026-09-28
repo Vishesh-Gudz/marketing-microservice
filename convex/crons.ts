@@ -12,6 +12,15 @@ crons.hourly(
   {},
 );
 
+// Phase 10: refresh long-lived Instagram tokens before they expire (ciphertext replaced
+// atomically; failures move the connection to needs_reauth or record a sanitized error).
+crons.daily(
+  "instagram token refresh",
+  { hourUTC: 3, minuteUTC: 17 },
+  internal.connections.tokenRefresh.refreshExpiringTokens,
+  {},
+);
+
 // Phase 5: sync planner. Plans due accounts (bounded batches); workers do the I/O.
 crons.interval(
   "sync planner",

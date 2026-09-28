@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import {
+  adSubjectOf,
   connectMock,
   drainScheduler,
   ISSUER_CRM,
@@ -75,9 +76,9 @@ describe("tenant isolation", () => {
       expect(perOrg[0], table).toBeGreaterThan(0);
     }
     for (const run of db.runs) {
-      expect(run.orgId).toBe(accountOrg.get(run.adAccountId));
+      expect(run.orgId).toBe(accountOrg.get(adSubjectOf(run)));
     }
-    for (const task of db.tasks) expect(task.orgId).toBe(accountOrg.get(task.adAccountId));
+    for (const task of db.tasks) expect(task.orgId).toBe(accountOrg.get(adSubjectOf(task)));
   });
 
   it("the planner re-verifies rows from the global index and never crosses orgs", async () => {

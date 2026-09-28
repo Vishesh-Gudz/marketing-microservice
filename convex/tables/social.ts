@@ -31,8 +31,16 @@ export const socialTables = {
     followersCount: v.optional(v.number()),
     status: socialAccountStatusValidator,
     attributes: v.optional(attributesValidator),
+    /**
+     * Phase 10: the connection whose credential syncs this account (absent = not linked;
+     * rows and their data are kept on unlink), mirroring adAccounts.connectionId.
+     */
+    connectionId: v.optional(v.id("connections")),
+    linkedAt: v.optional(v.number()),
     ...entityLifecycleFields,
-  }).index("by_org_platform_external", ["orgId", "platform", "externalId"]),
+  })
+    .index("by_org_platform_external", ["orgId", "platform", "externalId"])
+    .index("by_org_connection", ["orgId", "connectionId"]),
 
   socialPosts: defineTable({
     orgId: orgIdField,

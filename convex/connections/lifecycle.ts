@@ -5,6 +5,7 @@ import { internalMutation, type DatabaseWriter, type MutationCtx } from "../_gen
 import { AUDIT_ACTIONS, writeAudit } from "../lib/audit";
 import { getOwned, type Tenant } from "../lib/tenancy";
 import { discoveredAssetsOf } from "./assets";
+import { unlinkSocialAccountsOfConnection } from "./socialAssets";
 
 /**
  * Connection lifecycle:  active -> needs_reauth -> (reconnect) -> active
@@ -14,8 +15,8 @@ import { discoveredAssetsOf } from "./assets";
 type TenantCtx = MutationCtx & { tenant: Tenant };
 
 /**
- * Disconnects: revoked + unlink its ad accounts (rows/metrics kept) + drop
- * discovered assets + schedule platform revoke and credential deletion.
+ * Disconnects: revoked + unlink its ad accounts and (Phase 10) social accounts (rows and
+ * data kept) + drop discovered assets + schedule platform revoke and credential deletion.
  */
 export async function disconnectConnection(
   ctx: TenantCtx,
@@ -48,6 +49,7 @@ export async function disconnectConnection(
   for (const asset of await discoveredAssetsOf(ctx.db, ctx.tenant.orgId, connection._id)) {
     await ctx.db.delete(asset._id);
   }
+  const socialUnlinked = await unlinkSocialAccountsOfConnection(ctx, connection._id, now);
   await ctx.scheduler.runAfter(0, internal.connections.oauthFlow.revokeAtPlatform, {
     connectionId: connection._id,
     actorSubject: ctx.tenant.subject,
@@ -58,7 +60,7 @@ export async function disconnectConnection(
     targetId: connection._id,
     changes: {
       status: { from: connection.status, to: "revoked" },
-      unlinkedAccounts: { from: linked.length, to: 0 },
+      unlinkedAccounts: { from: linked.length + socialUnlinked, to: 0 },
     },
   });
   return (await ctx.db.get(connection._id))!;

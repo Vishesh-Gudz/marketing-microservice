@@ -1,5 +1,9 @@
 import { v, type Infer } from "convex/values";
-import { adPlatformValidator, entityLevelValidator } from "../domain/validators";
+import {
+  adPlatformValidator,
+  entityLevelValidator,
+  socialPlatformValidator,
+} from "../domain/validators";
 import { RECORD_VALIDATORS } from "../providers/validate";
 import { syncOperationValidator } from "../tables/sync";
 
@@ -32,7 +36,9 @@ export const claimResultValidator = v.union(
     claimSeq: v.number(),
     orgId: v.string(),
     connectionId: v.id("connections"),
-    platform: adPlatformValidator,
+    platform: v.union(adPlatformValidator, socialPlatformValidator),
+    /** Phase 10: present (and "social") only on claims of organic social subjects. */
+    subject: v.optional(v.literal("social")),
     attempt: v.number(),
     request: fetchRequestValidator,
   }),
