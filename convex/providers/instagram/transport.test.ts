@@ -179,7 +179,7 @@ describe("Graph reader allowlist (minimal, read-only)", () => {
     expect(
       check(
         "graph_reader",
-        `${G}/v25.0/17900000000000001/insights?metric=views,total_interactions`,
+        `${G}/v25.0/17900000000000001/insights?metric=views,total_interactions&period=lifetime`,
         {
           headers: BEARER,
         },
@@ -192,6 +192,90 @@ describe("Graph reader allowlist (minimal, read-only)", () => {
         { headers: BEARER },
       ),
     ).toBe("allowed");
+  });
+
+  // Phase 10 Stage B (R2): three strict request shapes on /{id}/insights.
+  const DAY = "since=1790000000&until=1790086400";
+  const ACCOUNT_A =
+    "metric=reach,views,accounts_engaged,total_interactions,likes,comments,shares,saves,replies,profile_links_taps";
+
+  it.each([
+    ["post insights", `metric=views,total_interactions&period=lifetime`],
+    ["post views only", `metric=views&period=lifetime`],
+    ["account request A", `${ACCOUNT_A}&period=day&metric_type=total_value&${DAY}`],
+    [
+      "account request B",
+      `metric=follows_and_unfollows&period=day&metric_type=total_value&breakdown=follow_type&${DAY}`,
+    ],
+  ])("R2 allows exactly the %s shape", (_label, query) => {
+    const url = `${G}/v25.0/17841400000000101/insights?${query}`;
+    expect(check("graph_reader", url, { headers: BEARER })).toBe("allowed");
+  });
+
+  it.each([
+    ["post insights without period", "metric=views,total_interactions"],
+    ["post insights with period=day", "metric=views&period=day"],
+    ["post insights with metric_type", "metric=views&period=lifetime&metric_type=total_value"],
+    ["post insights with a window", `metric=views&period=lifetime&${DAY}`],
+    ["account insights as lifetime", "metric=reach&period=lifetime"],
+    ["account insights without a window", "metric=reach&period=day&metric_type=total_value"],
+    [
+      "account insights without since",
+      "metric=reach&period=day&metric_type=total_value&until=1790086400",
+    ],
+    ["account insights without metric_type", `metric=reach&period=day&${DAY}`],
+    ["time_series", `metric=reach&period=day&metric_type=time_series&${DAY}`],
+    [
+      "a breakdown on request A",
+      `metric=reach&period=day&metric_type=total_value&breakdown=follow_type&${DAY}`,
+    ],
+    [
+      "follows_and_unfollows without its breakdown",
+      `metric=follows_and_unfollows&period=day&metric_type=total_value&${DAY}`,
+    ],
+    [
+      "follows_and_unfollows mixed with other metrics",
+      `metric=follows_and_unfollows,reach&period=day&metric_type=total_value&breakdown=follow_type&${DAY}`,
+    ],
+    [
+      "breakdown media_product_type",
+      `metric=follows_and_unfollows&period=day&metric_type=total_value&breakdown=media_product_type&${DAY}`,
+    ],
+    [
+      "breakdown follower_type",
+      `metric=follows_and_unfollows&period=day&metric_type=total_value&breakdown=follower_type&${DAY}`,
+    ],
+    ["reposts (account)", `metric=reposts&period=day&metric_type=total_value&${DAY}`],
+    ["reposts (post)", "metric=views,reposts&period=lifetime"],
+  ])("R2 refuses %s", (_label, query) => {
+    const url = `${G}/v25.0/17841400000000101/insights?${query}`;
+    expect(check("graph_reader", url, { headers: BEARER })).toBe("query");
+  });
+
+  it.each([
+    "total_likes",
+    "total_comments",
+    "total_views",
+    "total_shares",
+    "reposts",
+    "profile_visits",
+    "follows",
+    "profile_activity",
+    "impressions",
+    "facebook_views",
+    "crossposted_views",
+    "ig_reels_avg_watch_time",
+  ])("F5/F6: %s is refused in every reader shape and by the SDK caller", (metric) => {
+    const urls = [
+      `${G}/v25.0/17900000000000001/insights?metric=${metric}&period=lifetime`,
+      `${G}/v25.0/17900000000000001/insights?metric=views,${metric}&period=lifetime`,
+      `${G}/v25.0/17841400000000101/insights?metric=${metric}&period=day&metric_type=total_value&${DAY}`,
+      `${G}/v25.0/17841400000000101/insights?metric=${metric}&period=day&metric_type=total_value&breakdown=follow_type&${DAY}`,
+    ];
+    for (const url of urls) {
+      expect(check("graph_reader", url, { headers: BEARER })).toBe("query");
+      expect(check("sdk", url, { headers: BEARER })).toBe("query");
+    }
   });
 
   it.each(["impressions", "plays", "video_views", "profile_views", "website_clicks"])(

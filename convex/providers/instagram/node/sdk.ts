@@ -37,21 +37,27 @@ import { createSdkFetch, type FailureCapture, type RequestBudget } from "../tran
  *   SDK's status-only error mapping.
  * - SDK retries are off (one attempt): the sync engine owns retries.
  * - Concurrency: at most `concurrency` SDK requests in flight (approved budget: 3).
+ * - The failure capture belongs to the session: concurrent reads that must be classified
+ *   independently use one session each (sharing one RequestBudget).
  *
- * Stage A: the session is the infrastructure seam; the provider operations (provider.ts)
- * still fail closed with instagram_mapping_pending, and Stage B maps these reads.
+ * Stage B: the provider (provider.ts) maps these reads (../mapping.ts). The profile
+ * picture URL, biography and website the SDK fetches are dropped here and never leave the
+ * session (F1).
  */
 
 /** createSocial's instance name for a single backend (SDK: `{ default: backend }`). */
 const BACKEND = "default";
 
-/** Profile of the connected professional account. Biography and website are dropped. */
+/**
+ * Profile of the connected professional account. The SDK's field list is fixed and also
+ * returns biography, website, follows/media counts and profile_picture_url: all dropped
+ * here (F1: the profile picture URL is never stored or passed on).
+ */
 export type InstagramProfileRead = {
   userId: string;
   username?: string;
   name?: string;
   followersCount?: number;
-  profilePictureUrl?: string;
 };
 
 /** One media item of the account's listing (raw Instagram media vocabulary). */
@@ -205,7 +211,6 @@ export function createInstagramSdkSession(options: {
         username: optionalString(native["username"], 30),
         name: optionalString(native["name"], 256),
         followersCount: optionalCount(native["followers_count"]),
-        profilePictureUrl: optionalString(native["profile_picture_url"], 2_048),
       };
       return {
         userId,
@@ -258,10 +263,16 @@ export function createInstagramSdkSession(options: {
         postId: mediaId,
       });
       const values = await run(operation, () => client.analytics.getPostMetrics(post, callOptions));
+      const seen = new Set<string>();
       return values.map((metric) => {
-        if (!SDK_POST_METRIC_NAMES.has(metric.name) || optionalCount(metric.value) === undefined) {
+        if (
+          !SDK_POST_METRIC_NAMES.has(metric.name) ||
+          seen.has(metric.name) ||
+          optionalCount(metric.value) === undefined
+        ) {
           throw instagramError("data", operation, "sdk_invalid_response", "Unexpected metric");
         }
+        seen.add(metric.name);
         return { name: metric.name, value: metric.value };
       });
     },

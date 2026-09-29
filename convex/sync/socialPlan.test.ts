@@ -81,18 +81,41 @@ const FULL: SocialProviderCapabilities = {
 };
 
 describe("buildSocialRunPlan", () => {
-  it("Stage A Instagram capabilities plan the preflight only", () => {
-    for (const kind of ["initial", "incremental", "lookback", "backfill", "manual"] as const) {
-      const plan = buildSocialRunPlan({
-        kind,
-        state,
-        capabilities: INSTAGRAM_CAPABILITIES,
-        now: NOW,
-      });
-      expect(plan.tasks).toEqual([{ operation: "getSocialAccount", fullListing: false }]);
-      expect(plan.window).toBeUndefined();
-      expect(plan.structureMode).toBe("none");
-    }
+  it("Stage B Instagram capabilities plan every operation, preflight first, listing before snapshots", () => {
+    const operations = (kind: "initial" | "incremental" | "lookback" | "backfill" | "manual") =>
+      buildSocialRunPlan({ kind, state, capabilities: INSTAGRAM_CAPABILITIES, now: NOW }).tasks.map(
+        (t) => t.operation,
+      );
+    expect(operations("initial")).toEqual([
+      "getSocialAccount",
+      "listSocialPosts",
+      "fetchPostMetrics",
+      "fetchAccountMetrics",
+      "fetchAccountMetrics",
+    ]);
+    expect(operations("incremental")).toEqual([
+      "getSocialAccount",
+      "listSocialPosts",
+      "fetchAccountMetrics",
+    ]);
+    expect(operations("manual")).toEqual(operations("incremental"));
+    expect(operations("lookback")).toEqual([
+      "getSocialAccount",
+      "listSocialPosts",
+      "fetchPostMetrics",
+      "fetchAccountMetrics",
+    ]);
+    // No coverage yet: nothing to backfill beyond the preflight.
+    expect(operations("backfill")).toEqual(["getSocialAccount"]);
+    const initial = buildSocialRunPlan({
+      kind: "initial",
+      state,
+      capabilities: INSTAGRAM_CAPABILITIES,
+      now: NOW,
+    });
+    expect(initial.structureMode).toBe("none");
+    expect(initial.tasks[1]).toMatchObject({ fullListing: true });
+    expect(initial.tasks[2]).toMatchObject({ from: "2026-07-01", to: "2026-09-28" });
   });
 
   it("plans only declared operations, in order, on UTC days", () => {

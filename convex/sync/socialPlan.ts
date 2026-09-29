@@ -23,8 +23,9 @@ import type { SocialSyncOperation } from "./subject";
  *                          lookback     last accountMetricsLookbackDays days
  *                          backfill     the gap between the horizon and coveredFrom
  *
- * Stage A: Instagram declares no posts and no metrics, so every social run is the
- * preflight alone (which fails closed with instagram_mapping_pending).
+ * Stage B: Instagram declares posts, post metrics and account metrics
+ * (providers/instagram/capabilities.ts), so every operation above is planned. Tasks run in
+ * `seq` order: the listing always commits before the snapshots of the same run.
  */
 
 export type SocialTaskSpec = {

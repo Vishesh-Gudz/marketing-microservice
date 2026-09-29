@@ -4,6 +4,7 @@ import {
   entityLevelValidator,
   socialPlatformValidator,
 } from "../domain/validators";
+import { SOCIAL_RECORD_VALIDATORS } from "../providers/social/validate";
 import { RECORD_VALIDATORS } from "../providers/validate";
 import { syncOperationValidator } from "../tables/sync";
 
@@ -82,6 +83,38 @@ export const providerPageValidator = v.union(
   }),
 );
 export type ProviderPageArg = Infer<typeof providerPageValidator>;
+
+/**
+ * Phase 10 Stage B: one organic social provider page (commitSocialPage), validated against
+ * the social record validators (no URL other than the permalink, no provenance fields).
+ * `unresolved` counts platform items the provider could not map (never excluded items).
+ */
+const unresolved = v.optional(v.number());
+export const socialPageValidator = v.union(
+  v.object({
+    kind: v.literal("socialAccount"),
+    items: v.array(SOCIAL_RECORD_VALIDATORS.socialAccount),
+    nextCursor,
+  }),
+  v.object({
+    kind: v.literal("socialPost"),
+    items: v.array(SOCIAL_RECORD_VALIDATORS.socialPost),
+    nextCursor,
+    unresolved,
+  }),
+  v.object({
+    kind: v.literal("socialPostSnapshot"),
+    items: v.array(SOCIAL_RECORD_VALIDATORS.socialPostSnapshot),
+    nextCursor,
+    unresolved,
+  }),
+  v.object({
+    kind: v.literal("socialAccountDay"),
+    items: v.array(SOCIAL_RECORD_VALIDATORS.socialAccountDay),
+    nextCursor,
+  }),
+);
+export type SocialPageArg = Infer<typeof socialPageValidator>;
 
 /** Serialized SyncFailure (policy.ts); unknown shapes are treated as internal. */
 export const failureValidator = v.object({

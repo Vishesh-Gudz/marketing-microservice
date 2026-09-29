@@ -84,6 +84,7 @@ import type * as providers_instagram_node_provider from "../providers/instagram/
 import type * as providers_instagram_node_sdk from "../providers/instagram/node/sdk.js";
 import type * as providers_instagram_oauth from "../providers/instagram/oauth.js";
 import type * as providers_instagram_schemas from "../providers/instagram/schemas.js";
+import type * as providers_instagram_semantics from "../providers/instagram/semantics.js";
 import type * as providers_instagram_transport from "../providers/instagram/transport.js";
 import type * as providers_meta_capabilities from "../providers/meta/capabilities.js";
 import type * as providers_meta_carry from "../providers/meta/carry.js";
@@ -111,6 +112,7 @@ import type * as providers_oauth from "../providers/oauth.js";
 import type * as providers_pagination from "../providers/pagination.js";
 import type * as providers_registry from "../providers/registry.js";
 import type * as providers_social_capabilities from "../providers/social/capabilities.js";
+import type * as providers_social_mock_data from "../providers/social/mock/data.js";
 import type * as providers_social_mock_index from "../providers/social/mock/index.js";
 import type * as providers_social_nodeRegistry from "../providers/social/nodeRegistry.js";
 import type * as providers_social_types from "../providers/social/types.js";
@@ -238,6 +240,7 @@ declare const fullApi: ApiFromModules<{
   "providers/instagram/node/sdk": typeof providers_instagram_node_sdk;
   "providers/instagram/oauth": typeof providers_instagram_oauth;
   "providers/instagram/schemas": typeof providers_instagram_schemas;
+  "providers/instagram/semantics": typeof providers_instagram_semantics;
   "providers/instagram/transport": typeof providers_instagram_transport;
   "providers/meta/capabilities": typeof providers_meta_capabilities;
   "providers/meta/carry": typeof providers_meta_carry;
@@ -265,6 +268,7 @@ declare const fullApi: ApiFromModules<{
   "providers/pagination": typeof providers_pagination;
   "providers/registry": typeof providers_registry;
   "providers/social/capabilities": typeof providers_social_capabilities;
+  "providers/social/mock/data": typeof providers_social_mock_data;
   "providers/social/mock/index": typeof providers_social_mock_index;
   "providers/social/nodeRegistry": typeof providers_social_nodeRegistry;
   "providers/social/types": typeof providers_social_types;

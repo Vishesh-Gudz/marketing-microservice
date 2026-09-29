@@ -1,12 +1,17 @@
 import { validate } from "convex-helpers/validators";
 import { v, type PropertyValidators } from "convex/values";
 import type { SocialPlatform } from "../../domain/types";
-import { isDateKey } from "../../lib/dates";
+import { isDateKey, toDateKey } from "../../lib/dates";
 import { connectionTables } from "../../tables/connections";
 import { socialTables } from "../../tables/social";
 import { ProviderError } from "../errors";
 import type { ProviderOperation } from "../types";
-import type { SocialRecordByKind, SocialRecordKind } from "./types";
+import { allowedPermalink, CAPTION_MAX_CHARS } from "../instagram/semantics";
+import {
+  SOCIAL_RECORD_DROPPED_FIELDS,
+  type SocialRecordByKind,
+  type SocialRecordKind,
+} from "./types";
 
 /**
  * Boundary validation for social provider records (Phase 10), mirroring
@@ -18,7 +23,11 @@ import type { SocialRecordByKind, SocialRecordKind } from "./types";
 
 const DROPPED = new Set(["orgId", "createdAt", "updatedAt", "lastSeenAt", "removedAt"]);
 
-function recordValidator(fields: PropertyValidators, drop: string[], extra: PropertyValidators) {
+function recordValidator(
+  fields: PropertyValidators,
+  drop: readonly string[],
+  extra: PropertyValidators,
+) {
   const kept = Object.fromEntries(
     Object.entries(fields).filter(([name]) => !DROPPED.has(name) && !drop.includes(name)),
   );
@@ -30,25 +39,27 @@ const externalRef = v.string();
 export const SOCIAL_RECORD_VALIDATORS = {
   discoveredSocialAccount: recordValidator(
     connectionTables.discoveredSocialAccounts.validator.fields,
-    ["connectionId", "discoveredAt"],
+    SOCIAL_RECORD_DROPPED_FIELDS.discoveredSocialAccount,
     {},
   ),
   socialAccount: recordValidator(
     socialTables.socialAccounts.validator.fields,
-    ["connectionId", "linkedAt"],
+    SOCIAL_RECORD_DROPPED_FIELDS.socialAccount,
     {},
   ),
-  socialPost: recordValidator(socialTables.socialPosts.validator.fields, ["socialAccountId"], {
-    accountExternalId: externalRef,
-  }),
+  socialPost: recordValidator(
+    socialTables.socialPosts.validator.fields,
+    SOCIAL_RECORD_DROPPED_FIELDS.socialPost,
+    { accountExternalId: externalRef },
+  ),
   socialPostSnapshot: recordValidator(
     socialTables.socialPostMetricSnapshots.validator.fields,
-    ["socialAccountId", "postId"],
+    SOCIAL_RECORD_DROPPED_FIELDS.socialPostSnapshot,
     { accountExternalId: externalRef, postExternalId: externalRef },
   ),
   socialAccountDay: recordValidator(
     socialTables.socialAccountMetricsDaily.validator.fields,
-    ["socialAccountId", "syncedAt"],
+    SOCIAL_RECORD_DROPPED_FIELDS.socialAccountDay,
     { accountExternalId: externalRef },
   ),
 } satisfies Record<SocialRecordKind, unknown>;
@@ -83,19 +94,77 @@ function semanticIssues(kind: SocialRecordKind, record: Record<string, unknown>)
       }
       break;
     }
-    case "socialPost":
+    case "socialPost": {
       issues.push(...idIssue(platform, record.externalId as string, "externalId"));
       issues.push(...idIssue(platform, record.accountExternalId as string, "accountExternalId"));
+      // F1 / R1b: the permalink is the only URL a record may carry, and only an allowed
+      // (normalized) Instagram permalink; no other platform has a permalink rule yet.
+      const permalink = record.permalink as string | undefined;
+      if (
+        permalink !== undefined &&
+        (platform !== "instagram" || allowedPermalink(permalink) !== permalink)
+      ) {
+        issues.push("permalink: not an allowed permalink");
+      }
+      if (!isInstant(record.publishedAt)) issues.push("publishedAt: not an instant");
+      // F21: captions are capped at 2,200 characters (code points) before they get here.
+      const caption = record.caption as string | undefined;
+      if (caption !== undefined && Array.from(caption).length > CAPTION_MAX_CHARS) {
+        issues.push("caption: too long");
+      }
       break;
+    }
     case "socialPostSnapshot":
       issues.push(...idIssue(platform, record.postExternalId as string, "postExternalId"));
       issues.push(...idIssue(platform, record.accountExternalId as string, "accountExternalId"));
       if (!isDateKey(record.capturedDate as string)) issues.push("capturedDate: not a day");
+      if (!isInstant(record.capturedAt)) issues.push("capturedAt: not an instant");
+      else if (toDateKey(record.capturedAt as number, "UTC") !== record.capturedDate) {
+        issues.push("capturedDate: not the UTC day of capturedAt");
+      }
+      issues.push(...countIssues(record, SNAPSHOT_COUNTS));
       break;
     case "socialAccountDay":
       issues.push(...idIssue(platform, record.accountExternalId as string, "accountExternalId"));
       if (!isDateKey(record.date as string)) issues.push("date: not a day");
+      // followerDelta is a signed net change; every other value is a count.
+      issues.push(...countIssues(record, DAY_COUNTS));
+      if (record.followerDelta !== undefined && !Number.isSafeInteger(record.followerDelta)) {
+        issues.push("followerDelta: not an integer");
+      }
       break;
+  }
+  return issues;
+}
+
+function isInstant(value: unknown): boolean {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+const SNAPSHOT_COUNTS = [
+  "views",
+  "reach",
+  "likes",
+  "comments",
+  "shares",
+  "saves",
+  "totalInteractions",
+] as const;
+const DAY_COUNTS = ["reach", "views", "accountsEngaged", "totalInteractions"] as const;
+
+/** Metric values are non-negative integers (extras too); absent stays absent. */
+function countIssues(record: Record<string, unknown>, fields: readonly string[]): string[] {
+  const issues: string[] = [];
+  const isCount = (value: unknown) =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+  for (const field of fields) {
+    if (record[field] !== undefined && !isCount(record[field])) {
+      issues.push(`${field}: not a count`);
+    }
+  }
+  const extras = record.extras as Record<string, unknown> | undefined;
+  for (const [key, value] of Object.entries(extras ?? {})) {
+    if (!isCount(value)) issues.push(`extras.${key}: not a count`);
   }
   return issues;
 }

@@ -67,7 +67,7 @@ async function failure(promise: Promise<unknown>): Promise<ProviderError> {
 }
 
 describe("profile", () => {
-  it("reads the account with one request and drops biography and website", async () => {
+  it("reads the account with one request and drops biography, website and the picture", async () => {
     const { sdk } = session();
     const profile = await sdk.profile("getSocialAccount");
     expect(profile).toEqual({
@@ -75,9 +75,11 @@ describe("profile", () => {
       username: "fake_brand",
       name: "Fake Brand",
       followersCount: 1234,
-      profilePictureUrl: `https://scontent.example.test/${USER_ID}.jpg?sig=fake`,
     });
-    expect(JSON.stringify(profile)).not.toMatch(/biography|website|follows_count|media_count/);
+    // F1: the profile picture URL the SDK fetches never leaves the session.
+    expect(JSON.stringify(profile)).not.toMatch(
+      /biography|website|follows_count|media_count|profile_picture|https?:/,
+    );
     expect(fake.requests).toHaveLength(1);
     expect(fake.requests[0]).toMatchObject({
       method: "GET",

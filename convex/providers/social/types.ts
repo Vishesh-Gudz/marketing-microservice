@@ -37,27 +37,73 @@ export type ProviderDiscoveredSocialAccount = Canonical<
   "connectionId" | "discoveredAt"
 >;
 
-/** Sync preflight record (account metadata). Connection linkage is internal state. */
-export type ProviderSocialAccount = Canonical<"socialAccounts", "connectionId" | "linkedAt">;
+/**
+ * Fields a provider record may NEVER carry (Phase 10 Stage B), on top of the tenant,
+ * lifecycle and internal-id fields:
+ * - URLs other than the post permalink [F1]: profilePictureUrl, mediaUrl, thumbnailUrl
+ * - fields Instagram Login does not provide: linkedPageExternalId, commentsEnabled
+ * - engine-owned provenance and the profile column group [F7]: syncedAt,
+ *   followersCapturedAt, insightsSyncedAt, followers (captured from the preflight)
+ * - deprecated metrics that are never populated [F19]: videoViews, profileViews,
+ *   websiteClicks
+ * - post extras [F5]
+ * The validators (./validate.ts) drop exactly these fields, so a record carrying one is
+ * rejected at the boundary.
+ */
+export const SOCIAL_RECORD_DROPPED_FIELDS = {
+  discoveredSocialAccount: ["connectionId", "discoveredAt"],
+  socialAccount: ["connectionId", "linkedAt", "profilePictureUrl", "linkedPageExternalId"],
+  socialPost: ["socialAccountId", "mediaUrl", "thumbnailUrl", "commentsEnabled"],
+  socialPostSnapshot: ["socialAccountId", "postId", "videoViews", "extras"],
+  socialAccountDay: [
+    "socialAccountId",
+    "syncedAt",
+    "followers",
+    "followersCapturedAt",
+    "insightsSyncedAt",
+    "profileViews",
+    "websiteClicks",
+  ],
+} as const;
 
-export type ProviderSocialPost = Canonical<"socialPosts", "socialAccountId"> & {
+type Dropped<K extends keyof typeof SOCIAL_RECORD_DROPPED_FIELDS> =
+  (typeof SOCIAL_RECORD_DROPPED_FIELDS)[K][number];
+
+/** Sync preflight record (account metadata). Connection linkage is internal state. */
+export type ProviderSocialAccount = Canonical<"socialAccounts", Dropped<"socialAccount">>;
+
+export type ProviderSocialPost = Canonical<"socialPosts", Dropped<"socialPost">> & {
   accountExternalId: string;
 };
 
+/** One lifetime snapshot of a post, captured now (capturedDate = UTC day of capturedAt). */
 export type ProviderSocialPostSnapshot = Canonical<
   "socialPostMetricSnapshots",
-  "socialAccountId" | "postId"
+  Dropped<"socialPostSnapshot">
 > & {
   accountExternalId: string;
   postExternalId: string;
 };
 
+/**
+ * One UTC day of account insights: ONLY the insights column group. The provider emits one
+ * record for EVERY requested day, also when the platform reported nothing (all metrics
+ * absent), so a synced empty day stays distinguishable from a day never synced.
+ */
 export type ProviderSocialAccountDay = Canonical<
   "socialAccountMetricsDaily",
-  "socialAccountId" | "syncedAt"
+  Dropped<"socialAccountDay">
 > & {
   accountExternalId: string;
 };
+
+/**
+ * A page of social records. `unresolved` counts platform items the provider could not map
+ * and did NOT emit (e.g. media without a product type, a post deleted mid-page); the engine
+ * adds it to the run's unresolved count, which also blocks removal marking. Items excluded
+ * by scope (ad or story media) are never counted.
+ */
+export type SocialProviderPage<T> = ProviderPage<T> & { unresolved?: number };
 
 export type SocialRecordKind =
   | "discoveredSocialAccount"
@@ -124,15 +170,20 @@ export interface SocialProvider<TCredential = unknown> {
     ctx: ProviderContext<TCredential>,
     request: SocialAccountRequest,
   ): Promise<ProviderSocialAccount>;
+  /** Newest first. */
   listPosts(
     ctx: ProviderContext<TCredential>,
     request: SocialPostsRequest,
-  ): Promise<ProviderPage<ProviderSocialPost>>;
-  /** Lifetime (cumulative) values as of now, one snapshot per post. */
+  ): Promise<SocialProviderPage<ProviderSocialPost>>;
+  /**
+   * Lifetime (cumulative) values as of now, one snapshot per post published on or after
+   * `publishedFrom`. Self-contained: the provider lists the posts itself (newest first) and
+   * ends the listing at the first older post.
+   */
   fetchPostMetrics(
     ctx: ProviderContext<TCredential>,
     request: SocialPostMetricsRequest,
-  ): Promise<ProviderPage<ProviderSocialPostSnapshot>>;
+  ): Promise<SocialProviderPage<ProviderSocialPostSnapshot>>;
   fetchAccountMetrics(
     ctx: ProviderContext<TCredential>,
     request: SocialAccountMetricsRequest,

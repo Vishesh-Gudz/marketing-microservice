@@ -79,7 +79,11 @@ export const SOCIAL_POST_METRICS = {
   comments: { kind: "count", additive: false, description: "Lifetime comments" },
   shares: { kind: "count", additive: false, description: "Lifetime shares" },
   saves: { kind: "count", additive: false, description: "Lifetime saves" },
-  videoViews: { kind: "count", additive: false, description: "Lifetime video views" },
+  videoViews: {
+    kind: "count",
+    additive: false,
+    description: "Deprecated (`video_views`); never populated",
+  },
   totalInteractions: { kind: "count", additive: false, description: "Lifetime interactions" },
 } as const satisfies Record<string, MetricSpec>;
 
@@ -99,12 +103,28 @@ export const socialPostMetricFields = {
 
 /** Daily values of one organic account (reporting-day semantics: see docs/data-model.md). */
 export const SOCIAL_ACCOUNT_METRICS = {
-  followers: { kind: "count", additive: false, description: "Follower count at end of day" },
+  followers: {
+    kind: "count",
+    additive: false,
+    description: "Follower count as of capture (profile read), not end of day",
+  },
   followerDelta: { kind: "count", additive: true, description: "Net follower change" },
   reach: { kind: "count", additive: false, description: "Unique accounts reached" },
-  views: { kind: "count", additive: true, description: "Views / impressions" },
-  profileViews: { kind: "count", additive: true, description: "Profile views" },
-  websiteClicks: { kind: "count", additive: true, description: "Website clicks" },
+  views: {
+    kind: "count",
+    additive: true,
+    description: "Views (Instagram `views`; never impressions)",
+  },
+  profileViews: {
+    kind: "count",
+    additive: true,
+    description: "Deprecated by Instagram (Oct 2024); never populated",
+  },
+  websiteClicks: {
+    kind: "count",
+    additive: true,
+    description: "Deprecated by Instagram (Oct 2024); never populated",
+  },
   accountsEngaged: { kind: "count", additive: false, description: "Unique accounts engaged" },
   totalInteractions: { kind: "count", additive: true, description: "Interactions" },
 } as const satisfies Record<string, MetricSpec>;

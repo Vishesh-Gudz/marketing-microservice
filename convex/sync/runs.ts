@@ -5,12 +5,30 @@ import { internalMutation, type MutationCtx } from "../_generated/server";
 import { providerRegistry } from "../connections/config";
 import { markConnectionNeedsReauth } from "../connections/lifecycle";
 import { AUDIT_ACTIONS, SYSTEM_SYNC_SUBJECT, writeAudit } from "../lib/audit";
+import { addDays, compareDateKeys, diffDays, todayIn, type DateKey } from "../lib/dates";
 import type { AuditChanges } from "../lib/validation";
-import { accountScopeFromDoc, orgScopeFromOrganization } from "../mapping/scope";
+import {
+  accountScopeFromDoc,
+  orgScopeFromOrganization,
+  socialAccountScopeFromDoc,
+} from "../mapping/scope";
 import type { AdsProviderCapabilities } from "../providers/capabilities";
+import type {
+  ProviderSocialAccount,
+  ProviderSocialAccountDay,
+  ProviderSocialPost,
+  ProviderSocialPostSnapshot,
+} from "../providers/social/types";
 import type { ProviderAdAccount } from "../providers/types";
 import { SYNC_CADENCE, SYNC_LIMITS } from "./config";
-import { checkPageShape, checkRecordsInScope, OPERATION_RECORD_KIND } from "./guards";
+import {
+  checkPageShape,
+  checkRecordsInScope,
+  checkSocialRecordsInScope,
+  OPERATION_RECORD_KIND,
+  SOCIAL_OPERATION_RECORD_KIND,
+  socialMaxPageSize,
+} from "./guards";
 import {
   isMetricOperation,
   isStructureOperation,
@@ -36,6 +54,7 @@ import { findSocialSyncAccount, findSyncAccount, findSyncAccountForSubject } fro
 import {
   isAdOperation,
   isPreflightOperation,
+  isSocialOperation,
   operationMatchesSubject,
   sameSubject,
   subjectFields,
@@ -52,14 +71,21 @@ import {
   addCounts,
   emptyCounts,
   markRemovedBatch,
+  markRemovedSocialPostsBatch,
   pruneMetricsBatch,
   refreshAdAccount,
+  refreshSocialAccount,
+  socialAccountDrift,
   writeEntityPage,
   writeMetricPage,
+  writeSocialAccountDayPage,
+  writeSocialPostPage,
+  writeSocialSnapshotPage,
   type EntityPage,
   type MetricPage,
   type PruneCursor,
   type RemovalCursor,
+  type SocialRemovalCursor,
   type SyncCounts,
 } from "./upsert";
 import {
@@ -67,6 +93,7 @@ import {
   commitResultValidator,
   failureValidator,
   providerPageValidator,
+  socialPageValidator,
   type ClaimResult,
 } from "./validators";
 
@@ -83,8 +110,10 @@ import {
  *
  * Phase 10: a run's subject is an ad account OR an organic social account (subject.ts).
  * Ad subjects behave exactly as in Phase 5; social subjects share the run/task/lease/
- * checkpoint machinery, are executed by the "use node" social worker, and (Stage A) have no
- * canonical page write path yet: a social page can never be committed.
+ * checkpoint machinery, are executed by the "use node" social worker, and (Stage B) commit
+ * their pages through commitSocialPage (never commitPage): guards, the social writers of
+ * upsert.ts, the incremental early stop, explicit listing/snapshot truncation, bounded post
+ * removal (finalize), account-type drift and social coverage (account-metric windows).
  */
 
 type Ctx = Pick<MutationCtx, "db" | "scheduler">;
@@ -545,13 +574,12 @@ function completedWindows(tasks: Doc<"syncTasks">[]) {
   const byWindow = new Map<string, { from: string; to: string; ok: boolean }>();
   for (const task of tasks) {
     const operation = task.operation;
-    // Coverage is ad-only in Phase 10 Stage A (social coverage arrives with Stage B).
-    if (
-      !isAdOperation(operation) ||
-      !isMetricOperation(operation) ||
-      task.from === undefined ||
-      task.to === undefined
-    ) {
+    // Ad metric windows (Phase 5) and, Phase 10 Stage B, social account-metric windows
+    // (UTC days). Post snapshots are never coverage.
+    const coverageTask = isAdOperation(operation)
+      ? isMetricOperation(operation)
+      : operation === "fetchAccountMetrics";
+    if (!coverageTask || task.from === undefined || task.to === undefined) {
       continue;
     }
     const key = `${task.from}|${task.to}`;
@@ -671,6 +699,15 @@ async function completeRun(
     schedule.nextIncrementalAt = now + SYNC_CADENCE.incrementalIntervalMs;
   }
 
+  // Phase 10: a social account's backfill horizon follows the platform's retention (today's
+  // UTC day minus the horizon), so an aged-out gap never keeps a backfill pending forever.
+  if (runSubject.kind === "social") {
+    const horizon = socialHorizon(run.platform, now);
+    if (compareDateKeys(horizon, syncAccount.backfillHorizon) > 0) {
+      schedule.backfillHorizon = horizon;
+    }
+  }
+
   const next = {
     ...syncAccount,
     ...schedule,
@@ -697,6 +734,14 @@ async function completeRun(
       ? Math.max(nextDueAt(next, now), now + failureBackoffMs(failures))
       : nextDueAt(next, now),
   });
+}
+
+/** Oldest UTC day a social platform still reports account metrics for (capabilities). */
+function socialHorizon(platform: Doc<"syncRuns">["platform"], now: number): DateKey {
+  const capabilities = providerRegistry().socialCapabilities(
+    platform as Doc<"socialAccounts">["platform"],
+  );
+  return addDays(todayIn("UTC", now), -(capabilities.accountMetricsHorizonDays - 1));
 }
 
 /** Schedules the next queued task, or completes the run. */
@@ -1058,8 +1103,8 @@ export const commitPage = internalMutation({
     if (loaded === null) return { ok: false, reason: "stale_claim" };
     const operation = loaded.task.operation;
     if (loaded.kind !== "ad" || !isAdOperation(operation)) {
-      // Phase 10 Stage A: social subjects have no canonical page write path yet. Fail
-      // closed: an ad page can never be written for a social subject.
+      // Phase 10: social subjects commit only through commitSocialPage. Fail closed: an
+      // ad page can never be written for a social subject.
       await applyFailure(ctx, loaded, { source: "guard", kind: "invalid_record" }, now);
       return { ok: false, reason: "invalid_record" };
     }
@@ -1221,8 +1266,12 @@ export const finalizeTask = internalMutation({
       return null;
     }
     const operation = loaded.task.operation;
+    if (loaded.kind === "social" && operation === "listSocialPosts") {
+      await finalizeSocialListing(ctx, loaded, claimSeq, now);
+      return null;
+    }
     if (loaded.kind !== "ad" || !isAdOperation(operation)) {
-      // Unreachable in Stage A (social pages are never committed): fail closed.
+      // No other social operation has a finalize step: fail closed.
       await finishTask(ctx, loaded.task, "failed", now, sanitizeFailure({ kind: "internal" }, now));
       return null;
     }
@@ -1295,6 +1344,271 @@ export const finalizeTask = internalMutation({
     return null;
   },
 });
+
+// ---------------------------------------------------------------------------
+// Phase 10 Stage B: organic social pages
+// ---------------------------------------------------------------------------
+
+type SocialLoaded = Extract<Loaded, { kind: "social" }>;
+
+/**
+ * Commits one organic social page: guards, the social writers of upsert.ts, the cursor
+ * checkpoint and the next step, in ONE transaction (the same protocol as commitPage, which
+ * never accepts a social page). Where a fetch ends:
+ * - listSocialPosts (incremental, F9): at the first page made entirely of posts already
+ *   stored (items > 0, nothing inserted / reappeared / unresolved)
+ * - listSocialPosts: at capabilities.requestBudget.maxListingPages (truncated: a warning,
+ *   and never removal marking)
+ * - fetchPostMetrics: at maxPostsPerSnapshotTask posts (truncated: a warning)
+ * - fetchAccountMetrics: a window whose days were not all returned counts the missing days
+ *   as unresolved (the window is then not covered)
+ * Removal marking (finalize) runs only after a complete, fully resolved, untruncated full
+ * listing (R3, I-D13).
+ */
+export const commitSocialPage = internalMutation({
+  args: {
+    taskId: v.id("syncTasks"),
+    claimSeq: v.number(),
+    requestCursor: v.optional(v.string()),
+    page: socialPageValidator,
+  },
+  returns: commitResultValidator,
+  handler: async (ctx, { taskId, claimSeq, requestCursor, page }) => {
+    const now = Date.now();
+    const loaded = await loadClaimed(ctx, taskId, claimSeq);
+    if (loaded === null) return { ok: false, reason: "stale_claim" };
+    const operation = loaded.task.operation;
+    if (loaded.kind !== "social" || !isSocialOperation(operation)) {
+      // A social page can never be written for an ad subject.
+      await applyFailure(ctx, loaded, { source: "guard", kind: "invalid_record" }, now);
+      return { ok: false, reason: "invalid_record" };
+    }
+    const { task, run, account } = loaded;
+    // Duplicate or out-of-order delivery of a page: the checkpoint already moved.
+    if ((task.cursor ?? null) !== (requestCursor ?? null))
+      return { ok: false, reason: "stale_cursor" };
+
+    const { problem } = await linkageProblem(ctx, run, account);
+    if (problem !== undefined) {
+      await cancelRun(ctx, run, problem, now);
+      return { ok: false, reason: problem };
+    }
+
+    const caps = providerRegistry().socialCapabilities(account.platform);
+    const reportedUnresolved = "unresolved" in page ? page.unresolved : undefined;
+    const guard =
+      page.kind !== SOCIAL_OPERATION_RECORD_KIND[operation]
+        ? ("invalid_record" as const)
+        : (checkPageShape({
+            itemCount: page.items.length,
+            nextCursor: page.nextCursor,
+            requestCursor,
+            previousCursor: task.previousCursor,
+            pagesSoFar: task.pages,
+            emptyPagesInRow: task.emptyPagesInRow,
+            maxPageSize: socialMaxPageSize(operation, caps),
+          }) ??
+          checkSocialRecordsInScope(page.kind, page.items, {
+            operation,
+            platform: account.platform,
+            accountExternalId: account.externalId,
+            ...(task.from !== undefined ? { from: task.from } : {}),
+            ...(task.to !== undefined ? { to: task.to } : {}),
+            capabilities: caps,
+            now,
+            ...(reportedUnresolved !== undefined ? { unresolved: reportedUnresolved } : {}),
+          }));
+    if (guard !== undefined) {
+      await applyFailure(ctx, loaded, { source: "guard", kind: guard }, now);
+      return { ok: false, reason: guard };
+    }
+
+    const scope = socialAccountScopeFromDoc(account);
+    let counts: SyncCounts;
+    let allKnown = false;
+    switch (page.kind) {
+      case "socialAccount": {
+        // Structure was validated against the social record validators (socialPageValidator).
+        const record = page.items[0] as ProviderSocialAccount;
+        const drift = socialAccountDrift(account, record);
+        if (drift !== undefined) {
+          // F11: never updated silently. Audited, then the account is blocked (audited)
+          // until an admin re-links it with a freshly discovered account type.
+          await writeSyncAudit(
+            ctx,
+            run.orgId,
+            AUDIT_ACTIONS.syncAccountAttributesChanged,
+            { kind: "social", socialAccountId: account._id },
+            {
+              attribute: { from: null, to: drift },
+              accountType: { from: account.accountType, to: record.accountType },
+            },
+          );
+          await applyFailure(ctx, loaded, { source: "account", kind: "account_changed" }, now);
+          return { ok: false, reason: "account_changed" };
+        }
+        counts = await refreshSocialAccount(ctx.db, account, scope, record, now);
+        break;
+      }
+      case "socialPost": {
+        const items = page.items as ProviderSocialPost[];
+        const written = await writeSocialPostPage(ctx.db, scope, items, now);
+        counts = written.counts;
+        allKnown = items.length > 0 && written.known === items.length;
+        break;
+      }
+      case "socialPostSnapshot":
+        counts = await writeSocialSnapshotPage(
+          ctx.db,
+          scope,
+          page.items as ProviderSocialPostSnapshot[],
+        );
+        break;
+      case "socialAccountDay":
+        counts = await writeSocialAccountDayPage(
+          ctx.db,
+          scope,
+          page.items as ProviderSocialAccountDay[],
+          now,
+        );
+        break;
+    }
+    counts.pages = 1;
+    counts.unresolved += reportedUnresolved ?? 0;
+
+    let nextCursor = page.nextCursor;
+    let truncated = false;
+    let warning: SyncError | undefined;
+    const pages = task.pages + 1;
+    if (nextCursor !== undefined && operation === "listSocialPosts") {
+      if (!task.fullListing && allKnown && counts.unresolved === 0) {
+        nextCursor = undefined; // F9: incremental early stop
+      } else if (pages >= caps.requestBudget.maxListingPages) {
+        nextCursor = undefined;
+        truncated = true;
+        warning = sanitizeFailure({ kind: "page_limit", code: "listing_truncated" }, now);
+      }
+    } else if (nextCursor !== undefined && operation === "fetchPostMetrics") {
+      const maxPages = Math.ceil(
+        caps.requestBudget.maxPostsPerSnapshotTask / caps.postMetricsPageSize,
+      );
+      if (pages >= maxPages) {
+        nextCursor = undefined;
+        truncated = true;
+        warning = sanitizeFailure({ kind: "page_limit", code: "snapshot_truncated" }, now);
+      }
+    }
+    if (
+      nextCursor === undefined &&
+      operation === "fetchAccountMetrics" &&
+      task.from !== undefined &&
+      task.to !== undefined
+    ) {
+      const expected = diffDays(task.from, task.to) + 1;
+      const returned = task.records + page.items.length;
+      if (returned !== expected) counts.unresolved += Math.abs(expected - returned);
+    }
+
+    const taskCounts = addCounts(task.counts, counts);
+    const checkpoint = {
+      pages,
+      records: task.records + page.items.length,
+      emptyPagesInRow: page.items.length === 0 ? task.emptyPagesInRow + 1 : 0,
+      attempt: 1,
+      pageTransientFailures: 0,
+      rateLimitHits: 0,
+      cursor: nextCursor,
+      previousCursor: requestCursor,
+      cursorSavedAt: now,
+      counts: taskCounts,
+      lastError: undefined,
+      leaseExpiresAt: undefined,
+      updatedAt: now,
+    };
+    await ctx.db.patch(run._id, { counts: addCounts(run.counts, counts), updatedAt: now });
+
+    if (nextCursor !== undefined) {
+      await ctx.db.patch(task._id, { ...checkpoint, status: "queued" });
+      await ctx.scheduler.runAfter(0, workerFor(task), { taskId });
+      await setLease(ctx, loaded.syncAccount, now + SYNC_LIMITS.taskLeaseMs, now);
+      return { ok: true };
+    }
+
+    // Fetch complete. Removal marking only after a COMPLETE, fully resolved, untruncated
+    // full listing.
+    if (
+      operation === "listSocialPosts" &&
+      task.fullListing &&
+      !truncated &&
+      taskCounts.unresolved + taskCounts.rejected === 0
+    ) {
+      await ctx.db.patch(task._id, { ...checkpoint, phase: "finalize", finalizeCursor: undefined });
+      await ctx.scheduler.runAfter(0, internal.sync.runs.finalizeTask, { taskId, claimSeq });
+      await setLease(ctx, loaded.syncAccount, now + SYNC_LIMITS.taskLeaseMs, now);
+      return { ok: true };
+    }
+    await ctx.db.patch(task._id, checkpoint);
+    await finishTask(ctx, { ...task, ...checkpoint }, "succeeded", now, warning);
+    return { ok: true };
+  },
+});
+
+/** Finalize of a complete full post listing: bounded removal marking (one batch per call). */
+async function finalizeSocialListing(
+  ctx: Ctx,
+  loaded: SocialLoaded,
+  claimSeq: number,
+  now: number,
+): Promise<void> {
+  const { task, run, account, syncAccount } = loaded;
+  const taskId = task._id;
+  const result = await markRemovedSocialPostsBatch(ctx.db, {
+    scope: socialAccountScopeFromDoc(account),
+    before: task.fetchStartedAt!,
+    now,
+    cursor: task.finalizeCursor
+      ? (JSON.parse(task.finalizeCursor) as SocialRemovalCursor)
+      : undefined,
+    limit: SYNC_LIMITS.finalizeBatch,
+    maxShare: SYNC_LIMITS.massRemovalMaxShare,
+    minCount: SYNC_LIMITS.massRemovalMinCount,
+  });
+  const record = async (removed: number) => {
+    const counts = { removed };
+    const merged = addCounts(task.counts, counts);
+    await ctx.db.patch(run._id, { counts: addCounts(run.counts, counts), updatedAt: now });
+    return merged;
+  };
+  if (result.status === "continue") {
+    const merged = await record(result.removed);
+    await ctx.db.patch(taskId, {
+      finalizeCursor: JSON.stringify(result.next),
+      counts: merged,
+      updatedAt: now,
+    });
+    await ctx.scheduler.runAfter(0, internal.sync.runs.finalizeTask, { taskId, claimSeq });
+    await setLease(ctx, syncAccount, now + SYNC_LIMITS.taskLeaseMs, now);
+    return;
+  }
+  if (result.status === "done") {
+    const merged = await record(result.removed);
+    await ctx.db.patch(taskId, { counts: merged, finalizeCursor: undefined, updatedAt: now });
+    await finishTask(ctx, { ...task, counts: merged }, "succeeded", now);
+    return;
+  }
+  await writeSyncAudit(ctx, run.orgId, AUDIT_ACTIONS.syncRemovalSkipped, subjectOf(run), {
+    table: { from: null, to: "socialPosts" },
+    candidates: { from: result.alive, to: result.candidates },
+  });
+  await ctx.db.patch(taskId, { finalizeCursor: undefined, updatedAt: now });
+  await finishTask(
+    ctx,
+    task,
+    "succeeded",
+    now,
+    sanitizeFailure({ kind: "suspicious_empty_listing" }, now),
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Recovery (planner)

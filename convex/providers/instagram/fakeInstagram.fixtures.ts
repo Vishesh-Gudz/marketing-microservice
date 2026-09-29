@@ -13,6 +13,12 @@
  *   GET  https://graph.instagram.com/v25.0/{ig-id}             profile / media type (Bearer)
  *   GET  https://graph.instagram.com/v25.0/{ig-id}/media       media pages (Bearer)
  *   GET  https://graph.instagram.com/v25.0/{media-id}/insights lifetime metrics (Bearer)
+ *   GET  https://graph.instagram.com/v25.0/{ig-id}/insights    account day insights (Bearer)
+ *
+ * Insights follow the documented "empty data set instead of 0": a metric the fixture does
+ * not define is simply missing from `data` (an explicit 0 is returned as 0). Account
+ * insights answer only period=day&metric_type=total_value with since/until (one UTC day);
+ * follows_and_unfollows (breakdown=follow_type) is never returned under 100 followers.
  *
  * Every request is logged (method, host, path, parameter NAMES, whether it carried a Bearer
  * token, the full URL) so tests can count requests and scan for leaks. Failures can be
@@ -31,10 +37,14 @@ export type FakeMedia = {
   id: string;
   caption?: string;
   media_type: string;
-  media_product_type: string;
+  /** Absent: the listing omits the field (IR3 scenario). */
+  media_product_type?: string;
   permalink?: string;
   timestamp: string;
+  /** Lifetime insights by Instagram metric name; missing names are not returned. */
   insights?: Record<string, number>;
+  /** Deleted after listing: the type and insights reads answer 100/33. */
+  deleted?: boolean;
 };
 
 export type FakeInstagramUser = {
@@ -44,7 +54,12 @@ export type FakeInstagramUser = {
   name?: string;
   followers?: number;
   permissions?: string;
+  /** Newest first (as Instagram lists media). */
   media?: FakeMedia[];
+  /** Day totals by UTC day and Instagram metric name (missing = not reported). */
+  accountInsights?: Record<string, Record<string, number>>;
+  /** follows_and_unfollows follow_type results by UTC day (e.g. { FOLLOWER: 5 }). */
+  follows?: Record<string, Record<string, number>>;
 };
 
 export type FakeRequest = {
@@ -66,7 +81,8 @@ export type FakeRoute =
   | "profile"
   | "media_type"
   | "media"
-  | "insights";
+  | "insights"
+  | "account_insights";
 
 const DEFAULT_USERS: Record<string, FakeInstagramUser> = {
   business: {
@@ -248,8 +264,13 @@ export function createFakeInstagram(
         const failure = takeFailure("media_type");
         if (failure) return failure;
         const found = findMedia(first);
-        if (found === undefined) return graphError(400, 100, 33);
-        return json(200, { media_product_type: found.media.media_product_type, id: first });
+        if (found === undefined || found.media.deleted) return graphError(400, 100, 33);
+        return json(200, {
+          ...(found.media.media_product_type !== undefined
+            ? { media_product_type: found.media.media_product_type }
+            : {}),
+          id: first,
+        });
       }
       const failure = takeFailure("profile");
       if (failure) return failure;
@@ -277,7 +298,7 @@ export function createFakeInstagram(
       const page = all.slice(offset, offset + limit);
       const next = offset + limit < all.length ? btoa(`off:${offset + limit}`) : undefined;
       return json(200, {
-        data: page.map(({ insights: _insights, ...media }) => ({
+        data: page.map(({ insights: _insights, deleted: _deleted, ...media }) => ({
           ...media,
           username: user.username,
         })),
@@ -292,20 +313,74 @@ export function createFakeInstagram(
         },
       });
     }
+    if (first !== undefined && second === "insights" && first === user.userId) {
+      const failure = takeFailure("account_insights");
+      if (failure) return failure;
+      const since = params.get("since");
+      if (
+        params.get("period") !== "day" ||
+        params.get("metric_type") !== "total_value" ||
+        since === null ||
+        params.get("until") === null
+      ) {
+        return graphError(400, 100);
+      }
+      const day = new Date(Number(since) * 1000).toISOString().slice(0, 10);
+      const metrics = (params.get("metric") ?? "").split(",");
+      if (params.get("breakdown") === "follow_type") {
+        const results = user.follows?.[day];
+        if ((user.followers ?? 0) < 100 || results === undefined) return json(200, { data: [] });
+        return json(200, {
+          data: [
+            {
+              name: "follows_and_unfollows",
+              period: "day",
+              title: "Follows and unfollows",
+              total_value: {
+                breakdowns: [
+                  {
+                    dimension_keys: ["follow_type"],
+                    results: Object.entries(results).map(([key, value]) => ({
+                      dimension_values: [key],
+                      value,
+                    })),
+                  },
+                ],
+              },
+              id: `${first}/insights/follows_and_unfollows/day`,
+            },
+          ],
+        });
+      }
+      const values = user.accountInsights?.[day] ?? {};
+      return json(200, {
+        data: metrics
+          .filter((name) => values[name] !== undefined)
+          .map((name) => ({
+            name,
+            period: "day",
+            title: name,
+            total_value: { value: values[name] },
+            id: `${first}/insights/${name}/day`,
+          })),
+      });
+    }
     if (first !== undefined && second === "insights") {
       const failure = takeFailure("insights");
       if (failure) return failure;
       const found = findMedia(first);
-      if (found === undefined) return graphError(400, 100, 33);
+      if (found === undefined || found.media.deleted) return graphError(400, 100, 33);
       const metrics = (params.get("metric") ?? "").split(",");
       return json(200, {
-        data: metrics.map((name) => ({
-          name,
-          period: "lifetime",
-          values: [{ value: found.media.insights?.[name] ?? 0 }],
-          title: name,
-          id: `${first}/insights/${name}/lifetime`,
-        })),
+        data: metrics
+          .filter((name) => found.media.insights?.[name] !== undefined)
+          .map((name) => ({
+            name,
+            period: "lifetime",
+            values: [{ value: found.media.insights![name] }],
+            title: name,
+            id: `${first}/insights/${name}/lifetime`,
+          })),
       });
     }
     return graphError(400, 2635);
@@ -346,6 +421,10 @@ export function createFakeInstagram(
       failures.set(route, [...(failures.get(route) ?? []), ...queued]);
     },
     graphError,
+    /** Every insight metric name requested (for forbidden-metric scans). */
+    requestedMetrics(): string[] {
+      return requests.flatMap((r) => new URL(r.url).searchParams.get("metric")?.split(",") ?? []);
+    },
     /** Requests whose path starts with `prefix`. */
     count(prefix: string): number {
       return requests.filter((r) => r.path.startsWith(prefix)).length;

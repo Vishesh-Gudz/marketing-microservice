@@ -114,10 +114,13 @@ export const READER_IDENTITY_FIELDS = "user_id,username,account_type";
 
 /**
  * [doc] Non-deprecated insight metrics the Graph reader may request (documented SDK gaps:
- * account insights; media `views` / `total_interactions`). Deprecated metrics
- * (impressions, plays, video_views, profile_views, website_clicks) are NOT allowed.
+ * account insights; media `views` / `total_interactions`). Never allowed: deprecated metrics
+ * (impressions, plays, video_views, profile_views, website_clicks), ad-inclusive metrics
+ * (total_likes, total_comments, total_views, ... [F6]), reposts, profile_visits and follows
+ * ([F5, R2]; account-level reposts are dropped too, the allowlist is not broadened for them).
  */
 export const READER_MEDIA_METRICS: ReadonlySet<string> = new Set(["views", "total_interactions"]);
+/** Account insights of request A (period=day, metric_type=total_value, no breakdown). */
 export const READER_ACCOUNT_METRICS: ReadonlySet<string> = new Set([
   "reach",
   "views",
@@ -128,10 +131,11 @@ export const READER_ACCOUNT_METRICS: ReadonlySet<string> = new Set([
   "shares",
   "saves",
   "replies",
-  "reposts",
-  "follows_and_unfollows",
   "profile_links_taps",
 ]);
+/** Request B: the only metric with a breakdown, and the only breakdown (follow_type). */
+export const READER_FOLLOWS_METRIC = "follows_and_unfollows";
+export const READER_BREAKDOWN = "follow_type";
 export const DEPRECATED_METRICS: ReadonlySet<string> = new Set([
   "impressions",
   "plays",
@@ -193,20 +197,46 @@ const SDK_ROUTES: readonly RouteSpec[] = [
   },
 ];
 
+/**
+ * [R2] Three strict request shapes share `/{id}/insights`; a request passes when it matches
+ * ONE of them completely (the transport cannot tell a media id from an account id, so every
+ * shape is also safe for either):
+ * - post insights:      metric in {views,total_interactions}, period=lifetime; nothing else
+ * - account request A:  metric in the account set, period=day, metric_type=total_value,
+ *                       since + until; no breakdown
+ * - account request B:  metric=follows_and_unfollows, period=day, metric_type=total_value,
+ *                       breakdown=follow_type, since + until
+ * `time_series` and every other breakdown are refused.
+ */
 const READER_ROUTES: readonly RouteSpec[] = [
   { segments: ["me"], params: { fields: exact(READER_IDENTITY_FIELDS) }, required: ["fields"] },
   {
-    // Media insights (views, total_interactions) and account insights share this shape.
+    segments: [":id", "insights"],
+    params: { metric: metricList(READER_MEDIA_METRICS), period: exact("lifetime") },
+    required: ["metric", "period"],
+  },
+  {
     segments: [":id", "insights"],
     params: {
-      metric: metricList(new Set([...READER_MEDIA_METRICS, ...READER_ACCOUNT_METRICS])),
-      period: exact("day", "lifetime"),
-      metric_type: exact("total_value", "time_series"),
-      breakdown: exact("follow_type"),
+      metric: metricList(READER_ACCOUNT_METRICS),
+      period: exact("day"),
+      metric_type: exact("total_value"),
       since: UNIX_SECONDS,
       until: UNIX_SECONDS,
     },
-    required: ["metric"],
+    required: ["metric", "period", "metric_type", "since", "until"],
+  },
+  {
+    segments: [":id", "insights"],
+    params: {
+      metric: exact(READER_FOLLOWS_METRIC),
+      period: exact("day"),
+      metric_type: exact("total_value"),
+      breakdown: exact(READER_BREAKDOWN),
+      since: UNIX_SECONDS,
+      until: UNIX_SECONDS,
+    },
+    required: ["metric", "period", "metric_type", "breakdown", "since", "until"],
   },
 ];
 
@@ -243,13 +273,15 @@ function graphRoute(target: Target, routes: readonly RouteSpec[]): BlockReason |
   const segments = path.split("/").slice(1);
   if (segments[0] !== INSTAGRAM_GRAPH_VERSION) return "path";
   const rest = segments.slice(1);
-  const route = routes.find(
+  const candidates = routes.filter(
     (r) =>
       r.segments.length === rest.length &&
       r.segments.every((s, i) => (s === ":id" ? ID_SEGMENT.test(rest[i]!) : s === rest[i])),
   );
-  if (route === undefined) return "path";
-  return checkQuery(queryEntries(target.url), route);
+  if (candidates.length === 0) return "path";
+  // Several shapes may share a path (reader insights): the request must match one fully.
+  const entries = queryEntries(target.url);
+  return candidates.some((route) => checkQuery(entries, route) === undefined) ? undefined : "query";
 }
 
 /** The two approved secret-in-URL shapes (exact parameter sets, GET, no version prefix). */

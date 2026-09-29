@@ -42,6 +42,9 @@ export const rawIdentity = v.object({
 });
 export type RawIdentity = Infer<typeof rawIdentity>;
 
+/** [doc] Insights responses: `{ data: [entry, ...], paging? }` (entries checked by the reader). */
+export const rawInsights = v.object({ data: v.array(v.any()) });
+
 export function parseRaw<T extends Validator<unknown, "required", string>>(
   validator: T,
   value: unknown,

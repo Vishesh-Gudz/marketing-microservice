@@ -72,13 +72,27 @@ export const socialTables = {
     ...socialPostMetricFields,
   }).index("by_org_post_date", ["orgId", "postId", "capturedDate"]),
 
-  /** Daily account values; day = platform reporting day (unverified until Phase 10). */
+  /**
+   * Daily account values on UTC days (Phase 10, I-D11; the day boundary is unverified, IR6).
+   * Two column groups with independent writers (convex/sync/upsert.ts), each replacing only
+   * its own columns: profile (followers, followersCapturedAt) from the sync preflight, and
+   * insights (every other metric, extras, insightsSyncedAt) from account insights.
+   */
   socialAccountMetricsDaily: defineTable({
     orgId: orgIdField,
     socialAccountId: v.id("socialAccounts"),
     platform: socialPlatformValidator,
     date: dateKeyValidator,
     ...socialAccountMetricFields,
+    /** Last write of either column group. */
     syncedAt: v.number(),
+    /** Phase 10 (F7): last follower capture for this day (profile group). */
+    followersCapturedAt: v.optional(v.number()),
+    /**
+     * Phase 10 (F7): last insights write for this day (insights group), also when the
+     * platform reported nothing: set = synced (absent metrics are "not reported"),
+     * absent = never synced.
+     */
+    insightsSyncedAt: v.optional(v.number()),
   }).index("by_org_account_date", ["orgId", "socialAccountId", "date"]),
 };

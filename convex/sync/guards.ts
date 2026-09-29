@@ -1,10 +1,14 @@
-import { compareDateKeys } from "../lib/dates";
+import { addDays, compareDateKeys, todayIn } from "../lib/dates";
 import type { AdsProviderCapabilities } from "../providers/capabilities";
+import type { SocialProviderCapabilities } from "../providers/social/capabilities";
+import type { SocialRecordKind } from "../providers/social/types";
+import { socialRecordIssues } from "../providers/social/validate";
 import type { ProviderRecordByKind, ProviderRecordKind } from "../providers/types";
 import { recordIssues } from "../providers/validate";
 import { SYNC_LIMITS } from "./config";
 import type { GuardFailureKind } from "./policy";
 import { allowedPlacements, type SyncOperation } from "./plan";
+import type { SocialSyncOperation } from "./subject";
 
 /**
  * Pure page guards. They run BEFORE any canonical write, so a rejected page
@@ -124,6 +128,116 @@ export function checkRecordsInScope(
     keys.add(key);
   }
   if (kind === "adAccount" && records.length !== 1) return "out_of_scope";
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 10 Stage B: organic social pages
+// ---------------------------------------------------------------------------
+
+export const SOCIAL_OPERATION_RECORD_KIND = {
+  getSocialAccount: "socialAccount",
+  listSocialPosts: "socialPost",
+  fetchPostMetrics: "socialPostSnapshot",
+  fetchAccountMetrics: "socialAccountDay",
+} as const satisfies Record<SocialSyncOperation, SocialRecordKind>;
+
+/** Largest page each social operation may return (capabilities). */
+export function socialMaxPageSize(
+  operation: SocialSyncOperation,
+  capabilities: SocialProviderCapabilities,
+): number {
+  switch (operation) {
+    case "getSocialAccount":
+      return 1;
+    case "listSocialPosts":
+      return capabilities.maxPageSize;
+    case "fetchPostMetrics":
+      return capabilities.postMetricsPageSize;
+    case "fetchAccountMetrics":
+      return capabilities.maxAccountMetricsRangeDays;
+  }
+}
+
+export type SocialRecordScope = {
+  operation: SocialSyncOperation;
+  platform: string;
+  accountExternalId: string;
+  from?: string;
+  to?: string;
+  capabilities: SocialProviderCapabilities;
+  /** Commit time: snapshots must be captured today or yesterday (UTC). */
+  now: number;
+  /** Provider-reported unmapped items of this page. */
+  unresolved?: number;
+};
+
+function socialNaturalKey(kind: SocialRecordKind, record: Record<string, unknown>): string {
+  switch (kind) {
+    case "socialPostSnapshot":
+      return String(record.postExternalId);
+    case "socialAccountDay":
+      return String(record.date);
+    default:
+      return String(record.externalId);
+  }
+}
+
+/**
+ * Every social record must be valid (social/validate.ts: table validators minus forbidden
+ * fields, permalink rule, counts), belong to the requested platform/account, and:
+ * - socialAccount: exactly one record, a supported account type
+ * - socialAccountDay: a day inside the requested window (never the profile group: the
+ *   validator refuses followers and provenance fields)
+ * - socialPostSnapshot: captured today or yesterday (UTC)
+ * Duplicate natural keys within one page are rejected. `unresolved` must be a small count.
+ */
+export function checkSocialRecordsInScope(
+  kind: SocialRecordKind,
+  records: readonly unknown[],
+  scope: SocialRecordScope,
+): GuardFailureKind | undefined {
+  if (
+    scope.unresolved !== undefined &&
+    (!Number.isSafeInteger(scope.unresolved) ||
+      scope.unresolved < 0 ||
+      scope.unresolved > SYNC_LIMITS.hardMaxRecordsPerPage)
+  ) {
+    return "invalid_record";
+  }
+  const today = todayIn("UTC", scope.now);
+  const keys = new Set<string>();
+  for (const raw of records) {
+    if (socialRecordIssues(kind, raw).length > 0) return "invalid_record";
+    const record = raw as Record<string, unknown>;
+    if (record.platform !== scope.platform) return "out_of_scope";
+    if (kind === "socialAccount") {
+      if (record.externalId !== scope.accountExternalId) return "out_of_scope";
+      const types = scope.capabilities.accountTypes as readonly string[];
+      if (!types.includes(record.accountType as string)) return "out_of_scope";
+    } else if (record.accountExternalId !== scope.accountExternalId) {
+      return "out_of_scope";
+    }
+    if (kind === "socialAccountDay") {
+      const date = record.date as string;
+      if (
+        scope.from === undefined ||
+        scope.to === undefined ||
+        compareDateKeys(date, scope.from) < 0 ||
+        compareDateKeys(date, scope.to) > 0
+      ) {
+        return "out_of_scope";
+      }
+    }
+    if (kind === "socialPostSnapshot") {
+      const day = record.capturedDate as string;
+      if (day !== today && day !== addDays(today, -1)) return "out_of_scope";
+    }
+    const key = socialNaturalKey(kind, record);
+    if (keys.has(key)) return "duplicate_keys";
+    keys.add(key);
+  }
+  if (kind === "socialAccount" && records.length !== 1) return "out_of_scope";
   return undefined;
 }
 

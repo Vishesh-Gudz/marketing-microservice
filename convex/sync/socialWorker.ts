@@ -8,7 +8,7 @@ import { isSocialConnectionProvider } from "../domain/types";
 import { socialProviderFor } from "../providers/social/nodeRegistry";
 import type { SocialProvider } from "../providers/social/types";
 import type { ProviderContext } from "../providers/types";
-import type { ClaimResult, FailureArg, FetchRequest } from "./validators";
+import type { ClaimResult, FailureArg, FetchRequest, SocialPageArg } from "./validators";
 import { classify } from "./worker";
 
 /**
@@ -19,9 +19,8 @@ import { classify } from "./worker";
  *   1. claim the task (lease + claimSeq, tenant/linkage checks); only social claims
  *   2. decrypt the credential ONLY via withConnectionCredential and call the tenant-free
  *      social provider with {credential, attempt} and external ids
- *   3. record the failure (retry policy) — Stage A has no social page write path, so a
- *      successful page is itself recorded as a fail-closed failure (social_commit_pending;
- *      unreachable while every social operation fails closed before the network)
+ *   3. commit the page (commitSocialPage: guards + social canonical writes + checkpoint +
+ *      next step, atomically) or record the failure (retry policy)
  * Plaintext credentials exist only inside step 2. Nothing is logged.
  */
 
@@ -32,35 +31,55 @@ class SubjectMismatchError extends Error {
   }
 }
 
-export const SOCIAL_COMMIT_PENDING = "social_commit_pending";
+/** A provider page as a commitSocialPage argument (absent fields stay absent). */
+function socialPage<K extends SocialPageArg["kind"], T>(
+  kind: K,
+  result: { items: T[]; nextCursor?: string; unresolved?: number },
+) {
+  return {
+    kind,
+    items: result.items,
+    ...(result.nextCursor !== undefined ? { nextCursor: result.nextCursor } : {}),
+    ...(result.unresolved !== undefined ? { unresolved: result.unresolved } : {}),
+  };
+}
 
 async function callSocialProvider(
   provider: SocialProvider,
   ctx: ProviderContext,
   request: FetchRequest,
-): Promise<unknown> {
+): Promise<SocialPageArg> {
   const account = { accountExternalId: request.accountExternalId };
   const paging = request.cursor !== undefined ? { cursor: request.cursor } : {};
   switch (request.operation) {
     case "getSocialAccount":
-      return await provider.getAccount(ctx, account);
+      return { kind: "socialAccount", items: [await provider.getAccount(ctx, account)] };
     case "listSocialPosts":
-      return await provider.listPosts(ctx, { ...account, ...paging });
+      return socialPage("socialPost", await provider.listPosts(ctx, { ...account, ...paging }));
     case "fetchPostMetrics":
       if (request.from === undefined) throw new SubjectMismatchError();
-      return await provider.fetchPostMetrics(ctx, {
-        ...account,
-        ...paging,
-        publishedFrom: request.from,
-      });
-    case "fetchAccountMetrics":
+      return socialPage(
+        "socialPostSnapshot",
+        await provider.fetchPostMetrics(ctx, {
+          ...account,
+          ...paging,
+          publishedFrom: request.from,
+        }),
+      );
+    case "fetchAccountMetrics": {
       if (request.from === undefined || request.to === undefined) throw new SubjectMismatchError();
-      return await provider.fetchAccountMetrics(ctx, {
+      const result = await provider.fetchAccountMetrics(ctx, {
         ...account,
         ...paging,
         from: request.from,
         to: request.to,
       });
+      return {
+        kind: "socialAccountDay",
+        items: result.items,
+        ...(result.nextCursor !== undefined ? { nextCursor: result.nextCursor } : {}),
+      };
+    }
     default:
       // An ads operation never runs here.
       throw new SubjectMismatchError();
@@ -86,24 +105,44 @@ export const runTask = internalAction({
       return null;
     }
 
+    let page: SocialPageArg;
     try {
-      await withConnectionCredential(ctx, claim.connectionId, async (credential, binding) => {
-        // Defense in depth: the decrypted credential must belong to the run's org/platform.
-        if (
-          binding.orgId !== claim.orgId ||
-          binding.provider !== claim.platform ||
-          !isSocialConnectionProvider(binding.provider)
-        ) {
-          throw new SubjectMismatchError();
-        }
-        const provider = socialProviderFor(binding.provider);
-        await callSocialProvider(provider, { credential, attempt: claim.attempt }, claim.request);
-      });
+      page = await withConnectionCredential(
+        ctx,
+        claim.connectionId,
+        async (credential, binding) => {
+          // Defense in depth: the decrypted credential must belong to the run's org/platform.
+          if (
+            binding.orgId !== claim.orgId ||
+            binding.provider !== claim.platform ||
+            !isSocialConnectionProvider(binding.provider)
+          ) {
+            throw new SubjectMismatchError();
+          }
+          const provider = socialProviderFor(binding.provider);
+          return await callSocialProvider(
+            provider,
+            { credential, attempt: claim.attempt },
+            claim.request,
+          );
+        },
+      );
     } catch (error) {
       await fail(classify(error));
       return null;
     }
-    await fail({ source: "provider", kind: "unknown", code: SOCIAL_COMMIT_PENDING });
+
+    try {
+      await ctx.runMutation(internal.sync.runs.commitSocialPage, {
+        taskId,
+        claimSeq: claim.claimSeq,
+        ...(claim.request.cursor !== undefined ? { requestCursor: claim.request.cursor } : {}),
+        page,
+      });
+    } catch {
+      // The commit rolled back (e.g. an invariant violation): record it; never retried.
+      await fail({ source: "internal", kind: "internal" });
+    }
     return null;
   },
 });
