@@ -17,6 +17,12 @@ import type * as analytics_config from "../analytics/config.js";
 import type * as analytics_coverage from "../analytics/coverage.js";
 import type * as analytics_fx from "../analytics/fx.js";
 import type * as analytics_numeric from "../analytics/numeric.js";
+import type * as analytics_organic_aggregate from "../analytics/organic/aggregate.js";
+import type * as analytics_organic_budget from "../analytics/organic/budget.js";
+import type * as analytics_organic_config from "../analytics/organic/config.js";
+import type * as analytics_organic_dates from "../analytics/organic/dates.js";
+import type * as analytics_organic_metrics from "../analytics/organic/metrics.js";
+import type * as analytics_organic_queries from "../analytics/organic/queries.js";
 import type * as analytics_periods from "../analytics/periods.js";
 import type * as analytics_queries from "../analytics/queries.js";
 import type * as analytics_reader from "../analytics/reader.js";
@@ -154,8 +160,13 @@ import type * as v1_dto_analytics from "../v1/dto/analytics.js";
 import type * as v1_dto_audit from "../v1/dto/audit.js";
 import type * as v1_dto_connection from "../v1/dto/connection.js";
 import type * as v1_dto_org from "../v1/dto/org.js";
+import type * as v1_dto_organicAnalytics from "../v1/dto/organicAnalytics.js";
 import type * as v1_dto_socialAccount from "../v1/dto/socialAccount.js";
+import type * as v1_dto_socialPost from "../v1/dto/socialPost.js";
+import type * as v1_organicAnalytics from "../v1/organicAnalytics.js";
 import type * as v1_orgs from "../v1/orgs.js";
+import type * as v1_socialAccounts from "../v1/socialAccounts.js";
+import type * as v1_socialPosts from "../v1/socialPosts.js";
 
 import type {
   ApiFromModules,
@@ -173,6 +184,12 @@ declare const fullApi: ApiFromModules<{
   "analytics/coverage": typeof analytics_coverage;
   "analytics/fx": typeof analytics_fx;
   "analytics/numeric": typeof analytics_numeric;
+  "analytics/organic/aggregate": typeof analytics_organic_aggregate;
+  "analytics/organic/budget": typeof analytics_organic_budget;
+  "analytics/organic/config": typeof analytics_organic_config;
+  "analytics/organic/dates": typeof analytics_organic_dates;
+  "analytics/organic/metrics": typeof analytics_organic_metrics;
+  "analytics/organic/queries": typeof analytics_organic_queries;
   "analytics/periods": typeof analytics_periods;
   "analytics/queries": typeof analytics_queries;
   "analytics/reader": typeof analytics_reader;
@@ -310,8 +327,13 @@ declare const fullApi: ApiFromModules<{
   "v1/dto/audit": typeof v1_dto_audit;
   "v1/dto/connection": typeof v1_dto_connection;
   "v1/dto/org": typeof v1_dto_org;
+  "v1/dto/organicAnalytics": typeof v1_dto_organicAnalytics;
   "v1/dto/socialAccount": typeof v1_dto_socialAccount;
+  "v1/dto/socialPost": typeof v1_dto_socialPost;
+  "v1/organicAnalytics": typeof v1_organicAnalytics;
   "v1/orgs": typeof v1_orgs;
+  "v1/socialAccounts": typeof v1_socialAccounts;
+  "v1/socialPosts": typeof v1_socialPosts;
 }>;
 
 /**

@@ -8,9 +8,10 @@ import {
 import { toIso } from "../../lib/dto";
 
 /**
- * Organic social account DTOs (Phase 10). Minimum identity and link state only: no
- * credentials, no profile picture or other profile details (those arrive with Stage B),
- * no internal ids beyond the opaque account/connection ids.
+ * Organic social account DTOs (Phase 10). Identity, link state and (Stage B, when read through
+ * v1/socialAccounts) the latest follower count, last successful sync and account-metric
+ * coverage. Never: credentials, a profile picture or any other URL (F1), biography, website,
+ * connection internals beyond the opaque connection id, or internal ids beyond opaque ids.
  */
 export const socialAccountDto = v.object({
   id: v.string(),
@@ -23,6 +24,12 @@ export const socialAccountDto = v.object({
   linked: v.boolean(),
   connectionId: v.optional(v.string()),
   linkedAt: v.optional(v.string()),
+  /** Stage B: latest follower count as of its capture (profile read). */
+  followersCount: v.optional(v.number()),
+  /** Stage B: last successful sync (ISO instant). */
+  lastSyncedAt: v.optional(v.string()),
+  /** Stage B: UTC days with complete account metrics. */
+  coverage: v.optional(v.object({ from: v.string(), through: v.string() })),
 });
 export type SocialAccountDto = Infer<typeof socialAccountDto>;
 
@@ -38,6 +45,21 @@ export function toSocialAccountDto(account: Doc<"socialAccounts">): SocialAccoun
     linked: account.connectionId !== undefined,
     ...(account.connectionId !== undefined ? { connectionId: account.connectionId } : {}),
     ...(account.linkedAt !== undefined ? { linkedAt: toIso(account.linkedAt) } : {}),
+  };
+}
+
+/** Stage B (v1/socialAccounts): the account plus its follower count and sync state. */
+export function toSocialAccountDetailDto(
+  account: Doc<"socialAccounts">,
+  sync: Doc<"syncAccounts"> | null,
+): SocialAccountDto {
+  return {
+    ...toSocialAccountDto(account),
+    ...(account.followersCount !== undefined ? { followersCount: account.followersCount } : {}),
+    ...(sync?.lastSuccessAt !== undefined ? { lastSyncedAt: toIso(sync.lastSuccessAt) } : {}),
+    ...(sync?.coveredFrom !== undefined && sync.coveredThrough !== undefined
+      ? { coverage: { from: sync.coveredFrom, through: sync.coveredThrough } }
+      : {}),
   };
 }
 

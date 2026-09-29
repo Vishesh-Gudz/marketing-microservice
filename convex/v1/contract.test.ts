@@ -88,9 +88,15 @@ describe("public API contract", () => {
       "v1/connections:refreshAssets",
       "v1/connections:unlinkAdAccount",
       "v1/connections:unlinkSocialAccount",
+      "v1/organicAnalytics:accountSeries",
+      "v1/organicAnalytics:overview",
       "v1/orgs:ensure",
       "v1/orgs:me",
       "v1/orgs:updateSettings",
+      "v1/socialAccounts:get",
+      "v1/socialAccounts:list",
+      "v1/socialPosts:get",
+      "v1/socialPosts:list",
     ]);
   });
 
