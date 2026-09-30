@@ -1,0 +1,250 @@
+#!/usr/bin/env node
+// Local development data for the dashboard. DEV ONLY (mock providers, dev issuer).
+//
+//   npm run dev:seed [-- --org dev-org] [-- --resync]
+//
+// Seeds the org of the dashboard token written by `npm run dev:auth setup` ("dev-org"):
+// connects the mock Meta and Google Ads providers and links their accounts through the
+// PUBLIC v1 API (exactly like a parent app would), then runs the initial sync of each
+// account with the internal operator functions `sync/admin:*` via the Convex CLI (they
+// need deployment credentials and are never reachable from the dashboard).
+//
+// Phase 10 (organic Instagram, DEVELOPMENT / TEST / PLAYWRIGHT DATA ONLY): also connects the
+// mock Instagram users "1" (a business account) and "small" (under 100 followers) through
+// the same public v1 functions, links their accounts, and runs the sync planner tick
+// (`sync/planner:tick`, the internal function the cron runs anyway) via the Convex CLI until
+// each account's first sync has finished. It relies only on the mock social provider that
+// PROVIDER_MODE=mock registers on a local backend; no production code path is special-cased.
+//
+// Idempotent: existing active connections and linked accounts are reused, and accounts
+// that already have synced coverage are skipped unless --resync is given (--resync applies
+// to ad accounts; Instagram accounts follow the planner's cadence). Prints no tokens,
+// authorization URLs or codes. Prerequisites: `npm run dev:backend` running and
+// `npm run dev:auth setup` done once.
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { ConvexHttpClient } from "convex/browser";
+import { anyApi } from "convex/server";
+import { DEV_RETURN_URLS, mintToken } from "./dev-auth.mjs";
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const CONVEX_BIN = join(ROOT, "node_modules", "convex", "bin", "main.js");
+
+/** Mock accounts to link (see convex/providers/mock): two currencies per platform. */
+const SEED = [
+  { provider: "meta", externalIds: ["1001", "1002"] },
+  { provider: "google_ads", externalIds: ["1112223333", "4445556666"] },
+];
+
+/** Mock Instagram users (see convex/providers/social/mock): business, under 100 followers. */
+const SOCIAL_SEED = ["1", "small"];
+
+/** 32-bit FNV-1a (mirrors convex/providers/hash.ts). */
+function fnv1a(input) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+/**
+ * The consent code the mock Instagram OAuth issues for `user` (mirrors mockInstagramCode in
+ * convex/providers/social/mock; tests/unit/dev-seed.test.ts keeps the two equal). Mock only:
+ * the live Instagram flow never accepts it.
+ */
+export function mockInstagramCode(user) {
+  return `mock-ig-code.${user}.${fnv1a(JSON.stringify(["instagram", user])).toString(36)}`;
+}
+
+function flag(name) {
+  const index = process.argv.indexOf(`--${name}`);
+  if (index < 0) return undefined;
+  const next = process.argv[index + 1];
+  return next === undefined || next.startsWith("--") ? true : next;
+}
+
+function convexUrl() {
+  if (process.env.NEXT_PUBLIC_CONVEX_URL) return process.env.NEXT_PUBLIC_CONVEX_URL;
+  const envPath = join(ROOT, ".env.local");
+  const match = existsSync(envPath)
+    ? /^NEXT_PUBLIC_CONVEX_URL=(.+)$/m.exec(readFileSync(envPath, "utf8"))
+    : null;
+  if (!match) throw new Error("NEXT_PUBLIC_CONVEX_URL not found. Run `npm run dev:backend` first.");
+  return match[1].trim();
+}
+
+/** `convex run` for internal operator functions (deployment credentials, no shell). */
+function convexRun(fn, args) {
+  const result = spawnSync(process.execPath, [CONVEX_BIN, "run", fn, JSON.stringify(args)], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  if (result.status !== 0) throw new Error(`convex run ${fn} failed:\n${result.stderr}`);
+  return JSON.parse(result.stdout);
+}
+
+async function waitForRun(runId, timeoutMs = 180_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const status = convexRun("sync/admin:runStatus", { runId });
+    if (status && !["queued", "running"].includes(status.status)) return status;
+    await new Promise((r) => setTimeout(r, 1_500));
+  }
+  throw new Error(`Sync run ${runId} did not finish within ${timeoutMs / 1000}s.`);
+}
+
+async function connect(client, provider, mockUser) {
+  const { authorizeUrl } = await client.action(anyApi.v1.connections.beginConnect, {
+    provider,
+    returnUrl: DEV_RETURN_URLS[0],
+  });
+  // The mock provider's consent screen redirects straight to the Convex callback,
+  // which stores the (mock) credential and redirects to the return URL. For the mock
+  // Instagram OAuth the authorization URL IS that callback; its code selects the mock user.
+  const url = new URL(authorizeUrl);
+  if (mockUser !== undefined) url.searchParams.set("code", mockInstagramCode(mockUser));
+  const response = await fetch(url, { redirect: "manual" });
+  const location = response.headers.get("location");
+  const params = location ? new URL(location).searchParams : undefined;
+  const connectionId = params?.get("connection");
+  if (!connectionId || params?.get("status") !== "connected") {
+    throw new Error(
+      `Connecting ${provider} failed (status ${params?.get("status") ?? "unknown"}).`,
+    );
+  }
+  return connectionId;
+}
+
+async function listSocialAccounts(client) {
+  const accounts = [];
+  let cursor = null;
+  do {
+    const result = await client.query(anyApi.v1.socialAccounts.list, {
+      paginationOpts: { numItems: 100, cursor },
+    });
+    accounts.push(...result.page);
+    cursor = result.isDone ? null : result.continueCursor;
+  } while (cursor !== null);
+  return accounts;
+}
+
+/** Connects and links the mock Instagram users, then waits for their first sync. */
+async function seedInstagram(client, connections, timeoutMs = 180_000) {
+  const usernames = SOCIAL_SEED.map((user) => `mock_${user}`);
+  for (const [index, user] of SOCIAL_SEED.entries()) {
+    const username = usernames[index];
+    const existing = connections.find(
+      (c) => c.provider === "instagram" && c.status === "active" && c.displayName === username,
+    );
+    const connectionId = existing?.id ?? (await connect(client, "instagram", user));
+    console.log(`  instagram @${username}: connection ${existing ? "reused" : "created"}`);
+    const discovered = await client.query(anyApi.v1.connections.listDiscoveredSocialAccounts, {
+      connectionId,
+    });
+    const toLink = discovered.filter((a) => !a.linked).map((a) => a.externalId);
+    if (toLink.length > 0) {
+      await client.mutation(anyApi.v1.connections.linkSocialAccounts, {
+        connectionId,
+        externalIds: toLink,
+      });
+      console.log(`  instagram @${username}: linked`);
+    }
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  let announced = false;
+  for (;;) {
+    const seeded = (await listSocialAccounts(client)).filter(
+      (a) => a.linked && usernames.includes(a.username),
+    );
+    const pending = seeded.filter((a) => a.lastSyncedAt === undefined);
+    if (seeded.length >= usernames.length && pending.length === 0) {
+      for (const a of seeded) {
+        const through = a.coverage
+          ? `${a.coverage.from} – ${a.coverage.through} UTC`
+          : "no coverage";
+        console.log(`  instagram @${a.username}: synced (${through})`);
+      }
+      return;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `Instagram accounts not synced within ${timeoutMs / 1000}s: ${pending.map((a) => a.username).join(", ")}.`,
+      );
+    }
+    if (!announced) console.log("  instagram: syncing…");
+    announced = true;
+    // The planner starts due accounts only (and never a second run of the same kind).
+    convexRun("sync/planner:tick", {});
+    await new Promise((r) => setTimeout(r, 2_000));
+  }
+}
+
+async function main() {
+  const org = typeof flag("org") === "string" ? flag("org") : "dev-org";
+  const resync = flag("resync") === true;
+  const client = new ConvexHttpClient(convexUrl());
+  client.setAuth(
+    await mintToken({ org, role: "admin", sub: "dev-seed", name: "Dev Organization" }),
+  );
+  await client.mutation(anyApi.v1.orgs.ensure, {});
+  console.log(`Seeding org "${org}"…`);
+
+  const connections = await client.query(anyApi.v1.connections.list, {});
+  let accounts = await client.query(anyApi.v1.adAccounts.list, {});
+
+  for (const { provider, externalIds } of SEED) {
+    const existing = connections.find((c) => c.provider === provider && c.status === "active");
+    const connectionId = existing?.id ?? (await connect(client, provider));
+    console.log(`  ${provider}: connection ${existing ? "reused" : "created"}`);
+    const linked = new Set(
+      accounts.filter((a) => a.platform === provider && a.linked).map((a) => a.externalId),
+    );
+    const toLink = externalIds.filter((id) => !linked.has(id));
+    if (toLink.length > 0) {
+      await client.mutation(anyApi.v1.connections.linkAdAccounts, {
+        connectionId,
+        externalIds: toLink,
+      });
+      console.log(`  ${provider}: linked ${toLink.join(", ")}`);
+    }
+  }
+
+  accounts = await client.query(anyApi.v1.adAccounts.list, {});
+  const seeded = accounts.filter((a) =>
+    SEED.some((s) => s.provider === a.platform && s.externalIds.includes(a.externalId)),
+  );
+  for (const account of seeded) {
+    const state = convexRun("sync/admin:accountState", { adAccountId: account.id });
+    if (state?.coveredThrough && !resync && state.activeRunId === undefined) {
+      console.log(`  ${account.name}: already synced through ${state.coveredThrough}`);
+      continue;
+    }
+    const started = convexRun("sync/admin:requestSync", {
+      adAccountId: account.id,
+      ...(state?.coveredThrough ? { kind: "lookback" } : {}),
+    });
+    if (started.status === "rejected") {
+      throw new Error(`${account.name}: sync rejected (${started.reason}).`);
+    }
+    process.stdout.write(`  ${account.name}: syncing…`);
+    const run = await waitForRun(started.runId);
+    const after = convexRun("sync/admin:accountState", { adAccountId: account.id });
+    console.log(` ${run.status} (${after?.coveredFrom ?? "?"} – ${after?.coveredThrough ?? "?"})`);
+    if (run.status !== "succeeded") process.exitCode = 1;
+  }
+
+  await seedInstagram(client, connections);
+  console.log("Done. Open the dashboard: npm run dev:frontend");
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  });
+}

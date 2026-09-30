@@ -1,0 +1,365 @@
+/* eslint-disable */
+/**
+ * Generated `api` utility.
+ *
+ * THIS CODE IS AUTOMATICALLY GENERATED.
+ *
+ * To regenerate, run `npx convex dev`.
+ * @module
+ */
+
+import type * as admin_fxRates from "../admin/fxRates.js";
+import type * as admin_integrationApps from "../admin/integrationApps.js";
+import type * as analytics_actions from "../analytics/actions.js";
+import type * as analytics_aggregate from "../analytics/aggregate.js";
+import type * as analytics_comparison from "../analytics/comparison.js";
+import type * as analytics_config from "../analytics/config.js";
+import type * as analytics_coverage from "../analytics/coverage.js";
+import type * as analytics_fx from "../analytics/fx.js";
+import type * as analytics_numeric from "../analytics/numeric.js";
+import type * as analytics_organic_aggregate from "../analytics/organic/aggregate.js";
+import type * as analytics_organic_budget from "../analytics/organic/budget.js";
+import type * as analytics_organic_config from "../analytics/organic/config.js";
+import type * as analytics_organic_dates from "../analytics/organic/dates.js";
+import type * as analytics_organic_metrics from "../analytics/organic/metrics.js";
+import type * as analytics_organic_queries from "../analytics/organic/queries.js";
+import type * as analytics_periods from "../analytics/periods.js";
+import type * as analytics_queries from "../analytics/queries.js";
+import type * as analytics_reader from "../analytics/reader.js";
+import type * as analytics_scope from "../analytics/scope.js";
+import type * as connections_assets from "../connections/assets.js";
+import type * as connections_config from "../connections/config.js";
+import type * as connections_credentialStore from "../connections/credentialStore.js";
+import type * as connections_lifecycle from "../connections/lifecycle.js";
+import type * as connections_maintenance from "../connections/maintenance.js";
+import type * as connections_oauthDiagnostics from "../connections/oauthDiagnostics.js";
+import type * as connections_oauthFlow from "../connections/oauthFlow.js";
+import type * as connections_oauthState from "../connections/oauthState.js";
+import type * as connections_returnUrls from "../connections/returnUrls.js";
+import type * as connections_socialAssets from "../connections/socialAssets.js";
+import type * as connections_tokenRefresh from "../connections/tokenRefresh.js";
+import type * as crons from "../crons.js";
+import type * as domain_identity from "../domain/identity.js";
+import type * as domain_metrics from "../domain/metrics.js";
+import type * as domain_types from "../domain/types.js";
+import type * as domain_validators from "../domain/validators.js";
+import type * as health from "../health.js";
+import type * as http from "../http.js";
+import type * as lib_audit from "../lib/audit.js";
+import type * as lib_auth from "../lib/auth.js";
+import type * as lib_authIssuers from "../lib/authIssuers.js";
+import type * as lib_crypto from "../lib/crypto.js";
+import type * as lib_dates from "../lib/dates.js";
+import type * as lib_dto from "../lib/dto.js";
+import type * as lib_errors from "../lib/errors.js";
+import type * as lib_money from "../lib/money.js";
+import type * as lib_tenancy from "../lib/tenancy.js";
+import type * as lib_validation from "../lib/validation.js";
+import type * as mapping_ads from "../mapping/ads.js";
+import type * as mapping_resolver from "../mapping/resolver.js";
+import type * as mapping_scope from "../mapping/scope.js";
+import type * as mapping_social from "../mapping/social.js";
+import type * as providers_capabilities from "../providers/capabilities.js";
+import type * as providers_errors from "../providers/errors.js";
+import type * as providers_google_capabilities from "../providers/google/capabilities.js";
+import type * as providers_google_carry from "../providers/google/carry.js";
+import type * as providers_google_client from "../providers/google/client.js";
+import type * as providers_google_config from "../providers/google/config.js";
+import type * as providers_google_credential from "../providers/google/credential.js";
+import type * as providers_google_cursor from "../providers/google/cursor.js";
+import type * as providers_google_errors from "../providers/google/errors.js";
+import type * as providers_google_gaql from "../providers/google/gaql.js";
+import type * as providers_google_index from "../providers/google/index.js";
+import type * as providers_google_mapping from "../providers/google/mapping.js";
+import type * as providers_google_normalize from "../providers/google/normalize.js";
+import type * as providers_google_oauth from "../providers/google/oauth.js";
+import type * as providers_google_route from "../providers/google/route.js";
+import type * as providers_google_schemas from "../providers/google/schemas.js";
+import type * as providers_google_semantics from "../providers/google/semantics.js";
+import type * as providers_hash from "../providers/hash.js";
+import type * as providers_index from "../providers/index.js";
+import type * as providers_instagram_capabilities from "../providers/instagram/capabilities.js";
+import type * as providers_instagram_config from "../providers/instagram/config.js";
+import type * as providers_instagram_credential from "../providers/instagram/credential.js";
+import type * as providers_instagram_cursor from "../providers/instagram/cursor.js";
+import type * as providers_instagram_discovery from "../providers/instagram/discovery.js";
+import type * as providers_instagram_errors from "../providers/instagram/errors.js";
+import type * as providers_instagram_graphReader from "../providers/instagram/graphReader.js";
+import type * as providers_instagram_mapping from "../providers/instagram/mapping.js";
+import type * as providers_instagram_node_provider from "../providers/instagram/node/provider.js";
+import type * as providers_instagram_node_sdk from "../providers/instagram/node/sdk.js";
+import type * as providers_instagram_oauth from "../providers/instagram/oauth.js";
+import type * as providers_instagram_schemas from "../providers/instagram/schemas.js";
+import type * as providers_instagram_semantics from "../providers/instagram/semantics.js";
+import type * as providers_instagram_transport from "../providers/instagram/transport.js";
+import type * as providers_meta_capabilities from "../providers/meta/capabilities.js";
+import type * as providers_meta_carry from "../providers/meta/carry.js";
+import type * as providers_meta_client from "../providers/meta/client.js";
+import type * as providers_meta_config from "../providers/meta/config.js";
+import type * as providers_meta_credential from "../providers/meta/credential.js";
+import type * as providers_meta_cursor from "../providers/meta/cursor.js";
+import type * as providers_meta_errors from "../providers/meta/errors.js";
+import type * as providers_meta_index from "../providers/meta/index.js";
+import type * as providers_meta_mapping from "../providers/meta/mapping.js";
+import type * as providers_meta_normalize from "../providers/meta/normalize.js";
+import type * as providers_meta_oauth from "../providers/meta/oauth.js";
+import type * as providers_meta_schemas from "../providers/meta/schemas.js";
+import type * as providers_meta_semantics from "../providers/meta/semantics.js";
+import type * as providers_mock_credential from "../providers/mock/credential.js";
+import type * as providers_mock_flavor from "../providers/mock/flavor.js";
+import type * as providers_mock_generator from "../providers/mock/generator.js";
+import type * as providers_mock_google from "../providers/mock/google.js";
+import type * as providers_mock_index from "../providers/mock/index.js";
+import type * as providers_mock_meta from "../providers/mock/meta.js";
+import type * as providers_mock_oauth from "../providers/mock/oauth.js";
+import type * as providers_mock_scenarios from "../providers/mock/scenarios.js";
+import type * as providers_mode from "../providers/mode.js";
+import type * as providers_oauth from "../providers/oauth.js";
+import type * as providers_pagination from "../providers/pagination.js";
+import type * as providers_registry from "../providers/registry.js";
+import type * as providers_social_capabilities from "../providers/social/capabilities.js";
+import type * as providers_social_mock_data from "../providers/social/mock/data.js";
+import type * as providers_social_mock_index from "../providers/social/mock/index.js";
+import type * as providers_social_nodeRegistry from "../providers/social/nodeRegistry.js";
+import type * as providers_social_types from "../providers/social/types.js";
+import type * as providers_social_unavailable from "../providers/social/unavailable.js";
+import type * as providers_social_validate from "../providers/social/validate.js";
+import type * as providers_types from "../providers/types.js";
+import type * as providers_unavailable from "../providers/unavailable.js";
+import type * as providers_validate from "../providers/validate.js";
+import type * as sync_admin from "../sync/admin.js";
+import type * as sync_config from "../sync/config.js";
+import type * as sync_guards from "../sync/guards.js";
+import type * as sync_plan from "../sync/plan.js";
+import type * as sync_planner from "../sync/planner.js";
+import type * as sync_policy from "../sync/policy.js";
+import type * as sync_resolver from "../sync/resolver.js";
+import type * as sync_runs from "../sync/runs.js";
+import type * as sync_socialPlan from "../sync/socialPlan.js";
+import type * as sync_socialWorker from "../sync/socialWorker.js";
+import type * as sync_state from "../sync/state.js";
+import type * as sync_subject from "../sync/subject.js";
+import type * as sync_upsert from "../sync/upsert.js";
+import type * as sync_validators from "../sync/validators.js";
+import type * as sync_worker from "../sync/worker.js";
+import type * as tables_ads from "../tables/ads.js";
+import type * as tables_analytics from "../tables/analytics.js";
+import type * as tables_common from "../tables/common.js";
+import type * as tables_connections from "../tables/connections.js";
+import type * as tables_metrics from "../tables/metrics.js";
+import type * as tables_social from "../tables/social.js";
+import type * as tables_sync from "../tables/sync.js";
+import type * as tables_tenancy from "../tables/tenancy.js";
+import type * as tenancy from "../tenancy.js";
+import type * as v1_adAccounts from "../v1/adAccounts.js";
+import type * as v1_analytics from "../v1/analytics.js";
+import type * as v1_audit from "../v1/audit.js";
+import type * as v1_connections from "../v1/connections.js";
+import type * as v1_dto_adAccount from "../v1/dto/adAccount.js";
+import type * as v1_dto_analytics from "../v1/dto/analytics.js";
+import type * as v1_dto_audit from "../v1/dto/audit.js";
+import type * as v1_dto_connection from "../v1/dto/connection.js";
+import type * as v1_dto_org from "../v1/dto/org.js";
+import type * as v1_dto_organicAnalytics from "../v1/dto/organicAnalytics.js";
+import type * as v1_dto_socialAccount from "../v1/dto/socialAccount.js";
+import type * as v1_dto_socialPost from "../v1/dto/socialPost.js";
+import type * as v1_organicAnalytics from "../v1/organicAnalytics.js";
+import type * as v1_orgs from "../v1/orgs.js";
+import type * as v1_socialAccounts from "../v1/socialAccounts.js";
+import type * as v1_socialPosts from "../v1/socialPosts.js";
+
+import type {
+  ApiFromModules,
+  FilterApi,
+  FunctionReference,
+} from "convex/server";
+
+declare const fullApi: ApiFromModules<{
+  "admin/fxRates": typeof admin_fxRates;
+  "admin/integrationApps": typeof admin_integrationApps;
+  "analytics/actions": typeof analytics_actions;
+  "analytics/aggregate": typeof analytics_aggregate;
+  "analytics/comparison": typeof analytics_comparison;
+  "analytics/config": typeof analytics_config;
+  "analytics/coverage": typeof analytics_coverage;
+  "analytics/fx": typeof analytics_fx;
+  "analytics/numeric": typeof analytics_numeric;
+  "analytics/organic/aggregate": typeof analytics_organic_aggregate;
+  "analytics/organic/budget": typeof analytics_organic_budget;
+  "analytics/organic/config": typeof analytics_organic_config;
+  "analytics/organic/dates": typeof analytics_organic_dates;
+  "analytics/organic/metrics": typeof analytics_organic_metrics;
+  "analytics/organic/queries": typeof analytics_organic_queries;
+  "analytics/periods": typeof analytics_periods;
+  "analytics/queries": typeof analytics_queries;
+  "analytics/reader": typeof analytics_reader;
+  "analytics/scope": typeof analytics_scope;
+  "connections/assets": typeof connections_assets;
+  "connections/config": typeof connections_config;
+  "connections/credentialStore": typeof connections_credentialStore;
+  "connections/lifecycle": typeof connections_lifecycle;
+  "connections/maintenance": typeof connections_maintenance;
+  "connections/oauthDiagnostics": typeof connections_oauthDiagnostics;
+  "connections/oauthFlow": typeof connections_oauthFlow;
+  "connections/oauthState": typeof connections_oauthState;
+  "connections/returnUrls": typeof connections_returnUrls;
+  "connections/socialAssets": typeof connections_socialAssets;
+  "connections/tokenRefresh": typeof connections_tokenRefresh;
+  crons: typeof crons;
+  "domain/identity": typeof domain_identity;
+  "domain/metrics": typeof domain_metrics;
+  "domain/types": typeof domain_types;
+  "domain/validators": typeof domain_validators;
+  health: typeof health;
+  http: typeof http;
+  "lib/audit": typeof lib_audit;
+  "lib/auth": typeof lib_auth;
+  "lib/authIssuers": typeof lib_authIssuers;
+  "lib/crypto": typeof lib_crypto;
+  "lib/dates": typeof lib_dates;
+  "lib/dto": typeof lib_dto;
+  "lib/errors": typeof lib_errors;
+  "lib/money": typeof lib_money;
+  "lib/tenancy": typeof lib_tenancy;
+  "lib/validation": typeof lib_validation;
+  "mapping/ads": typeof mapping_ads;
+  "mapping/resolver": typeof mapping_resolver;
+  "mapping/scope": typeof mapping_scope;
+  "mapping/social": typeof mapping_social;
+  "providers/capabilities": typeof providers_capabilities;
+  "providers/errors": typeof providers_errors;
+  "providers/google/capabilities": typeof providers_google_capabilities;
+  "providers/google/carry": typeof providers_google_carry;
+  "providers/google/client": typeof providers_google_client;
+  "providers/google/config": typeof providers_google_config;
+  "providers/google/credential": typeof providers_google_credential;
+  "providers/google/cursor": typeof providers_google_cursor;
+  "providers/google/errors": typeof providers_google_errors;
+  "providers/google/gaql": typeof providers_google_gaql;
+  "providers/google/index": typeof providers_google_index;
+  "providers/google/mapping": typeof providers_google_mapping;
+  "providers/google/normalize": typeof providers_google_normalize;
+  "providers/google/oauth": typeof providers_google_oauth;
+  "providers/google/route": typeof providers_google_route;
+  "providers/google/schemas": typeof providers_google_schemas;
+  "providers/google/semantics": typeof providers_google_semantics;
+  "providers/hash": typeof providers_hash;
+  "providers/index": typeof providers_index;
+  "providers/instagram/capabilities": typeof providers_instagram_capabilities;
+  "providers/instagram/config": typeof providers_instagram_config;
+  "providers/instagram/credential": typeof providers_instagram_credential;
+  "providers/instagram/cursor": typeof providers_instagram_cursor;
+  "providers/instagram/discovery": typeof providers_instagram_discovery;
+  "providers/instagram/errors": typeof providers_instagram_errors;
+  "providers/instagram/graphReader": typeof providers_instagram_graphReader;
+  "providers/instagram/mapping": typeof providers_instagram_mapping;
+  "providers/instagram/node/provider": typeof providers_instagram_node_provider;
+  "providers/instagram/node/sdk": typeof providers_instagram_node_sdk;
+  "providers/instagram/oauth": typeof providers_instagram_oauth;
+  "providers/instagram/schemas": typeof providers_instagram_schemas;
+  "providers/instagram/semantics": typeof providers_instagram_semantics;
+  "providers/instagram/transport": typeof providers_instagram_transport;
+  "providers/meta/capabilities": typeof providers_meta_capabilities;
+  "providers/meta/carry": typeof providers_meta_carry;
+  "providers/meta/client": typeof providers_meta_client;
+  "providers/meta/config": typeof providers_meta_config;
+  "providers/meta/credential": typeof providers_meta_credential;
+  "providers/meta/cursor": typeof providers_meta_cursor;
+  "providers/meta/errors": typeof providers_meta_errors;
+  "providers/meta/index": typeof providers_meta_index;
+  "providers/meta/mapping": typeof providers_meta_mapping;
+  "providers/meta/normalize": typeof providers_meta_normalize;
+  "providers/meta/oauth": typeof providers_meta_oauth;
+  "providers/meta/schemas": typeof providers_meta_schemas;
+  "providers/meta/semantics": typeof providers_meta_semantics;
+  "providers/mock/credential": typeof providers_mock_credential;
+  "providers/mock/flavor": typeof providers_mock_flavor;
+  "providers/mock/generator": typeof providers_mock_generator;
+  "providers/mock/google": typeof providers_mock_google;
+  "providers/mock/index": typeof providers_mock_index;
+  "providers/mock/meta": typeof providers_mock_meta;
+  "providers/mock/oauth": typeof providers_mock_oauth;
+  "providers/mock/scenarios": typeof providers_mock_scenarios;
+  "providers/mode": typeof providers_mode;
+  "providers/oauth": typeof providers_oauth;
+  "providers/pagination": typeof providers_pagination;
+  "providers/registry": typeof providers_registry;
+  "providers/social/capabilities": typeof providers_social_capabilities;
+  "providers/social/mock/data": typeof providers_social_mock_data;
+  "providers/social/mock/index": typeof providers_social_mock_index;
+  "providers/social/nodeRegistry": typeof providers_social_nodeRegistry;
+  "providers/social/types": typeof providers_social_types;
+  "providers/social/unavailable": typeof providers_social_unavailable;
+  "providers/social/validate": typeof providers_social_validate;
+  "providers/types": typeof providers_types;
+  "providers/unavailable": typeof providers_unavailable;
+  "providers/validate": typeof providers_validate;
+  "sync/admin": typeof sync_admin;
+  "sync/config": typeof sync_config;
+  "sync/guards": typeof sync_guards;
+  "sync/plan": typeof sync_plan;
+  "sync/planner": typeof sync_planner;
+  "sync/policy": typeof sync_policy;
+  "sync/resolver": typeof sync_resolver;
+  "sync/runs": typeof sync_runs;
+  "sync/socialPlan": typeof sync_socialPlan;
+  "sync/socialWorker": typeof sync_socialWorker;
+  "sync/state": typeof sync_state;
+  "sync/subject": typeof sync_subject;
+  "sync/upsert": typeof sync_upsert;
+  "sync/validators": typeof sync_validators;
+  "sync/worker": typeof sync_worker;
+  "tables/ads": typeof tables_ads;
+  "tables/analytics": typeof tables_analytics;
+  "tables/common": typeof tables_common;
+  "tables/connections": typeof tables_connections;
+  "tables/metrics": typeof tables_metrics;
+  "tables/social": typeof tables_social;
+  "tables/sync": typeof tables_sync;
+  "tables/tenancy": typeof tables_tenancy;
+  tenancy: typeof tenancy;
+  "v1/adAccounts": typeof v1_adAccounts;
+  "v1/analytics": typeof v1_analytics;
+  "v1/audit": typeof v1_audit;
+  "v1/connections": typeof v1_connections;
+  "v1/dto/adAccount": typeof v1_dto_adAccount;
+  "v1/dto/analytics": typeof v1_dto_analytics;
+  "v1/dto/audit": typeof v1_dto_audit;
+  "v1/dto/connection": typeof v1_dto_connection;
+  "v1/dto/org": typeof v1_dto_org;
+  "v1/dto/organicAnalytics": typeof v1_dto_organicAnalytics;
+  "v1/dto/socialAccount": typeof v1_dto_socialAccount;
+  "v1/dto/socialPost": typeof v1_dto_socialPost;
+  "v1/organicAnalytics": typeof v1_organicAnalytics;
+  "v1/orgs": typeof v1_orgs;
+  "v1/socialAccounts": typeof v1_socialAccounts;
+  "v1/socialPosts": typeof v1_socialPosts;
+}>;
+
+/**
+ * A utility for referencing Convex functions in your app's public API.
+ *
+ * Usage:
+ * ```js
+ * const myFunctionReference = api.myModule.myFunction;
+ * ```
+ */
+export declare const api: FilterApi<
+  typeof fullApi,
+  FunctionReference<any, "public">
+>;
+
+/**
+ * A utility for referencing Convex functions in your app's internal API.
+ *
+ * Usage:
+ * ```js
+ * const myFunctionReference = internal.myModule.myFunction;
+ * ```
+ */
+export declare const internal: FilterApi<
+  typeof fullApi,
+  FunctionReference<any, "internal">
+>;
+
+export declare const components: {};

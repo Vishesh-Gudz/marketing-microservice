@@ -1,0 +1,1650 @@
+import { v } from "convex/values";
+import { internal } from "../_generated/api";
+import type { Doc, Id } from "../_generated/dataModel";
+import { internalMutation, type MutationCtx } from "../_generated/server";
+import { providerRegistry } from "../connections/config";
+import { markConnectionNeedsReauth } from "../connections/lifecycle";
+import { AUDIT_ACTIONS, SYSTEM_SYNC_SUBJECT, writeAudit } from "../lib/audit";
+import { addDays, compareDateKeys, diffDays, todayIn, type DateKey } from "../lib/dates";
+import type { AuditChanges } from "../lib/validation";
+import {
+  accountScopeFromDoc,
+  orgScopeFromOrganization,
+  socialAccountScopeFromDoc,
+} from "../mapping/scope";
+import type { AdsProviderCapabilities } from "../providers/capabilities";
+import type {
+  ProviderSocialAccount,
+  ProviderSocialAccountDay,
+  ProviderSocialPost,
+  ProviderSocialPostSnapshot,
+} from "../providers/social/types";
+import type { ProviderAdAccount } from "../providers/types";
+import { SYNC_CADENCE, SYNC_LIMITS } from "./config";
+import {
+  checkPageShape,
+  checkRecordsInScope,
+  checkSocialRecordsInScope,
+  OPERATION_RECORD_KIND,
+  SOCIAL_OPERATION_RECORD_KIND,
+  socialMaxPageSize,
+} from "./guards";
+import {
+  isMetricOperation,
+  isStructureOperation,
+  mergeCoverage,
+  nextDueAt,
+  failureBackoffMs,
+  prunePlacements,
+  removalTableFor,
+  type RunPlan,
+  type SyncOperation,
+  type SyncRunKind,
+} from "./plan";
+import {
+  decideFailure,
+  isBlockingError,
+  retainBlockingError,
+  sanitizeFailure,
+  toSyncFailure,
+  type SyncFailure,
+} from "./policy";
+import type { SocialRunPlan } from "./socialPlan";
+import { findSocialSyncAccount, findSyncAccount, findSyncAccountForSubject } from "./state";
+import {
+  isAdOperation,
+  isPreflightOperation,
+  isSocialOperation,
+  operationMatchesSubject,
+  sameSubject,
+  subjectFields,
+  subjectId,
+  subjectOf,
+  subjectOfAccount,
+  subjectTargetType,
+  SyncSubjectInvariantError,
+  type SubjectAccount,
+  type SyncSubject,
+} from "./subject";
+import {
+  accountDrift,
+  addCounts,
+  emptyCounts,
+  markRemovedBatch,
+  markRemovedSocialPostsBatch,
+  pruneMetricsBatch,
+  refreshAdAccount,
+  refreshSocialAccount,
+  socialAccountDrift,
+  writeEntityPage,
+  writeMetricPage,
+  writeSocialAccountDayPage,
+  writeSocialPostPage,
+  writeSocialSnapshotPage,
+  type EntityPage,
+  type MetricPage,
+  type PruneCursor,
+  type RemovalCursor,
+  type SocialRemovalCursor,
+  type SyncCounts,
+} from "./upsert";
+import {
+  claimResultValidator,
+  commitResultValidator,
+  failureValidator,
+  providerPageValidator,
+  socialPageValidator,
+  type ClaimResult,
+} from "./validators";
+
+/**
+ * Run/task state machine. Every transition is a mutation, so checkpoints,
+ * canonical writes and the scheduling of the next step commit atomically.
+ *
+ *   run:  queued -> running -> succeeded | partial | failed | cancelled
+ *   task: queued -> running -> (queued: next page / retry) -> succeeded | failed | skipped | cancelled
+ *         fetch phase (worker action, one page per claim) -> finalize phase (DB-only mutation)
+ *
+ * Tenant identity comes ONLY from stored rows (task -> run -> account ->
+ * connection); every hop is checked to belong to the same org.
+ *
+ * Phase 10: a run's subject is an ad account OR an organic social account (subject.ts).
+ * Ad subjects behave exactly as in Phase 5; social subjects share the run/task/lease/
+ * checkpoint machinery, are executed by the "use node" social worker, and (Stage B) commit
+ * their pages through commitSocialPage (never commitPage): guards, the social writers of
+ * upsert.ts, the incremental early stop, explicit listing/snapshot truncation, bounded post
+ * removal (finalize), account-type drift and social coverage (account-metric windows).
+ */
+
+type Ctx = Pick<MutationCtx, "db" | "scheduler">;
+type SyncError = NonNullable<Doc<"syncRuns">["error"]>;
+
+const ACTIVE_RUN = new Set(["queued", "running"]);
+const TERMINAL_TASK = new Set(["succeeded", "failed", "skipped", "cancelled"]);
+
+class TenantInvariantError extends Error {
+  constructor() {
+    super("Sync rows belong to different organizations");
+    this.name = "TenantInvariantError";
+  }
+}
+
+type LoadedBase = {
+  task: Doc<"syncTasks">;
+  run: Doc<"syncRuns">;
+  syncAccount: Doc<"syncAccounts">;
+};
+
+export type Loaded =
+  | (LoadedBase & { kind: "ad"; account: Doc<"adAccounts"> })
+  | (LoadedBase & { kind: "social"; account: Doc<"socialAccounts"> });
+
+/**
+ * Loads task -> run -> account -> sync state, verifying they share one org and name the
+ * SAME single subject (an ad task never runs against a social account, or vice versa).
+ */
+export async function loadTask(ctx: Ctx, taskId: Id<"syncTasks">): Promise<Loaded | null> {
+  const task = await ctx.db.get(taskId);
+  if (task === null) return null;
+  const run = await ctx.db.get(task.runId);
+  if (run === null) return null;
+  const subject = subjectOf(run);
+  if (!operationMatchesSubject(subject.kind, task.operation)) {
+    throw new SyncSubjectInvariantError();
+  }
+  if (subject.kind === "ad") {
+    const account = await ctx.db.get(subject.adAccountId);
+    if (account === null) return null;
+    if (
+      run.orgId !== task.orgId ||
+      !sameSubject(subject, subjectOf(task)) ||
+      account.orgId !== run.orgId
+    ) {
+      throw new TenantInvariantError();
+    }
+    const syncAccount = await findSyncAccount(ctx.db, run.orgId, subject.adAccountId);
+    if (syncAccount === null) return null;
+    return { kind: "ad", task, run, account, syncAccount };
+  }
+  const account = await ctx.db.get(subject.socialAccountId);
+  if (account === null) return null;
+  if (
+    run.orgId !== task.orgId ||
+    !sameSubject(subject, subjectOf(task)) ||
+    account.orgId !== run.orgId
+  ) {
+    throw new TenantInvariantError();
+  }
+  const syncAccount = await findSocialSyncAccount(ctx.db, run.orgId, subject.socialAccountId);
+  if (syncAccount === null) return null;
+  return { kind: "social", task, run, account, syncAccount };
+}
+
+type Linkage = "account_unlinked" | "account_relinked" | "connection_inactive";
+
+/** Why a run can no longer use its pinned connection (undefined = still valid). */
+async function linkageProblem(
+  ctx: Ctx,
+  run: Doc<"syncRuns">,
+  account: { connectionId?: Id<"connections"> },
+): Promise<{ problem?: Linkage; connection?: Doc<"connections"> }> {
+  if (account.connectionId === undefined) return { problem: "account_unlinked" };
+  if (account.connectionId !== run.connectionId) return { problem: "account_relinked" };
+  const connection = await ctx.db.get(run.connectionId);
+  if (connection === null || connection.orgId !== run.orgId || connection.status !== "active") {
+    return { problem: "connection_inactive" };
+  }
+  return { connection };
+}
+
+function capabilitiesOf(platform: Doc<"adAccounts">["platform"]): AdsProviderCapabilities {
+  return providerRegistry().ads(platform).capabilities;
+}
+
+async function runTasks(ctx: Ctx, run: Doc<"syncRuns">): Promise<Doc<"syncTasks">[]> {
+  return await ctx.db
+    .query("syncTasks")
+    .withIndex("by_org_run_seq", (q) => q.eq("orgId", run.orgId).eq("runId", run._id))
+    .take(SYNC_LIMITS.maxTasksPerRun + 1);
+}
+
+async function setLease(ctx: Ctx, syncAccount: Doc<"syncAccounts">, until: number, now: number) {
+  await ctx.db.patch(syncAccount._id, { leaseExpiresAt: until, nextPlanAt: until, updatedAt: now });
+}
+
+/**
+ * The worker action of a subject: the default-runtime ads worker, or the "use node" social
+ * worker (Phase 10: the SDK-backed social provider may only run in Node).
+ */
+function workerFor(row: {
+  adAccountId?: Id<"adAccounts">;
+  socialAccountId?: Id<"socialAccounts">;
+}) {
+  return subjectOf(row).kind === "social"
+    ? internal.sync.socialWorker.runTask
+    : internal.sync.worker.runTask;
+}
+
+/** Schedules the step that continues `task`: a worker action (fetch) or a finalize mutation. */
+async function scheduleTask(ctx: Ctx, task: Doc<"syncTasks">, delayMs: number) {
+  if (task.phase === "finalize") {
+    await ctx.scheduler.runAfter(delayMs, internal.sync.runs.finalizeTask, {
+      taskId: task._id,
+      claimSeq: task.claimSeq,
+    });
+  } else {
+    await ctx.scheduler.runAfter(delayMs, workerFor(task), { taskId: task._id });
+  }
+}
+
+async function writeSyncAudit(
+  ctx: Ctx,
+  orgId: Id<"organizations">,
+  action: string,
+  subject: SyncSubject,
+  changes?: AuditChanges,
+) {
+  const org = await ctx.db.get(orgId);
+  await writeAudit(
+    ctx.db,
+    { orgId, issuer: org?.issuer ?? "", subject: SYSTEM_SYNC_SUBJECT },
+    {
+      action,
+      targetType: subjectTargetType(subject),
+      targetId: subjectId(subject),
+      ...(changes ? { changes } : {}),
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Run creation
+// ---------------------------------------------------------------------------
+
+function newTaskFields(now: number) {
+  return {
+    phase: "fetch" as const,
+    status: "queued" as const,
+    pages: 0,
+    emptyPagesInRow: 0,
+    records: 0,
+    attempt: 1,
+    pageTransientFailures: 0,
+    totalAttempts: 0,
+    rateLimitHits: 0,
+    staleRecoveries: 0,
+    restartedFromScratch: false,
+    claimSeq: 0,
+    counts: emptyCounts(),
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+/** The subject's runs, newest first (org-scoped subject index). */
+function subjectRunsNewestFirst(ctx: Ctx, orgId: Id<"organizations">, subject: SyncSubject) {
+  return subject.kind === "ad"
+    ? ctx.db
+        .query("syncRuns")
+        .withIndex("by_org_account_created", (q) =>
+          q.eq("orgId", orgId).eq("adAccountId", subject.adAccountId),
+        )
+        .order("desc")
+    : ctx.db
+        .query("syncRuns")
+        .withIndex("by_org_social_account_created", (q) =>
+          q.eq("orgId", orgId).eq("socialAccountId", subject.socialAccountId),
+        )
+        .order("desc");
+}
+
+/** Deletes the oldest runs (and their tasks) beyond the per-account retention. */
+async function applyRetention(ctx: Ctx, orgId: Id<"organizations">, subject: SyncSubject) {
+  const keep = SYNC_LIMITS.runsKeptPerAccount - 1; // the run about to be created is the newest
+  const recent = await subjectRunsNewestFirst(ctx, orgId, subject).take(
+    keep + SYNC_LIMITS.runsDeletedPerCreate,
+  );
+  for (const old of recent.slice(keep)) {
+    if (ACTIVE_RUN.has(old.status)) continue;
+    const tasks = await ctx.db
+      .query("syncTasks")
+      .withIndex("by_org_run_seq", (q) => q.eq("orgId", orgId).eq("runId", old._id))
+      .take(SYNC_LIMITS.maxTasksPerRun + 1);
+    for (const task of tasks) await ctx.db.delete(task._id);
+    await ctx.db.delete(old._id);
+  }
+}
+
+/**
+ * Creates a run and ALL its tasks, takes the account lease and schedules the
+ * first task, in one transaction. The account lease (activeRunId) makes a
+ * second concurrent creation impossible: concurrent planners conflict on the
+ * syncAccounts row and one retries, then sees the active run.
+ */
+export async function createRun(
+  ctx: Ctx,
+  input: {
+    syncAccount: Doc<"syncAccounts">;
+    account: Doc<"adAccounts">;
+    connection: Doc<"connections">;
+    plan: RunPlan;
+    trigger: Doc<"syncRuns">["trigger"];
+    now: number;
+  },
+): Promise<{ runId: Id<"syncRuns">; created: boolean }> {
+  const { account, ...rest } = input;
+  return await createSubjectRun(ctx, {
+    ...rest,
+    subject: { kind: "ad", account },
+    providerId: providerRegistry().ads(account.platform).providerId,
+  });
+}
+
+/** Phase 10: the same run creation for an organic social account. */
+export async function createSocialRun(
+  ctx: Ctx,
+  input: {
+    syncAccount: Doc<"syncAccounts">;
+    account: Doc<"socialAccounts">;
+    connection: Doc<"connections">;
+    plan: SocialRunPlan;
+    trigger: Doc<"syncRuns">["trigger"];
+    now: number;
+  },
+): Promise<{ runId: Id<"syncRuns">; created: boolean }> {
+  const { account, ...rest } = input;
+  // The connection must be the social account's own platform connection (Instagram Login).
+  if (input.connection.provider !== account.platform) throw new SyncSubjectInvariantError();
+  return await createSubjectRun(ctx, {
+    ...rest,
+    subject: { kind: "social", account },
+    providerId: providerRegistry().socialProviderId(account.platform),
+  });
+}
+
+type AnyTaskSpec = RunPlan["tasks"][number] | SocialRunPlan["tasks"][number];
+
+async function createSubjectRun(
+  ctx: Ctx,
+  input: {
+    syncAccount: Doc<"syncAccounts">;
+    subject: SubjectAccount;
+    connection: Doc<"connections">;
+    plan: RunPlan | SocialRunPlan;
+    providerId: string;
+    trigger: Doc<"syncRuns">["trigger"];
+    now: number;
+  },
+): Promise<{ runId: Id<"syncRuns">; created: boolean }> {
+  const { syncAccount, connection, plan, now } = input;
+  const account = input.subject.account;
+  const subject = subjectOfAccount(input.subject);
+  if (
+    syncAccount.orgId !== account.orgId ||
+    connection.orgId !== account.orgId ||
+    !sameSubject(subjectOf(syncAccount), subject) ||
+    account.connectionId !== connection._id
+  ) {
+    throw new TenantInvariantError();
+  }
+  const specs: AnyTaskSpec[] = plan.tasks;
+  if (specs.some((spec) => !operationMatchesSubject(subject.kind, spec.operation))) {
+    throw new SyncSubjectInvariantError();
+  }
+  if (syncAccount.activeRunId !== undefined) {
+    const active = await ctx.db.get(syncAccount.activeRunId);
+    if (active !== null && ACTIVE_RUN.has(active.status)) {
+      return { runId: active._id, created: false };
+    }
+  }
+
+  const slot = Math.floor(now / (SYNC_CADENCE.plannerIntervalMinutes * 60_000));
+  const idempotencyKey = `${plan.kind}:${plan.window?.from ?? "-"}:${plan.window?.to ?? "-"}:${slot}`;
+  // Same kind + window in the same planner slot already ran (or runs): don't repeat it.
+  // Cancelled/failed runs don't count, so a relink or reconnect can retry immediately.
+  const sameSlot = await (subject.kind === "ad"
+    ? ctx.db
+        .query("syncRuns")
+        .withIndex("by_org_account_key", (q) =>
+          q
+            .eq("orgId", account.orgId)
+            .eq("adAccountId", subject.adAccountId)
+            .eq("idempotencyKey", idempotencyKey),
+        )
+        .take(10)
+    : ctx.db
+        .query("syncRuns")
+        .withIndex("by_org_social_account_key", (q) =>
+          q
+            .eq("orgId", account.orgId)
+            .eq("socialAccountId", subject.socialAccountId)
+            .eq("idempotencyKey", idempotencyKey),
+        )
+        .take(10));
+  const duplicate = sameSlot.find((r) => r.status !== "cancelled" && r.status !== "failed");
+  if (duplicate !== undefined) return { runId: duplicate._id, created: false };
+
+  await applyRetention(ctx, account.orgId, subject);
+
+  const runId = await ctx.db.insert("syncRuns", {
+    orgId: account.orgId,
+    ...subjectFields(subject),
+    connectionId: connection._id,
+    platform: account.platform,
+    providerId: input.providerId,
+    kind: plan.kind,
+    trigger: input.trigger,
+    status: "queued",
+    ...(plan.window ? { window: plan.window } : {}),
+    structureMode: plan.structureMode,
+    ...("updatedSince" in plan && plan.updatedSince !== undefined
+      ? { updatedSince: plan.updatedSince }
+      : {}),
+    idempotencyKey,
+    taskCount: plan.tasks.length,
+    tasksSucceeded: 0,
+    tasksFailed: 0,
+    tasksSkipped: 0,
+    counts: emptyCounts(),
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  let firstTaskId: Id<"syncTasks"> | undefined;
+  for (const [seq, spec] of specs.entries()) {
+    const taskId = await ctx.db.insert("syncTasks", {
+      orgId: account.orgId,
+      runId,
+      ...subjectFields(subject),
+      seq,
+      operation: spec.operation,
+      ...("level" in spec && spec.level !== undefined ? { level: spec.level } : {}),
+      ...(spec.from !== undefined ? { from: spec.from } : {}),
+      ...(spec.to !== undefined ? { to: spec.to } : {}),
+      ...("breakdown" in spec && spec.breakdown !== undefined ? { breakdown: spec.breakdown } : {}),
+      ...("updatedSince" in spec && spec.updatedSince !== undefined
+        ? { updatedSince: spec.updatedSince }
+        : {}),
+      fullListing: spec.fullListing,
+      ...newTaskFields(now),
+    });
+    firstTaskId ??= taskId;
+  }
+
+  await ctx.db.patch(syncAccount._id, {
+    state: "running",
+    activeRunId: runId,
+    leaseExpiresAt: now + SYNC_LIMITS.taskLeaseMs,
+    nextPlanAt: now + SYNC_LIMITS.taskLeaseMs,
+    updatedAt: now,
+  });
+  await ctx.scheduler.runAfter(0, workerFor(subjectFields(subject)), { taskId: firstTaskId! });
+  return { runId, created: true };
+}
+
+// ---------------------------------------------------------------------------
+// Run completion / cancellation
+// ---------------------------------------------------------------------------
+
+async function cancelOpenTasks(ctx: Ctx, run: Doc<"syncRuns">, now: number) {
+  for (const task of await runTasks(ctx, run)) {
+    if (!TERMINAL_TASK.has(task.status)) {
+      await ctx.db.patch(task._id, {
+        status: "cancelled",
+        leaseExpiresAt: undefined,
+        nextAttemptAt: undefined,
+        finishedAt: now,
+        updatedAt: now,
+      });
+    }
+  }
+}
+
+type CancelReason = NonNullable<Doc<"syncRuns">["cancelReason"]>;
+
+/** Cancels an active run; nothing it fetches afterwards can be committed. */
+export async function cancelRun(
+  ctx: Ctx,
+  run: Doc<"syncRuns">,
+  reason: CancelReason,
+  now: number,
+): Promise<void> {
+  if (!ACTIVE_RUN.has(run.status)) return;
+  await cancelOpenTasks(ctx, run, now);
+  await ctx.db.patch(run._id, {
+    status: "cancelled",
+    cancelReason: reason,
+    finishedAt: now,
+    updatedAt: now,
+  });
+  const syncAccount = await findSyncAccountForSubject(ctx.db, run.orgId, subjectOf(run));
+  if (syncAccount === null || syncAccount.activeRunId !== run._id) return;
+
+  const base = {
+    activeRunId: undefined,
+    leaseExpiresAt: undefined,
+    lastRunId: run._id,
+    updatedAt: now,
+  };
+  // A cancellation never overwrites a blocking reason (retainBlockingError); the
+  // account stays "blocked" until a successful run clears it (audited).
+  const settle = (incoming: SyncError | undefined) => {
+    const lastError =
+      incoming === undefined
+        ? syncAccount.lastError
+        : retainBlockingError(syncAccount.lastError, incoming);
+    return {
+      state: isBlockingError(lastError) ? ("blocked" as const) : ("idle" as const),
+      lastError,
+    };
+  };
+  switch (reason) {
+    case "account_unlinked":
+      await ctx.db.patch(syncAccount._id, { ...base, state: "parked", nextPlanAt: undefined });
+      break;
+    case "connection_inactive":
+      await ctx.db.patch(syncAccount._id, {
+        ...base,
+        ...settle(sanitizeFailure({ kind: "connection_inactive" }, now)),
+        nextPlanAt: now + SYNC_LIMITS.inactiveRecheckMs,
+      });
+      break;
+    case "timeout": {
+      const failures = syncAccount.consecutiveFailures + 1;
+      await ctx.db.patch(syncAccount._id, {
+        ...base,
+        ...settle(sanitizeFailure({ kind: "internal" }, now)),
+        consecutiveFailures: failures,
+        nextPlanAt: now + failureBackoffMs(failures),
+      });
+      break;
+    }
+    default:
+      await ctx.db.patch(syncAccount._id, { ...base, ...settle(undefined), nextPlanAt: now });
+  }
+}
+
+/**
+ * Metric windows whose every task succeeded WITHOUT unresolved or rejected
+ * records (coverage only grows for complete windows). A skipped record means a
+ * missing row inside the window would not mean "no delivery", so such a window
+ * must not be covered; the next run (structure is stale) covers it.
+ */
+function completedWindows(tasks: Doc<"syncTasks">[]) {
+  const byWindow = new Map<string, { from: string; to: string; ok: boolean }>();
+  for (const task of tasks) {
+    const operation = task.operation;
+    // Ad metric windows (Phase 5) and, Phase 10 Stage B, social account-metric windows
+    // (UTC days). Post snapshots are never coverage.
+    const coverageTask = isAdOperation(operation)
+      ? isMetricOperation(operation)
+      : operation === "fetchAccountMetrics";
+    if (!coverageTask || task.from === undefined || task.to === undefined) {
+      continue;
+    }
+    const key = `${task.from}|${task.to}`;
+    const entry = byWindow.get(key) ?? { from: task.from, to: task.to, ok: true };
+    entry.ok &&= task.status === "succeeded" && task.counts.unresolved + task.counts.rejected === 0;
+    byWindow.set(key, entry);
+  }
+  return [...byWindow.values()].filter((w) => w.ok).map(({ from, to }) => ({ from, to }));
+}
+
+/**
+ * Finishes a run once no task is left, computes its status, and moves the
+ * account's schedule, structure freshness and coverage forward.
+ */
+async function completeRun(
+  ctx: Ctx,
+  run: Doc<"syncRuns">,
+  now: number,
+  override?: { status: "failed"; error: SyncError; accountPatch?: Partial<Doc<"syncAccounts">> },
+): Promise<void> {
+  const tasks = await runTasks(ctx, run);
+  const failed = tasks.filter((t) => t.status === "failed");
+  const skipped = tasks.filter((t) => t.status === "skipped");
+  const preflightFailed = tasks.some(
+    (t) => isPreflightOperation(t.operation) && t.status !== "succeeded",
+  );
+  const warning = tasks.find((t) => t.status === "succeeded" && t.lastError !== undefined);
+  const unresolved = run.counts.unresolved + run.counts.rejected > 0;
+
+  const status: Doc<"syncRuns">["status"] =
+    override?.status ??
+    (preflightFailed || (failed.length > 0 && failed.length === tasks.length - skipped.length)
+      ? "failed"
+      : failed.length > 0 || unresolved || warning !== undefined
+        ? "partial"
+        : "succeeded");
+  const error: SyncError | undefined =
+    override?.error ?? failed[0]?.lastError ?? warning?.lastError;
+
+  await ctx.db.patch(run._id, {
+    status,
+    ...(error !== undefined ? { error } : {}),
+    tasksFailed: failed.length,
+    tasksSkipped: skipped.length,
+    tasksSucceeded: tasks.filter((t) => t.status === "succeeded").length,
+    finishedAt: now,
+    updatedAt: now,
+  });
+
+  const runSubject = subjectOf(run);
+  const syncAccount = await findSyncAccountForSubject(ctx.db, run.orgId, runSubject);
+  if (syncAccount === null || syncAccount.activeRunId !== run._id) return;
+  const base = {
+    activeRunId: undefined,
+    leaseExpiresAt: undefined,
+    lastRunId: run._id,
+    updatedAt: now,
+  };
+
+  if (status === "failed") {
+    const failures = syncAccount.consecutiveFailures + 1;
+    // A non-blocking failure keeps an existing blocking reason (and the blocked state);
+    // a new blocking reason (blockAccount) replaces it via accountPatch.
+    const lastError =
+      error === undefined
+        ? syncAccount.lastError
+        : retainBlockingError(syncAccount.lastError, error);
+    await ctx.db.patch(syncAccount._id, {
+      ...base,
+      state: isBlockingError(lastError) ? "blocked" : "idle",
+      consecutiveFailures: failures,
+      lastError,
+      nextPlanAt: Math.max(nextDueAt(syncAccount, now), now + failureBackoffMs(failures)),
+      ...override?.accountPatch,
+    });
+    return;
+  }
+
+  // Succeeded or partial: the account is healthy enough to advance its schedule. This is
+  // the ONLY place a blocking reason is cleared, and it is audited.
+  if (syncAccount.lastError !== undefined && isBlockingError(syncAccount.lastError)) {
+    await writeSyncAudit(ctx, run.orgId, AUDIT_ACTIONS.syncAccountUnblocked, runSubject, {
+      reason: { from: syncAccount.lastError.kind, to: null },
+    });
+  }
+
+  const structureTasks = tasks.filter((t) => {
+    const operation = t.operation;
+    return isAdOperation(operation) && isStructureOperation(operation);
+  });
+  const structureOk =
+    structureTasks.length > 0 && structureTasks.every((t) => t.status === "succeeded");
+  const structureStartedAt = Math.min(...structureTasks.map((t) => t.fetchStartedAt ?? now), now);
+  const windows = completedWindows(tasks);
+  const coverage = mergeCoverage(
+    syncAccount.coveredFrom !== undefined && syncAccount.coveredThrough !== undefined
+      ? { from: syncAccount.coveredFrom, through: syncAccount.coveredThrough }
+      : undefined,
+    windows,
+  );
+  // Phase 8 (D34c): a backfill that ends partial WITHOUT completing any window made no
+  // progress (e.g. a deterministic metric-task failure or unresolved rows). Back off like a
+  // failed run instead of re-planning the same window at every planner tick.
+  const stalledBackfill = run.kind === "backfill" && status === "partial" && windows.length === 0;
+  const failures = stalledBackfill ? syncAccount.consecutiveFailures + 1 : 0;
+
+  const schedule: Partial<Doc<"syncAccounts">> = {};
+  const kind: SyncRunKind = run.kind;
+  if (kind === "initial") {
+    schedule.initialDoneAt = now;
+    schedule.nextIncrementalAt = now + SYNC_CADENCE.incrementalIntervalMs;
+    schedule.nextLookbackAt = now + SYNC_CADENCE.lookbackIntervalMs;
+  } else if (kind === "incremental") {
+    schedule.nextIncrementalAt = now + SYNC_CADENCE.incrementalIntervalMs;
+  } else if (kind === "lookback") {
+    schedule.nextLookbackAt = now + SYNC_CADENCE.lookbackIntervalMs;
+    schedule.nextIncrementalAt = now + SYNC_CADENCE.incrementalIntervalMs;
+  }
+
+  // Phase 10: a social account's backfill horizon follows the platform's retention (today's
+  // UTC day minus the horizon), so an aged-out gap never keeps a backfill pending forever.
+  if (runSubject.kind === "social") {
+    const horizon = socialHorizon(run.platform, now);
+    if (compareDateKeys(horizon, syncAccount.backfillHorizon) > 0) {
+      schedule.backfillHorizon = horizon;
+    }
+  }
+
+  const next = {
+    ...syncAccount,
+    ...schedule,
+    structureStale: unresolved
+      ? true
+      : structureOk && run.structureMode === "full"
+        ? false
+        : syncAccount.structureStale,
+    ...(coverage ? { coveredFrom: coverage.from, coveredThrough: coverage.through } : {}),
+  };
+
+  await ctx.db.patch(syncAccount._id, {
+    ...base,
+    ...schedule,
+    state: "idle",
+    consecutiveFailures: failures,
+    lastSuccessAt: now,
+    lastError: error,
+    structureStale: next.structureStale,
+    ...(structureOk ? { lastStructureStartedAt: structureStartedAt } : {}),
+    ...(structureOk && run.structureMode === "full" ? { lastFullStructureAt: now } : {}),
+    ...(coverage ? { coveredFrom: coverage.from, coveredThrough: coverage.through } : {}),
+    nextPlanAt: stalledBackfill
+      ? Math.max(nextDueAt(next, now), now + failureBackoffMs(failures))
+      : nextDueAt(next, now),
+  });
+}
+
+/** Oldest UTC day a social platform still reports account metrics for (capabilities). */
+function socialHorizon(platform: Doc<"syncRuns">["platform"], now: number): DateKey {
+  const capabilities = providerRegistry().socialCapabilities(
+    platform as Doc<"socialAccounts">["platform"],
+  );
+  return addDays(todayIn("UTC", now), -(capabilities.accountMetricsHorizonDays - 1));
+}
+
+/** Schedules the next queued task, or completes the run. */
+async function advanceRun(ctx: Ctx, runId: Id<"syncRuns">, now: number): Promise<void> {
+  const run = await ctx.db.get(runId);
+  if (run === null || !ACTIVE_RUN.has(run.status)) return;
+  const tasks = await runTasks(ctx, run);
+  const next = tasks.find((t) => t.status === "queued");
+  if (next !== undefined) {
+    await scheduleTask(ctx, next, 0);
+    const syncAccount = await findSyncAccountForSubject(ctx.db, run.orgId, subjectOf(run));
+    if (syncAccount !== null) await setLease(ctx, syncAccount, now + SYNC_LIMITS.taskLeaseMs, now);
+    return;
+  }
+  await completeRun(ctx, run, now);
+}
+
+async function finishTask(
+  ctx: Ctx,
+  task: Doc<"syncTasks">,
+  status: "succeeded" | "failed" | "skipped",
+  now: number,
+  error?: SyncError,
+): Promise<void> {
+  await ctx.db.patch(task._id, {
+    status,
+    ...(error !== undefined ? { lastError: error } : {}),
+    leaseExpiresAt: undefined,
+    nextAttemptAt: undefined,
+    finishedAt: now,
+    updatedAt: now,
+  });
+  await advanceRun(ctx, task.runId, now);
+}
+
+/** Ends the run as failed now (fatal task failure): open tasks are cancelled. */
+async function failRun(
+  ctx: Ctx,
+  loaded: Loaded,
+  error: SyncError,
+  now: number,
+  accountPatch?: Partial<Doc<"syncAccounts">>,
+): Promise<void> {
+  await ctx.db.patch(loaded.task._id, {
+    status: "failed",
+    lastError: error,
+    leaseExpiresAt: undefined,
+    nextAttemptAt: undefined,
+    finishedAt: now,
+    updatedAt: now,
+  });
+  await cancelOpenTasks(ctx, loaded.run, now);
+  const run = (await ctx.db.get(loaded.run._id))!;
+  await completeRun(ctx, run, now, {
+    status: "failed",
+    error,
+    ...(accountPatch ? { accountPatch } : {}),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Failure handling
+// ---------------------------------------------------------------------------
+
+/** Provider `auth`: connection -> needs_reauth, this run fails, sibling runs are cancelled. */
+async function handleAuthFailure(ctx: Ctx, loaded: Loaded, error: SyncError, now: number) {
+  const { run } = loaded;
+  await markConnectionNeedsReauth(
+    ctx.db,
+    run.connectionId,
+    "provider_auth_error",
+    SYSTEM_SYNC_SUBJECT,
+  );
+  await failRun(ctx, loaded, error, now, {
+    nextPlanAt: now + SYNC_LIMITS.inactiveRecheckMs,
+    consecutiveFailures: loaded.syncAccount.consecutiveFailures,
+  });
+
+  // Every other account (ad or social) synced through the same connection stops too.
+  const runSubject = subjectOf(run);
+  const cancelActive = async (state: Doc<"syncAccounts"> | null) => {
+    if (state?.activeRunId === undefined) return;
+    const active = await ctx.db.get(state.activeRunId);
+    if (active !== null && active.orgId === run.orgId) {
+      await cancelRun(ctx, active, "connection_inactive", now);
+    }
+  };
+  const siblings = await ctx.db
+    .query("adAccounts")
+    .withIndex("by_org_connection", (q) =>
+      q.eq("orgId", run.orgId).eq("connectionId", run.connectionId),
+    )
+    .take(500);
+  for (const sibling of siblings) {
+    if (runSubject.kind === "ad" && sibling._id === runSubject.adAccountId) continue;
+    await cancelActive(await findSyncAccount(ctx.db, run.orgId, sibling._id));
+  }
+  const socialSiblings = await ctx.db
+    .query("socialAccounts")
+    .withIndex("by_org_connection", (q) =>
+      q.eq("orgId", run.orgId).eq("connectionId", run.connectionId),
+    )
+    .take(500);
+  for (const sibling of socialSiblings) {
+    if (runSubject.kind === "social" && sibling._id === runSubject.socialAccountId) continue;
+    await cancelActive(await findSocialSyncAccount(ctx.db, run.orgId, sibling._id));
+  }
+}
+
+/** permission / not_found / account drift: only THIS account is blocked (rechecked in 24 h). */
+async function blockAccount(ctx: Ctx, loaded: Loaded, error: SyncError, now: number) {
+  const previous = loaded.syncAccount.lastError?.kind;
+  await failRun(ctx, loaded, error, now, {
+    state: "blocked",
+    lastError: error,
+    nextPlanAt: now + SYNC_LIMITS.blockedRecheckMs,
+    consecutiveFailures: loaded.syncAccount.consecutiveFailures,
+  });
+  if (previous !== error.kind) {
+    await writeSyncAudit(
+      ctx,
+      loaded.run.orgId,
+      AUDIT_ACTIONS.syncAccountBlocked,
+      subjectOf(loaded.run),
+      {
+        reason: { from: null, to: error.kind },
+      },
+    );
+  }
+}
+
+/** Applies the retry/error policy to a failed page of a RUNNING task. */
+async function applyFailure(ctx: Ctx, loaded: Loaded, failure: SyncFailure, now: number) {
+  const { task } = loaded;
+  const decision = decideFailure(
+    failure,
+    {
+      attempt: task.attempt,
+      pageTransientFailures: task.pageTransientFailures,
+      rateLimitHits: task.rateLimitHits,
+      hasCursor: task.cursor !== undefined,
+      restartedFromScratch: task.restartedFromScratch,
+    },
+    task._id,
+  );
+  const error = sanitizeFailure(failure, now);
+
+  switch (decision.action) {
+    case "retry": {
+      const updated = {
+        status: "queued" as const,
+        attempt: task.attempt + 1,
+        pageTransientFailures: task.pageTransientFailures + (decision.transient ? 1 : 0),
+        rateLimitHits: task.rateLimitHits + (decision.throttle ? 1 : 0),
+        nextAttemptAt: now + decision.delayMs,
+        leaseExpiresAt: undefined,
+        lastError: error,
+        updatedAt: now,
+      };
+      await ctx.db.patch(task._id, updated);
+      await ctx.scheduler.runAfter(decision.delayMs, workerFor(task), {
+        taskId: task._id,
+      });
+      await ctx.db.patch(loaded.syncAccount._id, {
+        ...(decision.throttle ? { throttledUntil: now + decision.delayMs } : {}),
+        leaseExpiresAt: now + decision.delayMs + SYNC_LIMITS.taskLeaseMs,
+        nextPlanAt: now + decision.delayMs + SYNC_LIMITS.taskLeaseMs,
+        updatedAt: now,
+      });
+      return;
+    }
+    case "restart":
+      await ctx.db.patch(task._id, {
+        status: "queued",
+        cursor: undefined,
+        previousCursor: undefined,
+        cursorSavedAt: undefined,
+        fetchStartedAt: undefined,
+        restartedFromScratch: true,
+        emptyPagesInRow: 0,
+        attempt: 1,
+        pageTransientFailures: 0,
+        leaseExpiresAt: undefined,
+        lastError: error,
+        updatedAt: now,
+      });
+      await ctx.scheduler.runAfter(0, workerFor(task), { taskId: task._id });
+      await setLease(ctx, loaded.syncAccount, now + SYNC_LIMITS.taskLeaseMs, now);
+      return;
+    case "fail_task":
+      // The preflight is fatal: without a verified account nothing else may run.
+      if (isPreflightOperation(task.operation)) await failRun(ctx, loaded, error, now);
+      else await finishTask(ctx, task, "failed", now, error);
+      return;
+    case "skip_task":
+      await finishTask(ctx, task, "skipped", now, error);
+      return;
+    case "block_account":
+      await blockAccount(ctx, loaded, error, now);
+      return;
+    case "reauth":
+      await handleAuthFailure(ctx, loaded, error, now);
+      return;
+    case "cancel_run":
+      await cancelRun(ctx, loaded.run, "connection_inactive", now);
+      return;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Worker protocol: claim -> (provider call in the action) -> commit | failure
+// ---------------------------------------------------------------------------
+
+/**
+ * Claims the next page of a task for ONE worker. Returns "skip" when the task
+ * is not claimable (already running under a live lease, finished, not the
+ * run's current task, or the run was cancelled). Each claim increments
+ * claimSeq; commits carrying an older claimSeq are discarded.
+ */
+export const claimTask = internalMutation({
+  args: { taskId: v.id("syncTasks") },
+  returns: claimResultValidator,
+  handler: async (ctx, { taskId }): Promise<ClaimResult> => {
+    const now = Date.now();
+    const loaded = await loadTask(ctx, taskId);
+    if (loaded === null) return { status: "skip" };
+    const { task, run, account, syncAccount } = loaded;
+    if (!ACTIVE_RUN.has(run.status) || task.status !== "queued" || task.phase !== "fetch") {
+      return { status: "skip" };
+    }
+    if (syncAccount.activeRunId !== run._id) {
+      await cancelRun(ctx, run, "superseded", now);
+      return { status: "skip" };
+    }
+    const tasks = await runTasks(ctx, run);
+    const current = tasks.find((t) => !TERMINAL_TASK.has(t.status));
+    if (current?._id !== task._id) return { status: "skip" };
+    if ((task.nextAttemptAt ?? 0) > now) {
+      await ctx.scheduler.runAfter(task.nextAttemptAt! - now, workerFor(task), {
+        taskId,
+      });
+      return { status: "skip" };
+    }
+
+    const { problem, connection } = await linkageProblem(ctx, run, account);
+    if (problem !== undefined) {
+      await cancelRun(ctx, run, problem, now);
+      return { status: "skip" };
+    }
+    if (connection!.tokenExpiresAt !== undefined && connection!.tokenExpiresAt < now) {
+      await handleAuthFailure(ctx, loaded, sanitizeFailure({ kind: "auth" }, now), now);
+      return { status: "skip" };
+    }
+    if (now - run.createdAt > SYNC_LIMITS.maxRunDurationMs) {
+      await cancelRun(ctx, run, "timeout", now);
+      return { status: "skip" };
+    }
+
+    // Platform cursors can expire: a checkpoint older than staleCursorMs restarts the task once.
+    const staleCursor =
+      task.cursor !== undefined &&
+      !task.restartedFromScratch &&
+      now - (task.cursorSavedAt ?? now) > SYNC_LIMITS.staleCursorMs;
+    const claimSeq = task.claimSeq + 1;
+    await ctx.db.patch(task._id, {
+      status: "running",
+      claimSeq,
+      leaseExpiresAt: now + SYNC_LIMITS.taskLeaseMs,
+      nextAttemptAt: undefined,
+      startedAt: task.startedAt ?? now,
+      fetchStartedAt: staleCursor ? now : (task.fetchStartedAt ?? now),
+      totalAttempts: task.totalAttempts + 1,
+      ...(staleCursor
+        ? {
+            cursor: undefined,
+            previousCursor: undefined,
+            cursorSavedAt: undefined,
+            restartedFromScratch: true,
+            emptyPagesInRow: 0,
+          }
+        : {}),
+      updatedAt: now,
+    });
+    if (run.status === "queued") {
+      await ctx.db.patch(run._id, { status: "running", startedAt: now, updatedAt: now });
+    }
+    await setLease(ctx, syncAccount, now + SYNC_LIMITS.taskLeaseMs, now);
+
+    const cursor = staleCursor ? undefined : task.cursor;
+    return {
+      status: "fetch",
+      claimSeq,
+      orgId: run.orgId,
+      connectionId: run.connectionId,
+      platform: run.platform,
+      // Phase 10: marks a social claim; the ads worker refuses it, the social worker requires it.
+      ...(loaded.kind === "social" ? { subject: "social" as const } : {}),
+      attempt: task.attempt,
+      request: {
+        operation: task.operation,
+        accountExternalId: account.externalId,
+        ...(task.level !== undefined ? { level: task.level } : {}),
+        ...(task.from !== undefined ? { from: task.from } : {}),
+        ...(task.to !== undefined ? { to: task.to } : {}),
+        ...(task.breakdown !== undefined ? { breakdown: task.breakdown } : {}),
+        ...(task.updatedSince !== undefined ? { updatedSince: task.updatedSince } : {}),
+        ...(cursor !== undefined ? { cursor } : {}),
+      },
+    };
+  },
+});
+
+/** Loads a task for a worker callback; null when the claim is stale (discard silently). */
+async function loadClaimed(ctx: Ctx, taskId: Id<"syncTasks">, claimSeq: number) {
+  const loaded = await loadTask(ctx, taskId);
+  if (loaded === null) return null;
+  const { task, run } = loaded;
+  if (
+    task.claimSeq !== claimSeq ||
+    task.status !== "running" ||
+    task.phase !== "fetch" ||
+    !ACTIVE_RUN.has(run.status) ||
+    loaded.syncAccount.activeRunId !== run._id
+  ) {
+    return null;
+  }
+  return loaded;
+}
+
+function needsFinalize(
+  task: Doc<"syncTasks">,
+  operation: SyncOperation,
+  counts: SyncCounts,
+): boolean {
+  if (isMetricOperation(operation)) return true;
+  // Removal marking only after a COMPLETE, fully resolved full listing.
+  return (
+    task.fullListing &&
+    removalTableFor(operation) !== undefined &&
+    counts.unresolved + counts.rejected === 0
+  );
+}
+
+/**
+ * Commits one fetched page: guards, mapping and canonical writes, the cursor
+ * checkpoint and the scheduling of the next step, all in ONE transaction.
+ */
+export const commitPage = internalMutation({
+  args: {
+    taskId: v.id("syncTasks"),
+    claimSeq: v.number(),
+    requestCursor: v.optional(v.string()),
+    page: providerPageValidator,
+  },
+  returns: commitResultValidator,
+  handler: async (ctx, { taskId, claimSeq, requestCursor, page }) => {
+    const now = Date.now();
+    const loaded = await loadClaimed(ctx, taskId, claimSeq);
+    if (loaded === null) return { ok: false, reason: "stale_claim" };
+    const operation = loaded.task.operation;
+    if (loaded.kind !== "ad" || !isAdOperation(operation)) {
+      // Phase 10: social subjects commit only through commitSocialPage. Fail closed: an
+      // ad page can never be written for a social subject.
+      await applyFailure(ctx, loaded, { source: "guard", kind: "invalid_record" }, now);
+      return { ok: false, reason: "invalid_record" };
+    }
+    const { task, run, account } = loaded;
+    // Duplicate or out-of-order delivery of a page: the checkpoint already moved.
+    if ((task.cursor ?? null) !== (requestCursor ?? null))
+      return { ok: false, reason: "stale_cursor" };
+
+    const { problem } = await linkageProblem(ctx, run, account);
+    if (problem !== undefined) {
+      await cancelRun(ctx, run, problem, now);
+      return { ok: false, reason: problem };
+    }
+
+    const caps = capabilitiesOf(account.platform);
+    const guard =
+      page.kind !== OPERATION_RECORD_KIND[operation]
+        ? ("invalid_record" as const)
+        : (checkPageShape({
+            itemCount: page.items.length,
+            nextCursor: page.nextCursor,
+            requestCursor,
+            previousCursor: task.previousCursor,
+            pagesSoFar: task.pages,
+            emptyPagesInRow: task.emptyPagesInRow,
+            maxPageSize: caps.maxPageSize,
+          }) ??
+          checkRecordsInScope(page.kind, page.items, {
+            operation,
+            platform: account.platform,
+            accountExternalId: account.externalId,
+            currency: account.currency,
+            ...(task.level !== undefined ? { level: task.level } : {}),
+            ...(task.from !== undefined ? { from: task.from } : {}),
+            ...(task.to !== undefined ? { to: task.to } : {}),
+            ...(task.breakdown !== undefined ? { breakdown: task.breakdown } : {}),
+            capabilities: caps,
+          }));
+    if (guard !== undefined) {
+      await applyFailure(ctx, loaded, { source: "guard", kind: guard }, now);
+      return { ok: false, reason: guard };
+    }
+
+    let counts: SyncCounts;
+    const scope = accountScopeFromDoc(account);
+    switch (page.kind) {
+      case "adAccount": {
+        // Structure was validated against the real table validators (RECORD_VALIDATORS).
+        const record = page.items[0] as ProviderAdAccount;
+        const drift = accountDrift(account, record);
+        if (drift !== undefined) {
+          await writeSyncAudit(
+            ctx,
+            run.orgId,
+            AUDIT_ACTIONS.syncAccountAttributesChanged,
+            { kind: "ad", adAccountId: account._id },
+            { attribute: { from: null, to: drift } },
+          );
+          await applyFailure(ctx, loaded, { source: "account", kind: "account_changed" }, now);
+          return { ok: false, reason: "account_changed" };
+        }
+        const org = await ctx.db.get(run.orgId);
+        if (org === null) throw new TenantInvariantError();
+        counts = await refreshAdAccount(
+          ctx.db,
+          account,
+          record,
+          orgScopeFromOrganization(org),
+          now,
+        );
+        break;
+      }
+      case "campaign":
+      case "adGroup":
+      case "creative":
+      case "ad":
+        counts = await writeEntityPage(ctx.db, page as EntityPage, scope, now);
+        break;
+      case "metricRow":
+      case "actionRow":
+        counts = await writeMetricPage(ctx.db, page as MetricPage, task.level!, scope, now);
+        break;
+    }
+    counts.pages = 1;
+
+    const taskCounts = addCounts(task.counts, counts);
+    const checkpoint = {
+      pages: task.pages + 1,
+      records: task.records + page.items.length,
+      emptyPagesInRow: page.items.length === 0 ? task.emptyPagesInRow + 1 : 0,
+      attempt: 1,
+      pageTransientFailures: 0,
+      // Phase 8 (D34a): the throttle budget is per page, like the transient budget. A task
+      // that is throttled on many pages keeps progressing; 10 consecutive throttles on ONE
+      // page still fail it, and backoff restarts from the base after every commit.
+      rateLimitHits: 0,
+      cursor: page.nextCursor,
+      previousCursor: requestCursor,
+      cursorSavedAt: now,
+      counts: taskCounts,
+      // A committed page clears the error of an earlier (retried) attempt.
+      lastError: undefined,
+      leaseExpiresAt: undefined,
+      updatedAt: now,
+    };
+    await ctx.db.patch(run._id, { counts: addCounts(run.counts, counts), updatedAt: now });
+
+    if (page.nextCursor !== undefined) {
+      await ctx.db.patch(task._id, { ...checkpoint, status: "queued" });
+      await ctx.scheduler.runAfter(0, workerFor(task), { taskId });
+      await setLease(ctx, loaded.syncAccount, now + SYNC_LIMITS.taskLeaseMs, now);
+      return { ok: true };
+    }
+
+    // Fetch complete.
+    if (needsFinalize(task, operation, taskCounts)) {
+      await ctx.db.patch(task._id, { ...checkpoint, phase: "finalize", finalizeCursor: undefined });
+      await ctx.scheduler.runAfter(0, internal.sync.runs.finalizeTask, { taskId, claimSeq });
+      await setLease(ctx, loaded.syncAccount, now + SYNC_LIMITS.taskLeaseMs, now);
+      return { ok: true };
+    }
+    await ctx.db.patch(task._id, checkpoint);
+    await finishTask(ctx, { ...task, ...checkpoint }, "succeeded", now);
+    return { ok: true };
+  },
+});
+
+/** Records a failed page (provider error, unusable credential, internal error). */
+export const recordFailure = internalMutation({
+  args: { taskId: v.id("syncTasks"), claimSeq: v.number(), failure: failureValidator },
+  returns: v.null(),
+  handler: async (ctx, { taskId, claimSeq, failure }) => {
+    const loaded = await loadClaimed(ctx, taskId, claimSeq);
+    if (loaded === null) return null;
+    await applyFailure(ctx, loaded, toSyncFailure(failure), Date.now());
+    return null;
+  },
+});
+
+/**
+ * DB-only finalize step of a COMPLETED fetch: prune stale metric rows or mark
+ * removed entities, one bounded batch per call. Never runs for failed tasks.
+ */
+export const finalizeTask = internalMutation({
+  args: { taskId: v.id("syncTasks"), claimSeq: v.number() },
+  returns: v.null(),
+  handler: async (ctx, { taskId, claimSeq }) => {
+    const now = Date.now();
+    const loaded = await loadTask(ctx, taskId);
+    if (loaded === null) return null;
+    if (
+      loaded.task.claimSeq !== claimSeq ||
+      loaded.task.status !== "running" ||
+      loaded.task.phase !== "finalize" ||
+      !ACTIVE_RUN.has(loaded.run.status) ||
+      loaded.syncAccount.activeRunId !== loaded.run._id ||
+      loaded.task.fetchStartedAt === undefined
+    ) {
+      return null;
+    }
+    const operation = loaded.task.operation;
+    if (loaded.kind === "social" && operation === "listSocialPosts") {
+      await finalizeSocialListing(ctx, loaded, claimSeq, now);
+      return null;
+    }
+    if (loaded.kind !== "ad" || !isAdOperation(operation)) {
+      // No other social operation has a finalize step: fail closed.
+      await finishTask(ctx, loaded.task, "failed", now, sanitizeFailure({ kind: "internal" }, now));
+      return null;
+    }
+    const { task, run, account, syncAccount } = loaded;
+    const fetchStartedAt = task.fetchStartedAt!;
+    const scope = accountScopeFromDoc(account);
+    const continueWith = async (finalizeCursor: string, counts: Partial<SyncCounts>) => {
+      await ctx.db.patch(task._id, {
+        finalizeCursor,
+        counts: addCounts(task.counts, counts),
+        updatedAt: now,
+      });
+      await ctx.db.patch(run._id, { counts: addCounts(run.counts, counts), updatedAt: now });
+      await ctx.scheduler.runAfter(0, internal.sync.runs.finalizeTask, { taskId, claimSeq });
+      await setLease(ctx, syncAccount, now + SYNC_LIMITS.taskLeaseMs, now);
+    };
+    const done = async (counts: Partial<SyncCounts>, warning?: SyncError) => {
+      const merged = addCounts(task.counts, counts);
+      await ctx.db.patch(task._id, { counts: merged, finalizeCursor: undefined, updatedAt: now });
+      await ctx.db.patch(run._id, { counts: addCounts(run.counts, counts), updatedAt: now });
+      await finishTask(ctx, { ...task, counts: merged }, "succeeded", now, warning);
+    };
+
+    if (isMetricOperation(operation)) {
+      const result = await pruneMetricsBatch(ctx.db, {
+        table: operation === "fetchDailyMetrics" ? "metricsDaily" : "actionMetricsDaily",
+        scope,
+        level: task.level!,
+        placements: prunePlacements(task.breakdown ?? "none"),
+        from: task.from!,
+        to: task.to!,
+        before: fetchStartedAt,
+        cursor: task.finalizeCursor ? (JSON.parse(task.finalizeCursor) as PruneCursor) : undefined,
+        limit: SYNC_LIMITS.finalizeBatch,
+      });
+      if (result.next !== undefined) {
+        await continueWith(JSON.stringify(result.next), { pruned: result.pruned });
+      } else {
+        await done({ pruned: result.pruned });
+      }
+      return null;
+    }
+
+    const table = removalTableFor(operation);
+    if (table === undefined) {
+      await done({});
+      return null;
+    }
+    const result = await markRemovedBatch(ctx.db, {
+      table,
+      scope,
+      before: fetchStartedAt,
+      now,
+      cursor: task.finalizeCursor ? (JSON.parse(task.finalizeCursor) as RemovalCursor) : undefined,
+      limit: SYNC_LIMITS.finalizeBatch,
+      maxShare: SYNC_LIMITS.massRemovalMaxShare,
+      minCount: SYNC_LIMITS.massRemovalMinCount,
+    });
+    if (result.status === "continue") {
+      await continueWith(JSON.stringify(result.next), { removed: result.removed });
+    } else if (result.status === "done") {
+      await done({ removed: result.removed });
+    } else {
+      await writeSyncAudit(ctx, run.orgId, AUDIT_ACTIONS.syncRemovalSkipped, subjectOf(run), {
+        table: { from: null, to: table },
+        candidates: { from: result.alive, to: result.candidates },
+      });
+      await done({}, sanitizeFailure({ kind: "suspicious_empty_listing" }, now));
+    }
+    return null;
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Phase 10 Stage B: organic social pages
+// ---------------------------------------------------------------------------
+
+type SocialLoaded = Extract<Loaded, { kind: "social" }>;
+
+/**
+ * Commits one organic social page: guards, the social writers of upsert.ts, the cursor
+ * checkpoint and the next step, in ONE transaction (the same protocol as commitPage, which
+ * never accepts a social page). Where a fetch ends:
+ * - listSocialPosts (incremental, F9): at the first page made entirely of posts already
+ *   stored (items > 0, nothing inserted / reappeared / unresolved)
+ * - listSocialPosts: at capabilities.requestBudget.maxListingPages (truncated: a warning,
+ *   and never removal marking)
+ * - fetchPostMetrics: at maxPostsPerSnapshotTask posts (truncated: a warning)
+ * - fetchAccountMetrics: a window whose days were not all returned counts the missing days
+ *   as unresolved (the window is then not covered)
+ * Removal marking (finalize) runs only after a complete, fully resolved, untruncated full
+ * listing (R3, I-D13).
+ */
+export const commitSocialPage = internalMutation({
+  args: {
+    taskId: v.id("syncTasks"),
+    claimSeq: v.number(),
+    requestCursor: v.optional(v.string()),
+    page: socialPageValidator,
+  },
+  returns: commitResultValidator,
+  handler: async (ctx, { taskId, claimSeq, requestCursor, page }) => {
+    const now = Date.now();
+    const loaded = await loadClaimed(ctx, taskId, claimSeq);
+    if (loaded === null) return { ok: false, reason: "stale_claim" };
+    const operation = loaded.task.operation;
+    if (loaded.kind !== "social" || !isSocialOperation(operation)) {
+      // A social page can never be written for an ad subject.
+      await applyFailure(ctx, loaded, { source: "guard", kind: "invalid_record" }, now);
+      return { ok: false, reason: "invalid_record" };
+    }
+    const { task, run, account } = loaded;
+    // Duplicate or out-of-order delivery of a page: the checkpoint already moved.
+    if ((task.cursor ?? null) !== (requestCursor ?? null))
+      return { ok: false, reason: "stale_cursor" };
+
+    const { problem } = await linkageProblem(ctx, run, account);
+    if (problem !== undefined) {
+      await cancelRun(ctx, run, problem, now);
+      return { ok: false, reason: problem };
+    }
+
+    const caps = providerRegistry().socialCapabilities(account.platform);
+    const reportedUnresolved = "unresolved" in page ? page.unresolved : undefined;
+    const guard =
+      page.kind !== SOCIAL_OPERATION_RECORD_KIND[operation]
+        ? ("invalid_record" as const)
+        : (checkPageShape({
+            itemCount: page.items.length,
+            nextCursor: page.nextCursor,
+            requestCursor,
+            previousCursor: task.previousCursor,
+            pagesSoFar: task.pages,
+            emptyPagesInRow: task.emptyPagesInRow,
+            maxPageSize: socialMaxPageSize(operation, caps),
+          }) ??
+          checkSocialRecordsInScope(page.kind, page.items, {
+            operation,
+            platform: account.platform,
+            accountExternalId: account.externalId,
+            ...(task.from !== undefined ? { from: task.from } : {}),
+            ...(task.to !== undefined ? { to: task.to } : {}),
+            capabilities: caps,
+            now,
+            ...(reportedUnresolved !== undefined ? { unresolved: reportedUnresolved } : {}),
+          }));
+    if (guard !== undefined) {
+      await applyFailure(ctx, loaded, { source: "guard", kind: guard }, now);
+      return { ok: false, reason: guard };
+    }
+
+    const scope = socialAccountScopeFromDoc(account);
+    let counts: SyncCounts;
+    let allKnown = false;
+    switch (page.kind) {
+      case "socialAccount": {
+        // Structure was validated against the social record validators (socialPageValidator).
+        const record = page.items[0] as ProviderSocialAccount;
+        const drift = socialAccountDrift(account, record);
+        if (drift !== undefined) {
+          // F11: never updated silently. Audited, then the account is blocked (audited)
+          // until an admin re-links it with a freshly discovered account type.
+          await writeSyncAudit(
+            ctx,
+            run.orgId,
+            AUDIT_ACTIONS.syncAccountAttributesChanged,
+            { kind: "social", socialAccountId: account._id },
+            {
+              attribute: { from: null, to: drift },
+              accountType: { from: account.accountType, to: record.accountType },
+            },
+          );
+          await applyFailure(ctx, loaded, { source: "account", kind: "account_changed" }, now);
+          return { ok: false, reason: "account_changed" };
+        }
+        counts = await refreshSocialAccount(ctx.db, account, scope, record, now);
+        break;
+      }
+      case "socialPost": {
+        const items = page.items as ProviderSocialPost[];
+        const written = await writeSocialPostPage(ctx.db, scope, items, now);
+        counts = written.counts;
+        allKnown = items.length > 0 && written.known === items.length;
+        break;
+      }
+      case "socialPostSnapshot":
+        counts = await writeSocialSnapshotPage(
+          ctx.db,
+          scope,
+          page.items as ProviderSocialPostSnapshot[],
+        );
+        break;
+      case "socialAccountDay":
+        counts = await writeSocialAccountDayPage(
+          ctx.db,
+          scope,
+          page.items as ProviderSocialAccountDay[],
+          now,
+        );
+        break;
+    }
+    counts.pages = 1;
+    counts.unresolved += reportedUnresolved ?? 0;
+
+    let nextCursor = page.nextCursor;
+    let truncated = false;
+    let warning: SyncError | undefined;
+    const pages = task.pages + 1;
+    if (nextCursor !== undefined && operation === "listSocialPosts") {
+      if (!task.fullListing && allKnown && counts.unresolved === 0) {
+        nextCursor = undefined; // F9: incremental early stop
+      } else if (pages >= caps.requestBudget.maxListingPages) {
+        nextCursor = undefined;
+        truncated = true;
+        warning = sanitizeFailure({ kind: "page_limit", code: "listing_truncated" }, now);
+      }
+    } else if (nextCursor !== undefined && operation === "fetchPostMetrics") {
+      const maxPages = Math.ceil(
+        caps.requestBudget.maxPostsPerSnapshotTask / caps.postMetricsPageSize,
+      );
+      if (pages >= maxPages) {
+        nextCursor = undefined;
+        truncated = true;
+        warning = sanitizeFailure({ kind: "page_limit", code: "snapshot_truncated" }, now);
+      }
+    }
+    if (
+      nextCursor === undefined &&
+      operation === "fetchAccountMetrics" &&
+      task.from !== undefined &&
+      task.to !== undefined
+    ) {
+      const expected = diffDays(task.from, task.to) + 1;
+      const returned = task.records + page.items.length;
+      if (returned !== expected) counts.unresolved += Math.abs(expected - returned);
+    }
+
+    const taskCounts = addCounts(task.counts, counts);
+    const checkpoint = {
+      pages,
+      records: task.records + page.items.length,
+      emptyPagesInRow: page.items.length === 0 ? task.emptyPagesInRow + 1 : 0,
+      attempt: 1,
+      pageTransientFailures: 0,
+      rateLimitHits: 0,
+      cursor: nextCursor,
+      previousCursor: requestCursor,
+      cursorSavedAt: now,
+      counts: taskCounts,
+      lastError: undefined,
+      leaseExpiresAt: undefined,
+      updatedAt: now,
+    };
+    await ctx.db.patch(run._id, { counts: addCounts(run.counts, counts), updatedAt: now });
+
+    if (nextCursor !== undefined) {
+      await ctx.db.patch(task._id, { ...checkpoint, status: "queued" });
+      await ctx.scheduler.runAfter(0, workerFor(task), { taskId });
+      await setLease(ctx, loaded.syncAccount, now + SYNC_LIMITS.taskLeaseMs, now);
+      return { ok: true };
+    }
+
+    // Fetch complete. Removal marking only after a COMPLETE, fully resolved, untruncated
+    // full listing.
+    if (
+      operation === "listSocialPosts" &&
+      task.fullListing &&
+      !truncated &&
+      taskCounts.unresolved + taskCounts.rejected === 0
+    ) {
+      await ctx.db.patch(task._id, { ...checkpoint, phase: "finalize", finalizeCursor: undefined });
+      await ctx.scheduler.runAfter(0, internal.sync.runs.finalizeTask, { taskId, claimSeq });
+      await setLease(ctx, loaded.syncAccount, now + SYNC_LIMITS.taskLeaseMs, now);
+      return { ok: true };
+    }
+    await ctx.db.patch(task._id, checkpoint);
+    await finishTask(ctx, { ...task, ...checkpoint }, "succeeded", now, warning);
+    return { ok: true };
+  },
+});
+
+/** Finalize of a complete full post listing: bounded removal marking (one batch per call). */
+async function finalizeSocialListing(
+  ctx: Ctx,
+  loaded: SocialLoaded,
+  claimSeq: number,
+  now: number,
+): Promise<void> {
+  const { task, run, account, syncAccount } = loaded;
+  const taskId = task._id;
+  const result = await markRemovedSocialPostsBatch(ctx.db, {
+    scope: socialAccountScopeFromDoc(account),
+    before: task.fetchStartedAt!,
+    now,
+    cursor: task.finalizeCursor
+      ? (JSON.parse(task.finalizeCursor) as SocialRemovalCursor)
+      : undefined,
+    limit: SYNC_LIMITS.finalizeBatch,
+    maxShare: SYNC_LIMITS.massRemovalMaxShare,
+    minCount: SYNC_LIMITS.massRemovalMinCount,
+  });
+  const record = async (removed: number) => {
+    const counts = { removed };
+    const merged = addCounts(task.counts, counts);
+    await ctx.db.patch(run._id, { counts: addCounts(run.counts, counts), updatedAt: now });
+    return merged;
+  };
+  if (result.status === "continue") {
+    const merged = await record(result.removed);
+    await ctx.db.patch(taskId, {
+      finalizeCursor: JSON.stringify(result.next),
+      counts: merged,
+      updatedAt: now,
+    });
+    await ctx.scheduler.runAfter(0, internal.sync.runs.finalizeTask, { taskId, claimSeq });
+    await setLease(ctx, syncAccount, now + SYNC_LIMITS.taskLeaseMs, now);
+    return;
+  }
+  if (result.status === "done") {
+    const merged = await record(result.removed);
+    await ctx.db.patch(taskId, { counts: merged, finalizeCursor: undefined, updatedAt: now });
+    await finishTask(ctx, { ...task, counts: merged }, "succeeded", now);
+    return;
+  }
+  await writeSyncAudit(ctx, run.orgId, AUDIT_ACTIONS.syncRemovalSkipped, subjectOf(run), {
+    table: { from: null, to: "socialPosts" },
+    candidates: { from: result.alive, to: result.candidates },
+  });
+  await ctx.db.patch(taskId, { finalizeCursor: undefined, updatedAt: now });
+  await finishTask(
+    ctx,
+    task,
+    "succeeded",
+    now,
+    sanitizeFailure({ kind: "suspicious_empty_listing" }, now),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Recovery (planner)
+// ---------------------------------------------------------------------------
+
+/**
+ * Recovers a run whose lease expired (a worker action died or a scheduled
+ * step was lost): the current task is re-claimable under a NEW claimSeq, so
+ * a late commit from the old worker is discarded. Repeated stalls fail the task.
+ */
+export async function recoverStalledRun(ctx: Ctx, run: Doc<"syncRuns">, now: number) {
+  const tasks = await runTasks(ctx, run);
+  const current = tasks.find((t) => !TERMINAL_TASK.has(t.status));
+  if (current === undefined) {
+    await completeRun(ctx, run, now);
+    return;
+  }
+  const loaded = await loadTask(ctx, current._id);
+  if (loaded === null) return;
+  if (current.staleRecoveries + 1 > SYNC_LIMITS.maxStaleRecoveries) {
+    const error = sanitizeFailure({ kind: "stale_lease" }, now);
+    if (isPreflightOperation(current.operation)) await failRun(ctx, loaded, error, now);
+    else await finishTask(ctx, current, "failed", now, error);
+    return;
+  }
+  const claimSeq = current.claimSeq + 1;
+  const status = current.phase === "finalize" ? ("running" as const) : ("queued" as const);
+  await ctx.db.patch(current._id, {
+    status,
+    claimSeq,
+    staleRecoveries: current.staleRecoveries + 1,
+    attempt: current.phase === "fetch" ? current.attempt + 1 : current.attempt,
+    leaseExpiresAt: undefined,
+    nextAttemptAt: undefined,
+    updatedAt: now,
+  });
+  await scheduleTask(ctx, { ...current, status, claimSeq }, 0);
+  await setLease(ctx, loaded.syncAccount, now + SYNC_LIMITS.taskLeaseMs, now);
+}

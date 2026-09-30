@@ -1,0 +1,275 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`schema inventory > declares the approved indexes 1`] = `
+{
+  "actionMetricsDaily": {
+    "by_org_account_date": [
+      "orgId",
+      "adAccountId",
+      "date",
+    ],
+    "by_org_account_level_date": [
+      "orgId",
+      "adAccountId",
+      "level",
+      "date",
+    ],
+    "by_org_entity_placement_date_action": [
+      "orgId",
+      "entityId",
+      "placement",
+      "date",
+      "rawActionType",
+      "attributionWindow",
+    ],
+  },
+  "adAccounts": {
+    "by_org_connection": [
+      "orgId",
+      "connectionId",
+    ],
+    "by_org_platform_external": [
+      "orgId",
+      "platform",
+      "externalId",
+    ],
+  },
+  "adGroups": {
+    "by_org_account_external": [
+      "orgId",
+      "adAccountId",
+      "externalId",
+    ],
+    "by_org_campaign": [
+      "orgId",
+      "campaignId",
+    ],
+  },
+  "ads": {
+    "by_org_account_external": [
+      "orgId",
+      "adAccountId",
+      "externalId",
+    ],
+    "by_org_adGroup": [
+      "orgId",
+      "adGroupId",
+    ],
+    "by_org_campaign": [
+      "orgId",
+      "campaignId",
+    ],
+  },
+  "auditLog": {
+    "by_org_at": [
+      "orgId",
+      "at",
+    ],
+  },
+  "campaigns": {
+    "by_org_account_external": [
+      "orgId",
+      "adAccountId",
+      "externalId",
+    ],
+    "by_org_status": [
+      "orgId",
+      "status",
+    ],
+  },
+  "connections": {
+    "by_org_provider_identity": [
+      "orgId",
+      "provider",
+      "externalUserId",
+    ],
+    "by_org_status": [
+      "orgId",
+      "status",
+    ],
+    "by_status_expires": [
+      "status",
+      "tokenExpiresAt",
+    ],
+  },
+  "creatives": {
+    "by_org_account_external": [
+      "orgId",
+      "adAccountId",
+      "externalId",
+    ],
+    "by_org_igMedia": [
+      "orgId",
+      "instagramMediaExternalId",
+    ],
+  },
+  "credentials": {
+    "by_org_connection": [
+      "orgId",
+      "connectionId",
+    ],
+  },
+  "discoveredAssets": {
+    "by_org_connection_external": [
+      "orgId",
+      "connectionId",
+      "externalId",
+    ],
+  },
+  "discoveredSocialAccounts": {
+    "by_org_connection_external": [
+      "orgId",
+      "connectionId",
+      "externalId",
+    ],
+  },
+  "fxRates": {
+    "by_quote_date": [
+      "quote",
+      "date",
+    ],
+  },
+  "integrationApps": {
+    "by_issuer": [
+      "issuer",
+    ],
+    "by_slug": [
+      "slug",
+    ],
+  },
+  "metricsDaily": {
+    "by_org_account_level_placement_date": [
+      "orgId",
+      "adAccountId",
+      "level",
+      "placement",
+      "date",
+    ],
+    "by_org_campaign_level_placement_date": [
+      "orgId",
+      "campaignId",
+      "level",
+      "placement",
+      "date",
+    ],
+    "by_org_entity_placement_date": [
+      "orgId",
+      "entityId",
+      "placement",
+      "date",
+    ],
+    "by_org_level_placement_date": [
+      "orgId",
+      "level",
+      "placement",
+      "date",
+    ],
+  },
+  "oauthStates": {
+    "by_expires": [
+      "expiresAt",
+    ],
+    "by_nonce_hash": [
+      "nonceHash",
+    ],
+    "by_org_created": [
+      "orgId",
+      "createdAt",
+    ],
+  },
+  "organizations": {
+    "by_issuer_external": [
+      "issuer",
+      "externalOrgId",
+    ],
+  },
+  "socialAccountMetricsDaily": {
+    "by_org_account_date": [
+      "orgId",
+      "socialAccountId",
+      "date",
+    ],
+  },
+  "socialAccounts": {
+    "by_org_connection": [
+      "orgId",
+      "connectionId",
+    ],
+    "by_org_platform_external": [
+      "orgId",
+      "platform",
+      "externalId",
+    ],
+  },
+  "socialPostMetricSnapshots": {
+    "by_org_post_date": [
+      "orgId",
+      "postId",
+      "capturedDate",
+    ],
+  },
+  "socialPosts": {
+    "by_org_account_external": [
+      "orgId",
+      "socialAccountId",
+      "externalId",
+    ],
+    "by_org_account_published": [
+      "orgId",
+      "socialAccountId",
+      "publishedAt",
+    ],
+    "by_org_platform_external": [
+      "orgId",
+      "platform",
+      "externalId",
+    ],
+  },
+  "syncAccounts": {
+    "by_next_plan": [
+      "nextPlanAt",
+    ],
+    "by_org_account": [
+      "orgId",
+      "adAccountId",
+    ],
+    "by_org_social_account": [
+      "orgId",
+      "socialAccountId",
+    ],
+  },
+  "syncRuns": {
+    "by_org_account_created": [
+      "orgId",
+      "adAccountId",
+      "createdAt",
+    ],
+    "by_org_account_key": [
+      "orgId",
+      "adAccountId",
+      "idempotencyKey",
+    ],
+    "by_org_social_account_created": [
+      "orgId",
+      "socialAccountId",
+      "createdAt",
+    ],
+    "by_org_social_account_key": [
+      "orgId",
+      "socialAccountId",
+      "idempotencyKey",
+    ],
+    "by_org_status": [
+      "orgId",
+      "status",
+    ],
+  },
+  "syncTasks": {
+    "by_org_run_seq": [
+      "orgId",
+      "runId",
+      "seq",
+    ],
+  },
+}
+`;
