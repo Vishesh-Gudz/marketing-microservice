@@ -113,3 +113,12 @@ all `orgQuery`, viewer) are documented in [../analytics.md](../analytics.md). Ph
 optional argument, `entity`, and one optional response field, `entity`, to `v1/analytics:overview`
 (additive; no new function). The dashboard ([../dashboard.md](../dashboard.md)) uses only these
 public functions.
+
+Phase 10 Stage B added six read-only organic Instagram functions (additive; all `orgQuery`,
+viewer; documented in [../analytics.md](../analytics.md#organic-instagram-analytics-phase-10-stage-b)):
+`v1/socialAccounts:list`, `v1/socialAccounts:get`, `v1/socialPosts:list`, `v1/socialPosts:get`,
+`v1/organicAnalytics:overview` and `v1/organicAnalytics:accountSeries`. `SocialAccountDto` gained
+the optional fields `followersCount`, `lastSyncedAt` and `coverage`. Account metrics use UTC days;
+post publish filters use the organization timezone. Stage A had added `instagram` to
+`v1/connections:beginConnect` and the social link functions (`listDiscoveredSocialAccounts`,
+`linkSocialAccounts`, `unlinkSocialAccount`).

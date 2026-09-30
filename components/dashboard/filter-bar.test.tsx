@@ -8,6 +8,7 @@ import {
   routerReplace,
   setUrl,
 } from "@/tests/unit/dashboard-harness";
+import { ORG } from "@/tests/unit/analytics-fixtures";
 
 vi.mock("convex/react", async () => (await import("@/tests/unit/dashboard-harness")).convexReact);
 vi.mock("next/navigation", async () => (await import("@/tests/unit/dashboard-harness")).navigation);
@@ -102,5 +103,22 @@ describe("FilterBar", () => {
     expect(screen.queryByLabelText(/Manager/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByLabelText(/Meta EU/));
     expect(lastReplacedQuery().get("accounts")).toBe("a1");
+  });
+
+  it("keeps org-day presets by default and resolves UTC presets with dayBasis='utc'", () => {
+    // 2026-09-25T12:00Z is still Sep 25 in UTC but already Sep 26 in Auckland.
+    const org = { ...ORG, timezone: "Pacific/Auckland" };
+    setUrl("/", "preset=yesterday");
+    const { unmount } = renderWithOrg(<FilterBar />, org);
+    expect(screen.getByTestId("resolved-range")).toHaveTextContent("Sep 25, 2026");
+    expect(screen.getByText(/each ad account's local days; presets use Pacific\/Auckland/));
+    expect(screen.queryByTestId("day-basis")).not.toBeInTheDocument();
+    unmount();
+
+    renderWithOrg(<FilterBar dayBasis="utc" accounts={false} />, org);
+    expect(screen.getByTestId("resolved-range")).toHaveTextContent("Sep 24, 2026");
+    expect(screen.getByTestId("day-basis")).toHaveTextContent(
+      "Account metrics use UTC days and presets use UTC; post publish dates use Pacific/Auckland.",
+    );
   });
 });

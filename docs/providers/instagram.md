@@ -1,16 +1,21 @@
 # Instagram organic provider (Phase 10)
 
-Status: **Stage A (infrastructure)**. Connecting, discovering and linking Instagram
-professional accounts works end to end. Token refresh works. The social sync subject runs
-through the Phase 5 engine. **No Instagram data is mapped yet**: every sync operation fails
-closed with `instagram_mapping_pending` before any network call. Stage B adds the semantic
-mapping (posts, post snapshots, account metrics), organic analytics, the organic v1 API and
-the `/social` dashboard.
+Status: **Stage B implemented against mock and fake data only.**
 
-Nothing here has been validated against a real Instagram account. Tests run against a fake
-Instagram API (`convex/providers/instagram/fakeInstagram.fixtures.ts`) that models
-**documented** behavior only and is not evidence. Pending real-account items are listed in
-[Real-account validation](#real-account-validation-required).
+- **Stage A (infrastructure):** connecting, discovering and linking Instagram professional
+  accounts, token refresh, and the social sync subject in the Phase 5 engine.
+- **Stage B1 (data sync):** the semantic mapping ([Mapping](#mapping-stage-b)), the social page
+  write path, post removal, social coverage ([sync.md](../sync.md#organic-social-write-path-phase-10-stage-b)).
+- **Stage B2 (analytics API):** query-time organic analytics and six read-only v1 functions
+  ([analytics.md](../analytics.md#organic-instagram-analytics-phase-10-stage-b)).
+- **Stage B3 (dashboard):** `/social` and `/social/posts/[postId]`
+  ([dashboard.md](../dashboard.md#organic-instagram-phase-10-stage-b)).
+
+Nothing here has been validated against a real Instagram account; none was available. Tests run
+against a fake Instagram API (`convex/providers/instagram/fakeInstagram.fixtures.ts`) and a
+deterministic mock social provider (`convex/providers/social/mock/`) that model **documented**
+behavior only and are not evidence. Every mapping marked **[PROVISIONAL IRn]** stays provisional
+until checked on a real account ([Real-account validation](#real-account-validation-required)).
 
 Legend used below:
 
@@ -25,7 +30,10 @@ Legend used below:
   Login**. The `instagram` connection is separate from the Meta connection (I-D1).
 - Instagram **ads** stay Meta ads (Meta provider, placement `instagram`), unchanged.
 - The organic and paid trees are separate tables. Organic values never enter ad metrics.
-- Not in Phase 10: comments, stories, DMs, messaging, webhooks, alerts, publishing.
+- Not in Phase 10 (deferred): comments and commenters, stories, DMs, WhatsApp, messaging,
+  webhooks, alerts, publishing, Reels-specific insights, audience demographics. No profile
+  picture, media or thumbnail URL, biography or website is ever stored; the permalink is the only
+  URL.
 
 ## Architecture
 
@@ -153,9 +161,11 @@ the fetch injected into the SDK) **before any network access**:
 
 `providers/instagram/graphReader.ts` is minimal and read-only: the `graph_reader` allowlist,
 an explicit `RequestBudget` per call, shape-validated responses reduced to our own types, and
-classified errors. **Stage A implements only the identity read.** The allowlist already covers
-the other documented SDK gaps (account insights; media `views` / `total_interactions`), whose
-reads and mappings are Stage B. It is not a generic Graph client.
+classified errors. It reads only the documented SDK gaps: the identity (Stage A), a post's
+`views` / `total_interactions` (`period=lifetime`, 1 request per post), and one UTC day of account
+insights (request A: `period=day&metric_type=total_value`; request B: `follows_and_unfollows`
+with `breakdown=follow_type`). It never requests a deprecated, `total_*` or out-of-scope metric
+(the transport allowlist refuses them independently). It is not a generic Graph client.
 
 ## social-sdk adapter (`node/sdk.ts`)
 
@@ -199,9 +209,9 @@ reads and mappings are Stage B. It is not a generic Graph client.
 
 ## Capabilities and request budget (I-D6)
 
-Stage A declares **nothing it does not implement** (`posts: false`, no post or account
-metrics), so the social planner plans the preflight only. The approved values are already in
-place for Stage B:
+Capabilities declare **only what is implemented**. Stage B declares posts, the seven post
+metric columns and the account metric columns, so the social planner plans every operation.
+The approved values:
 
 | Value                      | Setting                                      | Source                                           |
 | -------------------------- | -------------------------------------------- | ------------------------------------------------ |
@@ -220,35 +230,90 @@ Budgets are enforced by `RequestBudget` (an explicit failure when exhausted). Te
 request counts: code exchange 3, discovery 1, refresh 1, profile 1, listing 1 per page,
 post metrics 2.
 
-## Sync (Stage A)
+## Mapping (Stage B)
+
+The single source is `convex/providers/instagram/semantics.ts` (tagged `[doc]`,
+`[PROVISIONAL IRn]` and the approved decision ids); `mapping.ts` applies it and
+`semantics.test.ts` checks it against the transport allowlist.
+
+| Instagram                                                                       | Canonical                                                          | Notes                                                                                           |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| media `media_product_type` `REELS`, else `media_type`                           | `socialPosts.type` reel / carousel / image / video / other         | `AD` and `STORY` are never ingested [IR23]; no product type = unresolved, not stored (R3) [IR3] |
+| `caption`                                                                       | `socialPosts.caption`                                              | capped at 2,200 characters (F21)                                                                |
+| `permalink`                                                                     | `socialPosts.permalink`                                            | only https on `instagram.com` / `www.instagram.com`, no user info, ≤ 2,048 (R1b) [IR25]         |
+| post `likes`, `comments`, `saved`, `shares`, `reach` (SDK)                      | `socialPostMetricSnapshots` likes, comments, saves, shares, reach  | lifetime values [doc: media insights are always lifetime, IR22]                                 |
+| post `views`, `total_interactions` (reader)                                     | views, totalInteractions                                           | [IR10], [IR21]                                                                                  |
+| account `reach`, `views`, `accounts_engaged`, `total_interactions` (one day)    | `socialAccountMetricsDaily` columns                                | one `total_value` request per UTC day (F2) [IR6, IR18, IR20]                                    |
+| account `likes`, `comments`, `shares`, `saves`, `replies`, `profile_links_taps` | `extras.*` (`profileLinksTaps`, never `websiteClicks`, F4)         | [IR24]                                                                                          |
+| `follows_and_unfollows` by `follow_type`                                        | `followerDelta` = FOLLOWER − NON_FOLLOWER, only when both reported | never from one side, never zero-filled; not returned under 100 followers [doc] [IR8]            |
+| profile `followers_count`                                                       | `followers` (profile column group, today's UTC day)                | the capture time is stored (`followersCapturedAt`) [IR15]                                       |
+
+Never requested: deprecated metrics (`impressions`, `plays`, `video_views`, `profile_views`,
+`website_clicks`), ad-inclusive `total_*` metrics (F6), `reposts`, `profile_visits`, `follows`,
+`profile_activity`, cross-posted and Reels-specific metrics. Provenance: account days carry
+`insightsSyncedAt` (a synced day without a value is "not reported", a day without the stamp is
+unknown) and follower captures carry `followersCapturedAt`.
+
+## Sync (Stage B)
 
 - **Subject:** a social account is its own sync subject (`socialAccountId`; see
-  [sync.md](../sync.md)).
-- **Execution:** runs go through the existing planner, runs, tasks, leases and claims. The
-  first task is `getSocialAccount`, executed by the `"use node"` social worker.
-- **Fail closed:** the Instagram provider checks configuration (app id), the credential and
-  account ownership, then fails with `unknown` / `instagram_mapping_pending`. The run fails, the
-  account backs off (15 min … 6 h), no data is written, and **no platform request is made**.
-  In mock mode the mock social provider fails with `social_mapping_pending`.
+  [sync.md](../sync.md)). Runs go through the existing planner, runs, tasks, leases and claims,
+  executed by the `"use node"` social worker.
+- **Tasks:** `getSocialAccount` (preflight: profile, follower capture, account-type drift),
+  `listSocialPosts` (full listing on initial/lookback runs, incremental listing with an early
+  stop otherwise), `fetchPostMetrics` (lifetime snapshots of posts published in the last 90
+  days, one row per post per UTC capture day) and `fetchAccountMetrics` (UTC days, 2 requests
+  per day, 15 days per provider call). Days are UTC days.
+- **Writes:** only through `commitSocialPage` and the social writers of `sync/upsert.ts`
+  (see [sync.md](../sync.md)). Post removal is marked (never deleted) only after a complete,
+  fully resolved, untruncated full listing, bounded to posts newer than the oldest one listed.
+- **Mock mode:** the mock social provider serves deterministic data (`mock/data.ts`) through the
+  real Instagram mapping. Users: `<n>` business, `creator`, `small` (57 followers: no follower
+  change), `edge` (a media item without a product type), plus failure users (`revoked`,
+  `limited`, `personal`).
 - **Other outcomes:** `auth` moves the connection to `needs_reauth`. Disconnecting cancels the
   active run and parks the account.
 
+## Data flow (B1 → B2 → B3)
+
+```text
+Instagram (Graph via SDK + reader) ──▶ node/provider.ts ──▶ mapping.ts / semantics.ts
+  ──▶ sync/socialWorker.ts ──▶ commitSocialPage (sync/runs.ts) ──▶ sync/upsert.ts
+  ──▶ socialAccounts · socialPosts · socialPostMetricSnapshots · socialAccountMetricsDaily
+  ──▶ convex/analytics/organic/* (query-time, read-only) ──▶ convex/v1/{socialAccounts,
+      socialPosts, organicAnalytics} ──▶ dashboard /social (useQuery only, no arithmetic)
+```
+
+The dashboard never calls a provider, a sync function or a table; organic and paid analytics
+never mix (`tests/lint/organic-separation.test.ts`, `tests/lint/organic-dashboard-boundary.test.ts`).
+
 ## Real-account validation required
 
-| Item     | What to verify                                                                                             |
-| -------- | ---------------------------------------------------------------------------------------------------------- |
-| IR1      | ✅ Convex cloud Node 22 runtime ≥ 22.12 (Gate V1: 22.23.2, 2026-09-28)                                     |
-| IR2      | the OAuth `user_id` vs `/me.user_id`                                                                       |
-| IR3      | `caption` / `media_product_type` returned under Instagram Login                                            |
-| IR4      | HTTP statuses of 190 / 4 / 17 / 80002; the error classification                                            |
-| IR5      | the usage header present on graph.instagram.com                                                            |
-| IR6–IR11 | day semantics, empty set vs 0, `follows_and_unfollows`, insight availability, `views`, retention (Stage B) |
-| IR12     | the 10K media limit and removal                                                                            |
-| IR13     | token refresh timing (60 days, ≥ 24 h)                                                                     |
-| IR14     | the rate budget in real use                                                                                |
-| IR15     | the follower snapshot vs the end-of-day value                                                              |
-| IR16     | the `instagram_business_manage_insights` scope name on the consent screen; `permissions` format            |
-| IR17     | the real Graph paging cursor alphabet (allowlist: printable ASCII ≤ 2048)                                  |
+| Item     | What to verify                                                                                                          |
+| -------- | ----------------------------------------------------------------------------------------------------------------------- |
+| IR1      | ✅ Convex cloud Node 22 runtime ≥ 22.12 (Gate V1: 22.23.2, 2026-09-28)                                                  |
+| IR2      | the OAuth `user_id` vs `/me.user_id`                                                                                    |
+| IR3      | `caption` / `media_product_type` returned under Instagram Login                                                         |
+| IR4      | HTTP statuses of 190 / 4 / 17 / 80002; the error classification                                                         |
+| IR5      | the usage header present on graph.instagram.com                                                                         |
+| IR6–IR11 | day semantics (UTC), empty set vs 0, `follows_and_unfollows` by `follow_type`, insight availability, `views`, retention |
+| IR12     | the 10K media limit and removal                                                                                         |
+| IR13     | token refresh timing (60 days, ≥ 24 h)                                                                                  |
+| IR14     | the rate budget in real use                                                                                             |
+| IR15     | the follower snapshot vs the end-of-day value                                                                           |
+| IR16     | the `instagram_business_manage_insights` scope name on the consent screen; `permissions` format                         |
+| IR17     | the real Graph paging cursor alphabet (allowlist: printable ASCII ≤ 2048)                                               |
+| IR18     | a one-day `total_value` matches the Instagram app                                                                       |
+| IR19     | the maximum `since`/`until` range (low risk: every request covers one day)                                              |
+| IR20     | account `views` / `comments`, documented as "in development"                                                            |
+| IR21     | organic-only counts really exclude ad engagement                                                                        |
+| IR22     | ✅ settled by Meta's documentation: media insights are always `lifetime`                                                |
+| IR23     | whether `AD` / `STORY` media appear in the media listing                                                                |
+| IR24     | `profile_links_taps` returns a total without a breakdown                                                                |
+| IR25     | the permalink host and path format                                                                                      |
+
+IR2–IR21 and IR23–IR25 remain **provisional**; only IR1 (measured) and IR22 (documented) are
+settled.
 
 ## Configuration
 

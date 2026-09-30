@@ -82,7 +82,8 @@ Natural keys, which the Phase 5 write path (`convex/sync/upsert.ts`) uses throug
 - **Replace, not patch (Phase 5):** a field the platform stops reporting disappears. Service-owned
   fields (`createdAt`, and `connectionId`/`linkedAt` on ad accounts) are preserved. Removed entities
   get `removedAt` after a complete full listing; they are never deleted (see [sync.md](sync.md)).
-  Social tables keep their listed rule until Phase 10 writes them.
+  Social tables follow the Phase 10 Stage B rules (column groups, lifetime snapshots, bounded
+  removal; see [sync.md](sync.md#organic-social-write-path-phase-10-stage-b)).
 
 ## Money
 
@@ -115,8 +116,10 @@ Which timezone defines a day:
 - **Campaign and ad group `startDate` / `endDate`:** also account-local days.
 - **Organic `publishedAt`:** an instant, grouped by the org timezone at read time.
 - **`socialPostMetricSnapshots.capturedDate`:** the UTC day of capture.
-- **`socialAccountMetricsDaily.date`:** the platform's reporting day. Instagram's exact semantics are
-  **unverified until Phase 10**.
+- **`socialAccountMetricsDaily.date`:** the **UTC day** Instagram insights were requested for
+  (one `since`/`until` UTC-day window per request, Phase 10 Stage B). Whether this matches the
+  Instagram app's day is [PROVISIONAL IR6/IR18]; see
+  [providers/instagram.md](providers/instagram.md).
 
 Helpers live in `convex/lib/dates.ts` (Intl-based, no date library).
 
@@ -205,9 +208,21 @@ money semantics are implemented provisionally and require validation on a real a
 - Linked accounts are upserted by natural key `(orgId, platform, externalId)` through
   `sync/upsert.ts`, which is also the single write path for all four social tables (ESLint).
 - `name` is the username as a label until the first sync preflight (Stage B).
+- `socialPosts` stores the permalink as its only URL (validated host and format); captions are
+  capped at 2,200 characters. No media, thumbnail or profile picture URL, biography, website,
+  comment or commenter is stored. Removed posts get `removedAt` and are never deleted.
 - `socialPostMetricSnapshots` stores **cumulative lifetime** values, one row per post per UTC
-  capture day. Daily deltas are computed in Phase 10 Stage B.
-- `socialAccountMetricsDaily` stores daily account values.
+  capture day (the last capture of a day wins). **No post deltas** are stored or computed: the
+  API and the dashboard present lifetime totals as of a capture, never differenced into daily
+  values (Stage B decision).
+- `socialAccountMetricsDaily` stores daily account values in two column groups with provenance
+  fields (Stage B, additive, optional):
+  - **profile:** `followers` and `followersCapturedAt` (when the follower count was captured,
+    by the sync preflight, on that UTC day);
+  - **insights:** the other metrics, `extras` (`likes`, `comments`, `shares`, `saves`, `replies`,
+    `profileLinksTaps`) and `insightsSyncedAt` (when the day's insights were synced, also for an
+    empty day, so "synced but not reported" differs from "not synced").
+    `profileViews` and `websiteClicks` (deprecated by Instagram) are never written.
 - Paid and organic engagement are never merged. Their engagement rates use different denominators
   (per impression versus per reach).
 
@@ -217,7 +232,8 @@ money semantics are implemented provisionally and require validation on a real a
   reporting.
 - There are no age, gender or device breakdown tables. A breakdown like that would get its own table
   later.
-- Instagram account-level reporting-day semantics are unverified until Phase 10.
+- Instagram account-level reporting-day semantics (UTC day windows) are implemented but
+  unverified on a real account ([PROVISIONAL IR6/IR18]).
 - Volume policy (Phase 5): `actionMetricsDaily` rows are synced with `placement = "all"` only (no
   placement breakdown) at every supported level; Phase 8 may further limit action types. The schema
   itself is generic.

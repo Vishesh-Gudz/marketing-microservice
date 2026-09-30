@@ -279,6 +279,58 @@ enums"). No provider-specific value appears in these enums; raw platform values 
 - KPI names: `ctr`, `conversionRate`, `roas`, `cpc`, `cpm`, `costPerConversion`; action groups:
   `costPerAction`, `valuePerSpend`
 
+## Organic Instagram analytics (Phase 10 Stage B)
+
+A separate, read-only module: `convex/analytics/organic/*` (domain) and the v1 files
+`socialAccounts.ts`, `socialPosts.ts`, `organicAnalytics.ts` with their DTOs. It reads only the
+four social tables and the social sync state. Organic and ad analytics never share tables,
+aggregation code, vocabularies or limits: the existing ESLint analytics block covers
+`convex/analytics/organic/**`, and `tests/lint/organic-separation.test.ts` scans the sources
+(no ad table in organic code, no organic table in ad code).
+
+| Function                            | Args                                                                                         | Returns                                                             |
+| ----------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `v1/socialAccounts:list`            | `paginationOpts` (1–100)                                                                     | accounts with followers, last sync and coverage (UTC days)          |
+| `v1/socialAccounts:get`             | `socialAccountId`                                                                            | one account                                                         |
+| `v1/socialPosts:list`               | `socialAccountId, publishedFrom?, publishedTo?, sort?{by: publishedAt, dir}, paginationOpts` | posts with their latest lifetime snapshot                           |
+| `v1/socialPosts:get`                | `postId, range?` (UTC capture days)                                                          | one post, its latest snapshot and its snapshots (oldest first)      |
+| `v1/organicAnalytics:overview`      | `range, compare?, socialAccountIds?` (≤ 50)                                                  | totals, KPIs, data state, coverage, optional comparison with deltas |
+| `v1/organicAnalytics:accountSeries` | `socialAccountId, range, granularity?: day\|week\|month`                                     | one account's buckets over UTC days (`timezone: "UTC"`)             |
+
+- **Two calendars, never mixed:** account metrics are keyed by **UTC day**; ranges apply to those
+  days as-is and presets resolve against today in UTC (`organic/dates.ts`
+  `resolveOrganicPreset`). Post filters (`publishedFrom`/`publishedTo`) are calendar days in the
+  **organization timezone**, converted to instants. Snapshot capture days are UTC days.
+- **Metrics:** additive over days and accounts: `followerDelta`, `views`, `totalInteractions`,
+  and the extras `likes`, `comments`, `shares`, `saves`, `replies`, `profileLinksTaps`.
+  Non-additive (unique accounts): `reach`, `accountsEngaged`, available only for **one account on
+  one UTC day**. `followers` is a snapshot: each account's latest capture in scope, summed across
+  accounts, never across days. Deprecated columns (`profileViews`, `websiteClicks`, post
+  `videoViews`) are always unavailable.
+- **KPI:** `engagementRate = totalInteractions / reach`, computed at query time only for one
+  account × one UTC day (from the same row) or one post snapshot. Reasons: `non_additive`,
+  `numerator_unavailable`, `denominator_unavailable`, `zero_denominator`.
+- **Missing is never zero:** a synced day (`insightsSyncedAt`) without a value is
+  `not_reported`; a day without the stamp is unknown; an explicit 0 stays 0. Metric reasons in
+  precedence order: `deprecated_metric` > `non_additive` > `below_follower_threshold` (follower
+  change under 100 followers, [doc]) > `not_reported`.
+- **Data states:** `reported`, `partial`, `unknown`, `unsupported` (capability level); there is no
+  `no_delivery` for organic data. Coverage reports synced vs unsynced UTC days per account.
+- **Posts:** lifetime values of one capture, never differenced into daily values; there are no
+  post deltas. Comparison deltas exist only for additive account metrics (`previous_zero`,
+  `previous_unavailable`; no currency reason).
+- **Limits (`organic/config.ts`, F16):** one read budget of 8,000 social rows per query (exceeded
+  → `INVALID_ARGUMENT` `too_many_rows`, never truncated data), ranges ≤ 400 days, ≤ 50 account
+  ids, pages of 1–100.
+- **Tenancy:** every function is an `orgQuery`; another org's account or post id is
+  `NOT_FOUND`. DTOs carry no credential, URL other than the permalink, media URL, biography or
+  commenter data.
+
+Tests: `convex/analytics/organic/*.test.ts` (aggregation, dates),
+`convex/v1/organic.test.ts` (exact seeded totals, states and reasons, UTC vs org
+timezone, budget, pagination, tenant isolation), the v1 inventory in `convex/v1/contract.test.ts`,
+and `tests/lint/organic-separation.test.ts`. All organic data used in tests is mock data.
+
 ## Testing
 
 `convex/analytics/*.test.ts` (numeric, aggregation and KPIs, periods and DST, FX, comparison,

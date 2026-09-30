@@ -10,7 +10,7 @@ import {
   serializeFilters,
   type DashboardFilters,
 } from "./filters";
-import { useOrgToday } from "./org-context";
+import { useOrgToday, useUtcToday } from "./org-context";
 
 /**
  * Dashboard state lives in the URL (D3): shareable, reload-safe. Updates use
@@ -45,10 +45,19 @@ export function useDashboardFilters() {
   };
 }
 
-/** The API arguments derived from the URL filters and the org's today. */
-export function useAnalyticsScope() {
+/** Which calendar presets resolve against: the org's days (paid) or UTC days (organic). */
+export type DayBasis = "org" | "utc";
+
+/**
+ * The API arguments derived from the URL filters and "today": the org timezone's today by
+ * default (paid analytics, unchanged); UTC's today with `dayBasis: "utc"` (organic account
+ * metrics are keyed by UTC day).
+ */
+export function useAnalyticsScope(options: { dayBasis?: DayBasis } = {}) {
   const { filters } = useDashboardFilters();
-  const today = useOrgToday();
+  const orgToday = useOrgToday();
+  const utcToday = useUtcToday();
+  const today = options.dayBasis === "utc" ? utcToday : orgToday;
   const range = resolveRange(filters, today);
   const compare = resolveCompare(filters);
   return {

@@ -33,7 +33,11 @@ import { humanize } from "@/lib/analytics/labels";
 import { useOrg } from "@/lib/analytics/org-context";
 import type { AdPlatform } from "@/lib/analytics/types";
 import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
-import { useAnalyticsScope, useDashboardFilters } from "@/lib/analytics/use-dashboard-filters";
+import {
+  useAnalyticsScope,
+  useDashboardFilters,
+  type DayBasis,
+} from "@/lib/analytics/use-dashboard-filters";
 
 type Range = { from: string; to: string };
 
@@ -367,19 +371,23 @@ function GranularityControl({
 /**
  * Global filters (D3/D12). Everything is URL state; each view enables only the
  * controls its API query accepts (e.g. entity views take no account filters).
+ * `dayBasis="utc"` (organic Instagram) resolves presets against today in UTC and says so;
+ * the default ("org") is the paid dashboard's behavior, unchanged.
  */
 export function FilterBar({
   accounts = true,
   compare = true,
   granularity = false,
+  dayBasis = "org",
 }: {
   accounts?: boolean;
   compare?: boolean;
   granularity?: boolean;
+  dayBasis?: DayBasis;
 }) {
   const org = useOrg();
   const { filters, setFilters } = useDashboardFilters();
-  const scope = useAnalyticsScope();
+  const scope = useAnalyticsScope({ dayBasis });
   const comparison =
     scope.compare === undefined
       ? undefined
@@ -405,9 +413,15 @@ export function FilterBar({
         {formatRange(scope.range)}
         {compare && comparison ? ` · compared with ${formatRange(comparison)}` : ""}
       </p>
-      <p className="text-xs text-muted-foreground">
-        Dates are each ad account&apos;s local days; presets use {org.timezone}.
-      </p>
+      {dayBasis === "utc" ? (
+        <p className="text-xs text-muted-foreground" data-testid="day-basis">
+          Account metrics use UTC days and presets use UTC; post publish dates use {org.timezone}.
+        </p>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          Dates are each ad account&apos;s local days; presets use {org.timezone}.
+        </p>
+      )}
     </section>
   );
 }

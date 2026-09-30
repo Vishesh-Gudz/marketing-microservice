@@ -40,3 +40,21 @@ export function useOrgToday(): string {
   // A timezone change applies on the next tick; until then keep the last known day.
   return today.key;
 }
+
+/**
+ * Today in UTC; re-checked every minute. Organic (Instagram) account metrics are keyed by UTC
+ * day, so their presets resolve against this day, not the org's (Phase 10 Stage B, R12).
+ */
+export function useUtcToday(): string {
+  const [today, setToday] = useState(() => todayIn("UTC"));
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setToday((previous) => {
+        const key = todayIn("UTC");
+        return previous === key ? previous : key;
+      });
+    }, 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  return today;
+}

@@ -1,6 +1,14 @@
 "use client";
 
-import { BarChart3, Layers, LayoutDashboard, Megaphone, Target, Wallet } from "lucide-react";
+import {
+  BarChart3,
+  Camera,
+  Layers,
+  LayoutDashboard,
+  Megaphone,
+  Target,
+  Wallet,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { filterParamsOnly } from "@/lib/analytics/filters";
@@ -12,6 +20,8 @@ export const NAV_ITEMS = [
   { href: "/breakdowns", label: "Breakdowns", icon: Layers },
   { href: "/conversions", label: "Conversions", icon: Target },
   { href: "/accounts", label: "Accounts", icon: Wallet },
+  // Phase 10: organic Instagram, separate from the paid pages above.
+  { href: "/social", label: "Organic", icon: Camera },
 ] as const;
 
 export function isActive(pathname: string, href: string): boolean {

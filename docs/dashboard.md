@@ -28,28 +28,36 @@ app/(dashboard)/layout.tsx        Suspense + AppShell (OrgGate, nav, header)
   campaigns/page.tsx              Campaign table
   campaigns/[campaignId]/…        Campaign detail (+ ad-groups/[adGroupId])
   breakdowns/ conversions/ accounts/
+  social/page.tsx                 Organic Instagram (Phase 10 Stage B)
+  social/posts/[postId]/page.tsx  One Instagram post
   loading.tsx error.tsx not-found.tsx
 components/dashboard/             shell, filters, KPI cards, charts, tables, notices, views/
+components/dashboard/organic/     organic-only KPI grid, series chart, posts table, account
+                                  picker, coverage notes, Instagram link
 lib/analytics/                    pure logic: types, format, filters, deltas, states, values,
                                   errors, chart-data, labels; hooks: use-analytics-query,
                                   use-dashboard-filters; org-context
+                                  organic-*: organic types, labels/reasons, values, chart rows,
+                                  URL params; permalink: the defensive Instagram link check
 ```
 
 ## Routes
 
-| Route                                           | Content                                                                                  | Public functions                                                                                      |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `/` Overview                                    | 10 KPI cards with comparison, freshness, trend chart, spend by platform, top 5 campaigns | `overview`, `timeSeries`, `breakdown(platform)`, `performance(campaign, 5)`, `connections:list`       |
-| `/campaigns`                                    | Campaign table: server sort, cursor pages of 25/50/100, spend/conversion deltas          | `performance(campaign)`                                                                               |
-| `/campaigns/[campaignId]`                       | Entity header + KPIs, chart, tabs: ad groups, ads, conversions                           | `overview(entity)` (D5), `timeSeries(entity)`, `performance(ad_group\|ad, parent)`, `actions(entity)` |
-| `/campaigns/[campaignId]/ad-groups/[adGroupId]` | Same for one ad group; tabs: ads, conversions                                            | as above; the ad group's `campaignId` must match the URL                                              |
-| `/breakdowns`                                   | Tabs by platform, account, placement (with level); spend-share bars + table              | `breakdown`, `adAccounts:list`                                                                        |
-| `/conversions`                                  | Action groups by action type, one row per attribution window; level account/campaign     | `actions`                                                                                             |
-| `/accounts`                                     | Accounts with KPIs, currency, time zone, link/connection health, coverage, last sync     | `breakdown(account)`, `adAccounts:list`, `connections:list`                                           |
+| Route                                           | Content                                                                                  | Public functions                                                                                                 |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `/` Overview                                    | 10 KPI cards with comparison, freshness, trend chart, spend by platform, top 5 campaigns | `overview`, `timeSeries`, `breakdown(platform)`, `performance(campaign, 5)`, `connections:list`                  |
+| `/campaigns`                                    | Campaign table: server sort, cursor pages of 25/50/100, spend/conversion deltas          | `performance(campaign)`                                                                                          |
+| `/campaigns/[campaignId]`                       | Entity header + KPIs, chart, tabs: ad groups, ads, conversions                           | `overview(entity)` (D5), `timeSeries(entity)`, `performance(ad_group\|ad, parent)`, `actions(entity)`            |
+| `/campaigns/[campaignId]/ad-groups/[adGroupId]` | Same for one ad group; tabs: ads, conversions                                            | as above; the ad group's `campaignId` must match the URL                                                         |
+| `/breakdowns`                                   | Tabs by platform, account, placement (with level); spend-share bars + table              | `breakdown`, `adAccounts:list`                                                                                   |
+| `/conversions`                                  | Action groups by action type, one row per attribution window; level account/campaign     | `actions`                                                                                                        |
+| `/accounts`                                     | Accounts with KPIs, currency, time zone, link/connection health, coverage, last sync     | `breakdown(account)`, `adAccounts:list`, `connections:list`                                                      |
+| `/social` (nav "Organic")                       | One Instagram account: 6 headline + 7 detail KPIs, UTC series, posts (lifetime totals)   | `socialAccounts:list`/`get`, `organicAnalytics:overview`/`accountSeries`, `socialPosts:list`, `connections:list` |
+| `/social/posts/[postId]`                        | One post: caption, latest lifetime totals, lifetime totals at each capture               | `socialPosts:get`                                                                                                |
 
 There is no org-wide ads page: the API requires a campaign or ad-group parent for ads (read budget).
 Connection management (connect, link, disconnect) stays out of the dashboard (D17); the
-"reconnect required" banner on Overview and Accounts is read-only.
+"reconnect required" banner on Overview, Accounts and Organic is read-only.
 
 A foreign, unknown or malformed entity id (API `NOT_FOUND`), or an ad group opened under the wrong
 campaign, renders `app/(dashboard)/not-found.tsx` inside the shell. Unmatched URLs use
@@ -61,20 +69,26 @@ Filters live in the URL so views are shareable and reload-safe. Filter changes u
 `router.replace(…, { scroll: false })`; drill-down links carry the global filters but not page
 parameters. Invalid values fall back to defaults (`lib/analytics/filters.ts`, unit-tested).
 
-| Parameter                             | Meaning                                                                 |
-| ------------------------------------- | ----------------------------------------------------------------------- |
-| `preset`                              | one of the 8 `periods.ts` presets or `custom` (default `last_30_days`)  |
-| `from`, `to`                          | custom range (validated like the API: real days, from ≤ to, ≤ 400 days) |
-| `compare`, `cfrom`, `cto`             | `previous` (default), `off`, or `custom` with its range                 |
-| `platforms`, `accounts`               | comma-separated filters (accounts capped at 50, as the API requires)    |
-| `granularity`                         | `auto` (default), `day`, `week`, `month`                                |
-| `sort`, `dir`                         | performance table sort (server-side only)                               |
-| `tab`, `level`                        | breakdown/detail tab, placement or conversion level                     |
-| `primaryOnly`, `window`, `actionType` | conversion filters                                                      |
+| Parameter                             | Meaning                                                                  |
+| ------------------------------------- | ------------------------------------------------------------------------ |
+| `preset`                              | one of the 8 `periods.ts` presets or `custom` (default `last_30_days`)   |
+| `from`, `to`                          | custom range (validated like the API: real days, from ≤ to, ≤ 400 days)  |
+| `compare`, `cfrom`, `cto`             | `previous` (default), `off`, or `custom` with its range                  |
+| `platforms`, `accounts`               | comma-separated filters (accounts capped at 50, as the API requires)     |
+| `granularity`                         | `auto` (default), `day`, `week`, `month`                                 |
+| `sort`, `dir`                         | performance table sort (server-side only)                                |
+| `tab`, `level`                        | breakdown/detail tab, placement or conversion level                      |
+| `primaryOnly`, `window`, `actionType` | conversion filters                                                       |
+| `account`                             | `/social`: the selected Instagram account id (default: the first listed) |
+| `pdir`                                | `/social`: post order by publish time, `asc` (default: newest first)     |
 
 Page size, pagination position and the chart metric are UI state (D2). Presets resolve against the
 **org time zone's today** (`todayIn(org.timezone)`, re-checked every minute) with the shared pure
 `resolvePreset`; queries never read the clock (D12). Ranges are each ad account's local days.
+On `/social` the filter bar is rendered with `dayBasis="utc"`: presets resolve against **today in
+UTC** (`useUtcToday`), because Instagram account metrics are keyed by UTC day; the same range
+filters posts by publish day in the **org time zone** (the B2 API semantics). The paid pages keep
+the default `dayBasis="org"`, unchanged.
 
 ### Automatic granularity (D13)
 
@@ -123,6 +137,32 @@ granularity for any valid range.
   range; other `INVALID_ARGUMENT` names the field; `NOT_FOUND` on entity pages → not-found page;
   auth/org errors → the org gate; unexpected errors → retry, never the raw message.
 
+### Organic Instagram (Phase 10 Stage B)
+
+- **Separate from paid:** `/social` uses only the organic v1 functions and organic-only
+  components (`components/dashboard/organic/`); no paid KPI, chart or table is reused for organic
+  values, and paid pages call no organic function. One account at a time (picker labelled
+  "Instagram account"); no platform filter, no ad-account filter.
+- **Values:** exactly what the API returns (`lib/analytics/organic-values.ts`); the dashboard does
+  no metric arithmetic (enforced by `tests/lint/organic-dashboard-boundary.test.ts`). A missing
+  value is "—" with the API reason (not reported, deprecated, non-additive, under 100 followers),
+  never 0; partial values carry `*`. Unknown/unsupported states are explained, never zero-filled.
+- **Headline KPIs:** Followers (latest capture, "as of …"), Follower change, Reach, Views, Total
+  interactions, Engagement rate. **Engagement details:** Accounts engaged, Likes, Comments,
+  Shares, Saves, Replies, Profile link taps. Reach and accounts engaged exist for one UTC day
+  only; engagement rate only for one account × one UTC day ("choose Today or Yesterday"
+  otherwise). Comparison chips show only the deltas the API returns.
+- **Series:** UTC day/week/month buckets, gaps for missing days, dashed partial buckets; metrics
+  that exist per day only explain themselves at week/month granularity. Table alternative
+  labelled "Period (UTC)".
+- **Posts:** lifetime totals at the latest capture ("not daily performance"); no post deltas. Each
+  row links to its post page and to Instagram ("View on Instagram", new tab,
+  `rel="noopener noreferrer"`) only when the stored permalink passes `safeInstagramPermalink`
+  (https, `instagram.com`/`www.instagram.com`, no credentials). No media, thumbnail or profile
+  image is shown. Captions render as plain text.
+- **Post page:** lifetime totals at each capture day (UTC), charted and tabled as cumulative
+  values, never differenced into daily performance.
+
 ## Import guard (D23)
 
 The frontend consumes application data only through the generated public API with
@@ -145,7 +185,9 @@ types are derived from the generated `api` (`lib/analytics/types.ts`).
 modules fail, runtime imports of the type-only modules fail, the allowlist passes, lookalike
 module names fail, and the current sources are clean. The dashboard's copies of the API limits
 are checked against `convex/analytics/config` in `tests/unit/dashboard-limits.test.ts`, outside
-the guarded directories.
+the guarded directories. The organic copies (`ORGANIC_MAX_RANGE_DAYS`, `ORGANIC_MAX_PAGE_SIZE`)
+and the UTC preset resolution (equal to the API's `resolveOrganicPreset` for every preset) are
+checked in `tests/unit/organic-dashboard-limits.test.ts`.
 
 ## Accessibility and responsive layout (D20, D21)
 
@@ -160,7 +202,7 @@ violations) on every page.
 ```bash
 npm run dev:backend      # local Convex backend
 npm run dev:auth setup   # dev issuer + dashboard token (org "dev-org")
-npm run dev:seed         # mock Meta + Google Ads accounts, linked and synced (idempotent)
+npm run dev:seed         # mock Meta, Google Ads and Instagram accounts, linked and synced (idempotent)
 npm run dev:frontend     # http://localhost:3000
 ```
 
@@ -168,6 +210,12 @@ npm run dev:frontend     # http://localhost:3000
 through the public v1 API, then runs each initial sync with the internal `sync/admin:*` operator
 functions via the Convex CLI. Re-running skips synced accounts (`--resync` forces a lookback).
 Without exchange rates the mixed currencies demonstrate the FX-missing and multi-currency states.
+For the organic page (development, tests and Playwright data only) it also connects the mock
+Instagram users `1` (business account) and `small` (57 followers, so under-100 reasons show)
+through the same public v1 functions, links them, and runs `sync/planner:tick` via the Convex CLI
+until each account's first sync has finished. It uses only the mock social provider registered in
+`PROVIDER_MODE=mock`; no production code path is special-cased. The mock user's consent code is
+mirrored in the script and kept equal to the mock by `tests/unit/dev-seed.test.ts`.
 
 If a dynamic route unexpectedly returns 404 in `next dev` after pulling new routes, delete
 `.next/dev` (a stale Turbopack dev cache) and restart.
@@ -176,7 +224,9 @@ If a dynamic route unexpectedly returns 404 in `next dev` after pulling new rout
 
 - Unit (Vitest + jsdom): pure logic in `lib/analytics/*.test.ts`; components with mocked
   `convex/react` and `next/navigation` (`tests/unit/dashboard-harness.tsx`).
-- Lint guard: `tests/lint/frontend-imports.test.ts`.
-- Playwright: `dashboard.spec.ts` and `smoke.spec.ts` are CI-safe (shell, navigation, gate, mobile
-  menu, not-found, axe). `dashboard-data.spec.ts` and `org-status.spec.ts` are local-only:
-  `E2E_DASHBOARD_DATA=1 npx playwright test` after `dev:auth setup` and `dev:seed`.
+- Lint guards: `tests/lint/frontend-imports.test.ts`, `tests/lint/organic-dashboard-boundary.test.ts`.
+- Playwright: `dashboard.spec.ts`, `social.spec.ts` and `smoke.spec.ts` are CI-safe (shell,
+  navigation, gate, mobile menu, not-found, axe). `dashboard-data.spec.ts`, `social-data.spec.ts`
+  and `org-status.spec.ts` are local-only: `E2E_DASHBOARD_DATA=1 npx playwright test` after
+  `dev:auth setup` and `dev:seed`. The organic data is mock data; no real Instagram account has
+  been used.

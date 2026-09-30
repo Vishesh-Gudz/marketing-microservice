@@ -58,11 +58,9 @@ planner re-verifies every row it returns: the row's subject must point at an acc
     Instagram provider wraps `@opencoredev/social-sdk`;
   - the ads worker refuses social claims and the social worker refuses ad claims;
   - `auth` failures also cancel the other social accounts' runs on the same connection.
-- **Stage A:**
-  - there is no social page write path: a social page can never be committed;
-  - every Instagram operation fails closed with `instagram_mapping_pending`, so a social run is
-    the failing preflight;
-  - coverage stays ad-only.
+- **Stage B:** social pages are committed by `commitSocialPage` (never `commitPage`) through
+  the social writers of `sync/upsert.ts`; see
+  [Organic social write path](#organic-social-write-path-phase-10-stage-b).
 
 See [providers/instagram.md](providers/instagram.md).
 
@@ -176,6 +174,49 @@ groups or ads, rows not seen since the listing started get `removedAt`. Rows are
 `removedAt`. Creatives have no `removedAt` and are never marked. **Safeguard:** if the listing would
 mark more than 50% **and** more than 20 entities, nothing is marked, the run is `partial` with
 `suspicious_empty_listing`, and `sync.removal_skipped` is audited.
+
+## Organic social write path (Phase 10 Stage B)
+
+`commitSocialPage` (`sync/runs.ts`) commits one social page in ONE transaction: guards, the
+social writer, the cursor checkpoint and the next step (the same protocol as `commitPage`, which
+refuses social pages). The social writers live in `sync/upsert.ts`, the only module that may
+insert into the four social tables (ESLint).
+
+| Table                     | Natural key                        | Write rule                                                                                      |
+| ------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------- |
+| socialAccounts            | orgId, platform, externalId        | preflight replaces provider-owned fields; never a URL (`profilePictureUrl` is cleared)          |
+| socialPosts               | orgId, socialAccountId, externalId | listing replaces provider-owned fields and clears `removedAt`; only the permalink URL is stored |
+| socialPostMetricSnapshots | orgId, postId, capturedDate        | replace (the last capture of a UTC day wins); lifetime values, never differenced or incremented |
+| socialAccountMetricsDaily | orgId, socialAccountId, date       | column-group replace (below)                                                                    |
+
+- **Column groups (F7):** a day row has two independent writers. The preflight owns the
+  **profile** group (`followers`, `followersCapturedAt`, today's UTC day); `fetchAccountMetrics`
+  owns the **insights** group (every other metric, `extras`, `insightsSyncedAt`). A writer
+  replaces only its own group: a column absent from its new values is cleared, nothing is
+  incremented, the other group is never touched. An empty day still gets `insightsSyncedAt`, so
+  "synced, not reported" is distinguishable from "not synced".
+- **Account-type drift (F11):** business ↔ creator never changes silently: audited
+  (`sync.account_attributes_changed`), then the account is blocked until re-linked.
+- **Unresolved records:** a snapshot of a post that is not stored, or a media item without a
+  product type, is skipped and counted `unresolved`; the listing is then incomplete.
+- **Incremental early stop (F9):** an incremental listing ends at the first page made entirely
+  of posts already stored (nothing inserted, reappeared or unresolved).
+- **Truncation:** a listing stops at `maxListingPages` (100) and a snapshot task at
+  `maxPostsPerSnapshotTask` (1,000); both are reported as warnings, never silently, and a
+  truncated listing never marks removals.
+- **Bounded removal (I-D13, R3, R5):** only after a complete, fully resolved, untruncated full
+  listing, and only for posts published after the oldest post the listing ingested (the platform
+  lists only recent media, so anything older is never inferred deleted). Three bounded passes
+  (bound, count, mark); posts get `removedAt`, never deleted. The mass-removal veto (more than
+  50% **and** more than 20 posts) skips marking, makes the run `partial`
+  (`suspicious_empty_listing`) and audits `sync.removal_skipped`.
+- **Social coverage:** `fetchAccountMetrics` windows (UTC days) whose tasks all succeeded
+  without unresolved or rejected records grow `coveredFrom`/`coveredThrough`; a day the platform
+  did not return counts as unresolved, so its window is not covered. Post snapshots are never
+  coverage.
+- **Sliding backfill horizon:** a social account's `backfillHorizon` follows the platform's
+  retention (today's UTC day − 89 for Instagram's 90 days) and is moved forward in `completeRun`,
+  so a gap that aged out of the platform window never keeps a backfill pending.
 
 ## Retry and error policy
 
@@ -296,7 +337,10 @@ npx convex run sync/admin:runStatus '{"runId":"<id>"}'
 npx convex run sync/admin:accountState '{"adAccountId":"<id>"}'
 ```
 
-`requestSync` also creates the sync state of accounts linked before Phase 5.
+`requestSync` also creates the sync state of accounts linked before Phase 5. `sync/admin:*`
+takes ad accounts only; social accounts are planned by `sync/planner:tick` (their sync state is
+created when they are linked). `npm run dev:seed` connects, links and syncs the mock Instagram
+users `1` and `small` this way (local development only).
 
 ## Testing
 
@@ -308,6 +352,9 @@ npx convex run sync/admin:accountState '{"adAccountId":"<id>"}'
   `lifecycle.test.ts` (concurrency, disconnect/unlink/relink/reconnect/re-auth), `removal.test.ts`,
   `scheduling.test.ts`, `metrics.test.ts` (restatement, missing vs zero, timezones, > 2^53),
   `isolation.test.ts`.
+- Organic social (Phase 10): `socialPlan.test.ts`, `socialUpsert.test.ts` (column groups,
+  snapshots, URLs), `socialRemoval.test.ts` (bound, veto), `socialCoverage.test.ts`,
+  `social.e2e.test.ts` and `social.mixed.e2e.test.ts` (mock Instagram next to mock ads).
 - Mock scenarios travel on the mock credential: connect the mock user `"<id>--<scenario>[--v<n>]"`
   (for example `"1--rate_limited"`, `"1--default--v1"`). Mock-only; real credentials never carry
   these fields.
