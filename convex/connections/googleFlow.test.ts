@@ -3,7 +3,6 @@ import { api } from "../_generated/api";
 import {
   adsError,
   createFakeGoogleAds,
-  FAKE_DEVELOPER_TOKEN,
   FAKE_GOOGLE_CLIENT_SECRET,
   oauthErrorResponse,
   type FakeGoogleAds,
@@ -62,7 +61,6 @@ const SECRET_MARKERS = [
   "test-access-",
   "test-gcode-",
   FAKE_GOOGLE_CLIENT_SECRET,
-  FAKE_DEVELOPER_TOKEN,
   "oauth2.googleapis.com",
   "googleads.googleapis.com",
   "openidconnect",
@@ -171,6 +169,8 @@ describe("Google connect flow (live mode, fake Google Ads API)", () => {
       "search",
     ]);
     expect(fake.log.every((e) => !e.secretInUrl)).toBe(true);
+    // Developer tokens were sunset on 2026-09-09: the flow needs none and never sends one.
+    expect(fake.log.every((e) => !e.developerTokenHeader)).toBe(true);
     // No stored access token, no plaintext refresh token, no email — anywhere.
     expectNoSecrets(await allRows(t));
     expect(await expectOpaqueCredentials(t)).toHaveLength(1);
@@ -222,6 +222,27 @@ describe("Google connect flow (live mode, fake Google Ads API)", () => {
     expect(params.get("warning")).toBe("discovery_failed");
     expectNoSecrets(await allRows(t));
   });
+
+  it("a Test-level Cloud project fails discovery visibly: no partial account list, no reauth", async () => {
+    fake.setAccessLevel("test");
+    stubLiveGoogle(fake);
+    const t = newBackend();
+    await setupSyncOrg(t);
+    const params = await connectGoogleFake(t, fake, "u1");
+    // The consent itself succeeds (the user did nothing wrong) ...
+    expect(params.get("status")).toBe("connected");
+    // ... but discovery reports the project-level failure instead of silently listing fewer
+    // (or zero) accounts.
+    expect(params.get("warning")).toBe("discovery_failed");
+    const connectionId = params.get("connection")!;
+    expect(await as(t).query(api.v1.connections.listDiscoveredAssets, { connectionId })).toEqual(
+      [],
+    );
+    const connection = await as(t).query(api.v1.connections.get, { connectionId });
+    expect(connection).toMatchObject({ status: "active", lastError: { kind: "unknown" } });
+    expect(fake.log.every((e) => !e.developerTokenHeader)).toBe(true);
+    expectNoSecrets(await allRows(t));
+  });
 });
 
 describe("sync through the connection (Stage B)", () => {
@@ -270,6 +291,38 @@ describe("sync through the connection (Stage B)", () => {
     });
     expect(db.audit.filter((a) => a.action === "connection.needs_reauth")).toHaveLength(1);
     expect(fake.log.slice(before).map((e) => e.kind)).toEqual(["token_refresh"]);
+    expectNoSecrets(await allRows(t));
+  });
+
+  it("a Test-level Cloud project fails the run as configuration: no reauth, no account block", async () => {
+    const t = newBackend();
+    const connectionId = await connectU1(t);
+    await linkMock(t, connectionId, ["2220000001"]);
+    // The project's production access is missing (never approved, or lost).
+    fake.setAccessLevel("test");
+    await planAndDrain(t);
+
+    const db = await snapshot(t);
+    expect(db.runs[0]!.status).toBe("failed");
+    const failed = db.tasks.find((task) => task.status === "failed")!;
+    expect(failed.lastError).toMatchObject({
+      kind: "unknown",
+      code: "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION",
+    });
+    // Not the user's fault and not the account's: the connection stays active and the
+    // account is not blocked; it is retried with the standard failure backoff.
+    expect(db.connections[0]!.status).toBe("active");
+    expect(db.states.every((state) => state.state !== "blocked")).toBe(true);
+    // Retry semantics: the failure is counted and the next plan is scheduled (backoff).
+    const [state] = db.states;
+    expect(state!.consecutiveFailures).toBeGreaterThanOrEqual(1);
+    expect(state!.nextPlanAt).toBeGreaterThan(db.runs[0]!.createdAt);
+    expect(
+      db.audit.filter((a) =>
+        ["connection.needs_reauth", "sync.account_blocked"].includes(a.action),
+      ),
+    ).toEqual([]);
+    expect(db.campaigns).toHaveLength(0);
     expectNoSecrets(await allRows(t));
   });
 
@@ -366,7 +419,7 @@ describe("D28b: sanitized Google OAuth-failure diagnostics", () => {
       { failureKind: "auth", failureStage: "api_access", providerCode: "NOT_ADS_USER" },
     ],
     [
-      "a developer token that is not approved",
+      "a Google Cloud project without production access",
       (f: FakeGoogleAds) =>
         f.inject({
           match: (e) => e.kind === "accessible",
@@ -374,14 +427,14 @@ describe("D28b: sanitized Google OAuth-failure diagnostics", () => {
             403,
             "PERMISSION_DENIED",
             "authorizationError",
-            "DEVELOPER_TOKEN_NOT_APPROVED",
+            "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION",
           ),
         }),
       "u1",
       {
         failureKind: "unknown",
         failureStage: "api_access",
-        providerCode: "DEVELOPER_TOKEN_NOT_APPROVED",
+        providerCode: "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION",
       },
     ],
     [
@@ -421,7 +474,7 @@ describe("D28b: sanitized Google OAuth-failure diagnostics", () => {
       provider: "google_ads",
       returnUrl: RETURN_URL,
     });
-    vi.stubEnv("GOOGLE_ADS_DEVELOPER_TOKEN", "");
+    vi.stubEnv("GOOGLE_CLIENT_SECRET", "");
     const params = new URL(authorizeUrl).searchParams;
     const code = fake.issueCode("u1", params.get("code_challenge")!);
     await t.fetch(`/oauth/callback?state=${params.get("state")}&code=${code}`, {

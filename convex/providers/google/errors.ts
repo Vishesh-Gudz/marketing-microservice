@@ -12,8 +12,17 @@ import type { GoogleAdsErrorCode, GoogleFailure } from "./client";
 
 const MAX_RETRY_AFTER_MS = 60 * 60_000;
 
-/** Developer-token / organization problems: configuration, never reauth or an account block. */
+/**
+ * Deployment-level access problems: configuration ("unknown"), never reauth, never an account
+ * block, never a silently skipped account.
+ * - CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION (v25+): our Google Cloud project (the one that
+ *   owns the OAuth client) has Test access and called a non-test account; the fix is a higher
+ *   access level for the project, not anything the user or the account can change.
+ * - DEVELOPER_TOKEN_* / ORGANIZATION_*: legacy enums from before the developer-token sunset
+ *   (2026-09-09); we no longer send a token, but such a body is still configuration.
+ */
 const CONFIG_CODES: ReadonlySet<string> = new Set([
+  "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION",
   "DEVELOPER_TOKEN_NOT_APPROVED",
   "DEVELOPER_TOKEN_PROHIBITED",
   "DEVELOPER_TOKEN_INVALID",

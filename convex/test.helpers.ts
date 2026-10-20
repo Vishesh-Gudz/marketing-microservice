@@ -19,7 +19,6 @@ import {
   type FakeGraph,
 } from "./providers/meta/fakeGraph.fixtures";
 import {
-  FAKE_DEVELOPER_TOKEN,
   FAKE_GOOGLE_CLIENT_ID,
   FAKE_GOOGLE_CLIENT_SECRET,
   type FakeGoogleAds,
@@ -511,7 +510,6 @@ export function stubLiveGoogle(fake: FakeGoogleAds, env: Record<string, string> 
   vi.stubEnv("META_LOGIN_CONFIG_ID", FAKE_CONFIG_ID);
   vi.stubEnv("GOOGLE_CLIENT_ID", FAKE_GOOGLE_CLIENT_ID);
   vi.stubEnv("GOOGLE_CLIENT_SECRET", FAKE_GOOGLE_CLIENT_SECRET);
-  vi.stubEnv("GOOGLE_ADS_DEVELOPER_TOKEN", FAKE_DEVELOPER_TOKEN);
   for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
   vi.stubGlobal("fetch", fake.fetch);
 }

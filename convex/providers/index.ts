@@ -55,11 +55,12 @@ function instagramRegistration(
   return { platform: "instagram", providerId, capabilities: INSTAGRAM_CAPABILITIES, discovery };
 }
 
-/** Google counts as configured when any of its env values is present (Phase 9). */
+/**
+ * Google counts as configured when either OAuth client value is present (Phase 9). There is
+ * no developer token (sunset 2026-09-09; access belongs to the OAuth client's Cloud project).
+ */
 function googleConfigured(env: Record<string, string | undefined>): boolean {
-  return ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_ADS_DEVELOPER_TOKEN"].some(
-    (name) => (env[name] ?? "") !== "",
-  );
+  return ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"].some((name) => (env[name] ?? "") !== "");
 }
 
 export function createDefaultRegistry(
@@ -87,10 +88,6 @@ export function createDefaultRegistry(
       const instagram = instagramConfigured(env);
       const googleVersion =
         env.GOOGLE_ADS_API_VERSION !== undefined ? { version: env.GOOGLE_ADS_API_VERSION } : {};
-      const developerToken =
-        env.GOOGLE_ADS_DEVELOPER_TOKEN !== undefined
-          ? { developerToken: env.GOOGLE_ADS_DEVELOPER_TOKEN }
-          : {};
       return createProviderRegistry({
         ads: [
           createMetaAdsProvider({
@@ -103,7 +100,6 @@ export function createDefaultRegistry(
           google
             ? createGoogleAdsProvider({
                 ...googleVersion,
-                ...developerToken,
                 ...(env.GOOGLE_CLIENT_ID !== undefined ? { clientId: env.GOOGLE_CLIENT_ID } : {}),
                 ...(env.GOOGLE_CLIENT_SECRET !== undefined
                   ? { clientSecret: env.GOOGLE_CLIENT_SECRET }
@@ -121,7 +117,7 @@ export function createDefaultRegistry(
           createMetaOAuthSpec(
             env.META_GRAPH_API_VERSION !== undefined ? { version: env.META_GRAPH_API_VERSION } : {},
           ),
-          ...(google ? [createGoogleOAuthSpec({ ...googleVersion, ...developerToken })] : []),
+          ...(google ? [createGoogleOAuthSpec(googleVersion)] : []),
           ...(instagram ? [createInstagramOAuthSpec()] : []),
         ],
         social: [

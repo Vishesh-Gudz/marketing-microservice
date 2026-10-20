@@ -39,6 +39,13 @@ describe("classifyGoogleFailure", () => {
       "USER_PERMISSION_DENIED",
     ],
     [ads("authorizationError", "CUSTOMER_NOT_ENABLED", 403), "permission", "CUSTOMER_NOT_ENABLED"],
+    // Our Google Cloud project has Test access: configuration, NOT the user's permission.
+    [
+      ads("authorizationError", "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION", 403),
+      "unknown",
+      "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION",
+    ],
+    // Legacy developer-token enums (pre-sunset bodies) stay configuration.
     [
       ads("authorizationError", "DEVELOPER_TOKEN_NOT_APPROVED", 403),
       "unknown",
@@ -132,9 +139,12 @@ describe("classifyGoogleFailure", () => {
 
   it("never uses the family default for configuration codes", () => {
     for (const family of ["authenticationError", "authorizationError"]) {
-      expect(classifyAdsErrorCode({ family, code: "DEVELOPER_TOKEN_NOT_APPROVED" })).toBe(
-        "unknown",
-      );
+      for (const code of [
+        "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION",
+        "DEVELOPER_TOKEN_NOT_APPROVED",
+      ]) {
+        expect(classifyAdsErrorCode({ family, code })).toBe("unknown");
+      }
     }
   });
 });

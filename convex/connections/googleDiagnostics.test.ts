@@ -11,6 +11,8 @@ describe("sanitizeOAuthDiagnostics — Google stages and codes", () => {
     ["auth", "token_exchange:no_refresh_token"],
     ["auth", "token_exchange:invalid_request"],
     ["auth", "api_access:NOT_ADS_USER"],
+    ["unknown", "api_access:CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION"],
+    // Legacy developer-token enums (pre-sunset bodies).
     ["unknown", "api_access:DEVELOPER_TOKEN_NOT_APPROVED"],
     ["unknown", "api_access:DEVELOPER_TOKEN_PROHIBITED"],
     ["unknown", "api_access:DEVELOPER_TOKEN_INVALID"],

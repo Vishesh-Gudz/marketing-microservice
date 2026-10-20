@@ -13,19 +13,20 @@ The Google Ads API behind the existing `AdsProvider` and `OAuthSpec` contracts
 
 ## Stages
 
-| Stage      | Status                                                                                         |
-| ---------- | ---------------------------------------------------------------------------------------------- |
-| H0         | Approved (plan revision 2).                                                                    |
-| Stage A    | Done: config, credential, client, errors, GAQL, cursor, routing, OAuth, discovery.             |
-| Stage B    | Done: structure/metric/action/placement mappings + "Real-account validation required".         |
-| Validation | Test manager + test developer token, then a Basic-access real account (GR checklist, Stage B). |
+| Stage      | Status                                                                                        |
+| ---------- | --------------------------------------------------------------------------------------------- |
+| H0         | Approved (plan revision 2).                                                                   |
+| Stage A    | Done: config, credential, client, errors, GAQL, cursor, routing, OAuth, discovery.            |
+| Stage B    | Done: structure/metric/action/placement mappings + "Real-account validation required".        |
+| Access     | Done (2026-10): no developer token; Cloud-project access levels ([API access](#api-access)).  |
+| Validation | A Test-access Cloud project with test accounts, then Explorer/Basic access on a real account. |
 
 ## Provider mode
 
 `PROVIDER_MODE` (Phase 8, D8) is unchanged. In `live` mode:
 
-- **Google configured** (any of `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
-  `GOOGLE_ADS_DEVELOPER_TOKEN` set): the real Google provider and OAuth spec are registered.
+- **Google configured** (`GOOGLE_CLIENT_ID` or `GOOGLE_CLIENT_SECRET` set): the real Google
+  provider and OAuth spec are registered.
   Missing or invalid values fail closed per call with `unknown` / `google_config_invalid`
   (never reauth, never an account block).
 - **Google not configured**: the Phase 8 unavailable stub stays (`auth` / `provider_unavailable`,
@@ -35,27 +36,69 @@ The Google Ads API behind the existing `AdsProvider` and `OAuthSpec` contracts
 
 ## Setup runbook (operator)
 
-1. **Google Cloud project → OAuth client** (type "Web application"). Authorized redirect URI:
-   `https://<deployment>.convex.site/oauth/callback` (exact). Consent screen: scopes
+1. **Google Cloud project → OAuth client** (type "Web application"). Authorized redirect URI
+   (exact, one per deployment): `<CONVEX_SITE_URL>/oauth/callback`, i.e.
+   `https://<deployment>.convex.site/oauth/callback` for a cloud deployment and
+   `http://127.0.0.1:3211/oauth/callback` for the local backend. Consent screen: scopes
    `https://www.googleapis.com/auth/adwords` and `openid` only. `adwords` is a sensitive scope:
-   production use requires Google's OAuth app verification; while the app is in "Testing", refresh
-   tokens expire after about 7 days (users must reconnect).
-2. **Developer token** from a Google Ads **manager** account (API Center). Access levels: Test
-   (test accounts only), Basic, Standard. A test token used against a production account fails with a
-   developer-token error.
-3. **Convex env** (never in files):
+   production use requires Google's OAuth app verification; while the app is in "Testing", only
+   listed test users can consent and refresh tokens expire after about 7 days (users must
+   reconnect).
+2. **Google Ads API access of the same Cloud project** (no developer token; see
+   [API access](#api-access)): enable the Google Ads API (the project gets Test access), then apply
+   for Explorer (or Basic, which needs brand verification) on the project's Google Ads API Overview
+   page. A Test-access project can reach test accounts only.
+3. **Convex env** (never in files; set values interactively, e.g.
+   `npx convex env set GOOGLE_CLIENT_SECRET`, so they stay out of shell history):
 
    ```bash
    npx convex env set PROVIDER_MODE live
-   npx convex env set GOOGLE_CLIENT_ID <client id>.apps.googleusercontent.com
-   npx convex env set GOOGLE_CLIENT_SECRET <client secret>
-   npx convex env set GOOGLE_ADS_DEVELOPER_TOKEN <developer token>
+   npx convex env set GOOGLE_CLIENT_ID
+   npx convex env set GOOGLE_CLIENT_SECRET
    ```
 
-   Optional: `GOOGLE_ADS_API_VERSION` (validated `vNN`; default `v25`).
+   Optional: `GOOGLE_ADS_API_VERSION` (validated `vNN`; default `v25`). `PROVIDER_MODE=live`
+   switches EVERY platform of that deployment to its live provider (no mock data); use a separate
+   deployment for live validation. A leftover `GOOGLE_ADS_DEVELOPER_TOKEN` is ignored (remove it
+   with `npx convex env remove GOOGLE_ADS_DEVELOPER_TOKEN`).
 
-4. For development without real delivery: a **test manager account** with test client accounts
-   (Google Ads test accounts do not serve ads, so they have no metrics).
+4. For development without real delivery: Google Ads **test accounts** (under a test manager
+   account) work with Test access (they do not serve ads, so they have no metrics).
+
+## API access
+
+Verified against Google's documentation on 2026-10-20 (pages last updated 2026-10-14 to
+2026-10-19):
+
+- **Developer tokens were sunset on 2026-09-09**
+  ([Developer token](https://developers.google.com/google-ads/api/docs/api-policy/developer-token)).
+  The `developer-token` header is "optional and ignored by the API servers", and Google "will
+  start rejecting developer tokens in API calls in a future major version". This service never
+  sends one and has no developer-token configuration. (The older
+  [REST auth page](https://developers.google.com/google-ads/api/rest/auth) still lists the header
+  as required; the dedicated developer-token page supersedes it.)
+- **Access belongs to the Google Cloud project** that owns the OAuth client ID and secret (user
+  authentication). All tenants share that project's access level and daily quota.
+- **Access levels**
+  ([Access levels](https://developers.google.com/google-ads/api/docs/api-policy/access-levels)):
+
+  | Level    | Accounts            | Operations / day                  | How                                                     |
+  | -------- | ------------------- | --------------------------------- | ------------------------------------------------------- |
+  | Test     | test accounts only  | 15,000                            | automatic when the Google Ads API is enabled            |
+  | Explorer | test and production | 2,880 (production), 15,000 (test) | application in the Cloud Console (automated review)     |
+  | Basic    | test and production | 15,000                            | application; brand verification of the project required |
+  | Standard | test and production | unlimited                         | application with a manual audit                         |
+
+- **Test access against a production account** fails with
+  `AuthorizationError.CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION` (v25+). It is classified as
+  configuration (`unknown`): discovery fails visibly (the connection is kept with the
+  `discovery_failed` warning and no partial account list), sync runs fail without reauth or an
+  account block and are retried with the standard failure backoff (15 min … 6 h,
+  [sync.md](../sync.md)). The fix is the project's access level.
+- **Multi-user OAuth**
+  ([Multi-user authentication](https://developers.google.com/google-ads/api/docs/oauth/multi-user-authentication)):
+  the `adwords` scope, offline access (refresh tokens) and Google's OAuth app verification. A
+  manager account is only needed to manage several accounts through one login.
 
 ## Connection flow and credential
 
@@ -66,10 +109,10 @@ The Google Ads API behind the existing `AdsProvider` and `OAuthSpec` contracts
 
 | Stage            | Call                                                                                          |
 | ---------------- | --------------------------------------------------------------------------------------------- |
-| `config`         | client id / secret / developer token validated before any call                                |
+| `config`         | client id / secret (and the API version) validated before any call                            |
 | `token_exchange` | `POST https://oauth2.googleapis.com/token` (form body, PKCE verifier); refresh token required |
 | `identity`       | `GET https://openidconnect.googleapis.com/v1/userinfo` → `sub` only                           |
-| `api_access`     | `GET .../v25/customers:listAccessibleCustomers` (proves Google Ads + developer-token access)  |
+| `api_access`     | `GET .../v25/customers:listAccessibleCustomers` (proves Google Ads API access for the user)   |
 
 - **Credential** (`GoogleCredential` v1, encrypted at rest): refresh token, OAuth client id,
   issue time, granted scopes. `refreshable: true`, no `expiresAt`. A credential of another OAuth
@@ -90,7 +133,8 @@ The `connection.oauth_failed` audit keeps only: `failureKind`, `failureStage` (`
 `identity`, `api_access`, `config`) and `providerCode` from an explicit allowlist:
 `invalid_grant`, `invalid_client`, `invalid_request`, `redirect_uri_mismatch`,
 `unauthorized_client`, `access_denied`, `no_refresh_token`, `client_id_mismatch`, `NOT_ADS_USER`,
-`DEVELOPER_TOKEN_NOT_APPROVED`, `DEVELOPER_TOKEN_PROHIBITED`, `DEVELOPER_TOKEN_INVALID`,
+`CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION`, the legacy `DEVELOPER_TOKEN_NOT_APPROVED`,
+`DEVELOPER_TOKEN_PROHIBITED`, `DEVELOPER_TOKEN_INVALID` (pre-sunset error bodies),
 `USER_PERMISSION_DENIED`, `CUSTOMER_NOT_ENABLED`, `google_config_invalid`. Never stored: tokens,
 codes, state, secrets, URLs, request/response bodies, messages, request ids, emails, payloads.
 
@@ -107,8 +151,9 @@ against an allowlist **before** any network call:
 | POST   | `https://googleads.googleapis.com/<version>/customers/<10 digits>/googleAds:search` |
 
 Anything else (`:mutate`, `:searchStream`, other paths or hosts) is refused. Headers:
-`Authorization: Bearer <access token>`, `developer-token`, and `login-customer-id` (10 digits) when
-the account is reached through a manager. No token or secret is ever put in a URL; errors carry
+`Authorization: Bearer <access token>`, `Accept`, `Content-Type` (search) and `login-customer-id`
+(10 digits) when the account is reached through a manager — never `developer-token` (sunset; see
+[API access](#api-access)). No token or secret is ever put in a URL; errors carry
 only structured codes. Timeouts: 60 s (sync), 15 s (OAuth, discovery). No retries in the client.
 
 ## GAQL
@@ -152,8 +197,8 @@ conversion metrics) and a deterministic `ORDER BY` (fields must be selected).
   all. A request stage whose result has `N` rows costs `Σ ceil(rowsOfGooglePage / limit)` search
   calls — about `ceil(N / 500)` for each 10,000-row Google page. Measured in
   `convex/providers/google/paging.test.ts` (search calls and token mints counted separately).
-- The developer token's daily operation quota is shared by **all tenants**; measure it on a real
-  account (GR17).
+- The Google Cloud project's daily operation quota (its access level, e.g. 2,880 production
+  operations with Explorer) is shared by **all tenants**; measure it on a real account (GR17).
 - Page tokens: an expired or invalid token is `invalid_request`; the sync restarts the task once
   from page 1. Token reuse/expiry behavior is not documented → GR16.
 
@@ -163,16 +208,16 @@ Classification uses structured `GoogleAdsFailure` error codes, the HTTP/RPC stat
 `error` field — never message text. With several errors, the most severe wins
 (auth > permission > configuration > not found > rate limited > transient > request > data).
 
-| Signal                                                                                                                                                                                                         | Kind                                                                               |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| OAuth `invalid_grant`, `access_denied`; `AuthenticationError.*` (`OAUTH_TOKEN_INVALID`, `NOT_ADS_USER`, …); HTTP 401                                                                                           | `auth` → `needs_reauth`                                                            |
-| `AuthorizationError.USER_PERMISSION_DENIED`, `CUSTOMER_NOT_ENABLED`, other authorization errors; HTTP 403                                                                                                      | `permission` → account blocked                                                     |
-| `DEVELOPER_TOKEN_NOT_APPROVED` / `_PROHIBITED` / `_INVALID`, `ORGANIZATION_NOT_ASSOCIATED_WITH_DEVELOPER_TOKEN`; OAuth `invalid_client` / `unauthorized_client` / `redirect_uri_mismatch`; missing/invalid env | `unknown` (configuration; no reauth, no block)                                     |
-| `CUSTOMER_NOT_FOUND`; HTTP 404                                                                                                                                                                                 | `not_found`                                                                        |
-| `QuotaError.RESOURCE_EXHAUSTED` / `RESOURCE_TEMPORARILY_EXHAUSTED`; HTTP 429                                                                                                                                   | `rate_limited`; `retryAfterMs` from `google.rpc.RetryInfo` / quota details (≤ 1 h) |
-| `InternalError.*`; HTTP 5xx; `UNAVAILABLE`, `DEADLINE_EXCEEDED`; network; timeout                                                                                                                              | `transient`                                                                        |
-| `RequestError.*` (incl. invalid/expired page tokens), `QueryError.*`; HTTP 400; own-cursor errors                                                                                                              | `invalid_request`                                                                  |
-| schema drift, account mismatch                                                                                                                                                                                 | `data`                                                                             |
+| Signal                                                                                                                                                                                                                                                                                   | Kind                                                                               |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| OAuth `invalid_grant`, `access_denied`; `AuthenticationError.*` (`OAUTH_TOKEN_INVALID`, `NOT_ADS_USER`, …); HTTP 401                                                                                                                                                                     | `auth` → `needs_reauth`                                                            |
+| `AuthorizationError.USER_PERMISSION_DENIED`, `CUSTOMER_NOT_ENABLED`, other authorization errors; HTTP 403                                                                                                                                                                                | `permission` → account blocked                                                     |
+| `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION` (Test-access project); legacy `DEVELOPER_TOKEN_NOT_APPROVED` / `_PROHIBITED` / `_INVALID`, `ORGANIZATION_NOT_ASSOCIATED_WITH_DEVELOPER_TOKEN`; OAuth `invalid_client` / `unauthorized_client` / `redirect_uri_mismatch`; missing/invalid env | `unknown` (configuration; no reauth, no block, never a skipped account)            |
+| `CUSTOMER_NOT_FOUND`; HTTP 404                                                                                                                                                                                                                                                           | `not_found`                                                                        |
+| `QuotaError.RESOURCE_EXHAUSTED` / `RESOURCE_TEMPORARILY_EXHAUSTED`; HTTP 429                                                                                                                                                                                                             | `rate_limited`; `retryAfterMs` from `google.rpc.RetryInfo` / quota details (≤ 1 h) |
+| `InternalError.*`; HTTP 5xx; `UNAVAILABLE`, `DEADLINE_EXCEEDED`; network; timeout                                                                                                                                                                                                        | `transient`                                                                        |
+| `RequestError.*` (incl. invalid/expired page tokens), `QueryError.*`; HTTP 400; own-cursor errors                                                                                                                                                                                        | `invalid_request`                                                                  |
+| schema drift, account mismatch                                                                                                                                                                                                                                                           | `data`                                                                             |
 
 ## Mappings (Stage B)
 
@@ -376,7 +421,8 @@ geo/device, platform revoke (G-D6), `searchStream`, any synthetic Performance Ma
 
 ## Real-account validation required
 
-No real Google Ads account or developer token has been used. **Nothing below is verified.** The
+No real Google Ads account or Google Cloud project access level has been used. **Nothing below is
+verified.** The
 fake Google Ads API models documented behavior only.
 
 | Id   | Item                                                                                                                                             | Status      |
@@ -396,10 +442,11 @@ fake Google Ads API models documented behavior only.
 | GR17 | Operation accounting per page, real `RetryInfo` delays, daily-quota reset                                                                        | **pending** |
 | GR20 | Ad-group vs asset-group id spaces within one account                                                                                             | pending     |
 | GR21 | Which error enums occur in which real situation                                                                                                  | pending     |
+| GR22 | Cloud-project access: which calls return `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION` (search vs `listAccessibleCustomers`); no developer token   | pending     |
 
-Validation path: a test manager with a test developer token (OAuth, discovery, routing,
-structure: GR3, GR5–GR9, GR21), then a Basic-access account with delivery (GR10–GR13, GR15–GR17,
-GR20). Findings are reported, never invented.
+Validation path: a Test-access Cloud project with test accounts under a test manager (OAuth,
+discovery, routing, structure: GR3, GR5–GR9, GR21, GR22), then an Explorer- or Basic-access project
+on an account with delivery (GR10–GR13, GR15–GR17, GR20). Findings are reported, never invented.
 
 ## Quota measurement (fake dataset)
 
@@ -420,7 +467,9 @@ missing refresh token), userinfo, `listAccessibleCustomers`, a GAQL-subset evalu
 (customer, customer_client, campaign + campaign_budget, ad_group, asset_group, ad_group_ad,
 conversion_action; `segments.date`, `segments.ad_network_type`, `segments.conversion_action*`;
 the documented `conversions` / `all_conversions` definitions), configurable page size, page
-tokens that can expire, `developer-token` and `login-customer-id` enforcement, injected
+tokens that can expire, the Cloud-project access level (a Test project gets
+`CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION` on production accounts; every request is logged with
+`developerTokenHeader`, which tests assert is never sent), `login-customer-id` enforcement, injected
 5xx/quota/query errors, proto3-JSON shapes (camelCase, int64 as strings, unset fields omitted) and
 **operation counters**. It contains synthetic data only and is not evidence of real account
 behavior. Its modeling assumptions are explicit: asset groups refuse the network segment (GR10;
@@ -449,5 +498,6 @@ allowlisted hosts).
 - **Reconnect:** `invalid_grant` moves a connection to `needs_reauth`; the user reconnects through
   `beginConnect`. Reconnecting the same Google user updates the credential in place.
 - **Monitoring:** `needs_reauth`, `rate_limited` spikes and `throttledUntil` (quota),
-  `google_config_invalid` / developer-token codes, `not_found` / `permission` blocks (routing), and
+  `google_config_invalid` / `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION` (raise the project's
+  access level), `not_found` / `permission` blocks (routing), and
   the D28b codes on `connection.oauth_failed`.

@@ -3,7 +3,6 @@ import type { ProviderContext } from "../types";
 import { createGoogleAdsProvider, type GoogleCredential } from ".";
 import {
   createFakeGoogleAds,
-  FAKE_DEVELOPER_TOKEN,
   FAKE_GOOGLE_CLIENT_ID,
   FAKE_GOOGLE_CLIENT_SECRET,
   FAKE_GOOGLE_RANGE,
@@ -48,7 +47,6 @@ describe("mapping seam without entries", () => {
     const provider = createGoogleAdsProvider({
       clientId: FAKE_GOOGLE_CLIENT_ID,
       clientSecret: FAKE_GOOGLE_CLIENT_SECRET,
-      developerToken: FAKE_DEVELOPER_TOKEN,
     });
     const call =
       operation === "fetchDailyMetrics" || operation === "fetchActionMetrics"

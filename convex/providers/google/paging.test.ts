@@ -9,7 +9,6 @@ import type {
 import { createGoogleAdsProvider, type GoogleCredential } from ".";
 import {
   createFakeGoogleAds,
-  FAKE_DEVELOPER_TOKEN,
   FAKE_GOOGLE_CLIENT_ID,
   FAKE_GOOGLE_CLIENT_SECRET,
   FAKE_GOOGLE_RANGE,
@@ -67,7 +66,6 @@ function setup(googlePageRows?: number, data: FakeGoogleDataset = dataset()) {
   const provider = createGoogleAdsProvider({
     clientId: FAKE_GOOGLE_CLIENT_ID,
     clientSecret: FAKE_GOOGLE_CLIENT_SECRET,
-    developerToken: FAKE_DEVELOPER_TOKEN,
   });
   return { fake, ctx, provider, data };
 }

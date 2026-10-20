@@ -3,7 +3,9 @@
  * createDefaultRegistry(); construction never throws, problems surface per call as
  * ProviderError "unknown" / google_config_invalid (never "auth": an env mistake must stay
  * reversible and must not push every Google connection into needs_reauth).
- * No client id, secret or developer token is ever logged or put in a URL or an error.
+ * No client id or secret is ever logged or put in a URL or an error.
+ * There is no developer token: developer tokens were sunset on 2026-09-09 and API access
+ * belongs to the Google Cloud project that owns the OAuth client.
  */
 
 /** Pinned Google Ads API version (G-D1; v25 released 2026-07-22). Bumped via the runbook. */
@@ -37,11 +39,6 @@ export function isValidGoogleClientId(value: string | undefined): value is strin
 
 export function isValidGoogleClientSecret(value: string | undefined): value is string {
   return value !== undefined && value.length >= 8 && value.length <= 256 && !/\s/.test(value);
-}
-
-/** Developer tokens are opaque; only a conservative shape is enforced. */
-export function isValidDeveloperToken(value: string | undefined): value is string {
-  return value !== undefined && /^[A-Za-z0-9_-]{10,64}$/.test(value);
 }
 
 export const GOOGLE_ADS_ORIGIN = "https://googleads.googleapis.com";

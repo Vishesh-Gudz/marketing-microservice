@@ -75,7 +75,11 @@ secrets introduced by each later phase.
 exactly as before (`dev`, `dev:auth setup`, `dev:seed` are mock-only). **Every cloud deployment
 must set `PROVIDER_MODE`** to `mock` or `live`; unset on a cloud deployment, or any other value, is
 a configuration error (no provider calls, no OAuth). Live Meta setup:
-[providers/meta.md](providers/meta.md).
+[providers/meta.md](providers/meta.md). Live Google Ads setup (OAuth client, the Google Cloud
+project's API access level, no developer token):
+[providers/google-ads.md](providers/google-ads.md#setup-runbook-operator). `PROVIDER_MODE=live`
+applies to every platform of a deployment, so keep the local backend in mock mode and validate live
+providers on a separate deployment.
 
 ## Syncing (Phase 5)
 

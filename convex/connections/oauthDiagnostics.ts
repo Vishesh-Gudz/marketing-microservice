@@ -55,6 +55,7 @@ const GOOGLE_CODES: ReadonlySet<string> = new Set([
   "no_refresh_token",
   "client_id_mismatch",
   "NOT_ADS_USER",
+  "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION",
   "DEVELOPER_TOKEN_NOT_APPROVED",
   "DEVELOPER_TOKEN_PROHIBITED",
   "DEVELOPER_TOKEN_INVALID",

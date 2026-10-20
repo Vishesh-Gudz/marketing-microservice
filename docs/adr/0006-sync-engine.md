@@ -66,3 +66,5 @@ fetchStartedAt` within the request scope. Never after a failed task.
 - Phases 8/9 must implement `getAccount`, list removed entities where metrics still reference them,
   wrap cursors opaquely, and (Google) refresh access tokens inside the action.
 - Per-connection/per-developer-token rate coordination and persisted token refresh are future work.
+  (2026-10: Google developer tokens were sunset; Google quota now belongs to the Google Cloud
+  project, see ADR 0010 "Amendment".)

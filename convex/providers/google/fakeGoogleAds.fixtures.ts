@@ -8,7 +8,9 @@ import type { GoogleCredential } from "./credential";
  * (camelCase, int64 as strings, `false`/empty omitted).
  *
  * It models the DOCUMENTED API (fixed 10,000-row pages by default, page tokens, the
- * login-customer-id rules, developer-token checks, GoogleAdsFailure error bodies with
+ * login-customer-id rules, the Google Cloud project access level (a "test" project may only
+ * reach test accounts: CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION; developer tokens were
+ * sunset on 2026-09-09 and the header is ignored), GoogleAdsFailure error bodies with
  * google.rpc.RetryInfo, the documented `conversions` / `all_conversions` definitions, the
  * segments.conversion_action compatibility rule) and contains no recorded data — it is not
  * evidence of real account behavior. Every call is logged and counted (operation counters)
@@ -24,7 +26,6 @@ import type { GoogleCredential } from "./credential";
 
 export const FAKE_GOOGLE_CLIENT_ID = "1234567890-fakeclient.apps.googleusercontent.com";
 export const FAKE_GOOGLE_CLIENT_SECRET = "test-google-client-secret";
-export const FAKE_DEVELOPER_TOKEN = "test-developer-token";
 export const FAKE_GOOGLE_CONFIG = {
   clientId: FAKE_GOOGLE_CLIENT_ID,
   clientSecret: FAKE_GOOGLE_CLIENT_SECRET,
@@ -867,14 +868,15 @@ export type GoogleLogEntry = {
   /** Operation kind. */
   kind: "token_exchange" | "token_refresh" | "userinfo" | "accessible" | "search" | "other";
   hasBearer: boolean;
-  developerToken: boolean;
+  /** A `developer-token` header was sent (obsolete since the 2026-09-09 sunset: must never be). */
+  developerTokenHeader: boolean;
   loginCustomerId?: string;
   customerId?: string;
   query?: string;
   pageToken?: boolean;
   /** Form field names of token requests. */
   formFields: string[];
-  /** True if the URL carries a token, secret, code or developer token. */
+  /** True if the URL carries a token, secret or code. */
   secretInUrl: boolean;
 };
 
@@ -896,6 +898,8 @@ export type FakeGoogleAds = {
   revoke(user: string): void;
   /** Invalidates every page token issued so far (EXPIRED_PAGE_TOKEN). */
   expirePageTokens(): void;
+  /** Changes the Cloud project's access level (e.g. an approval lost or not yet granted). */
+  setAccessLevel(level: "test" | "explorer"): void;
   /** Operation counters by kind. */
   counts(): Record<GoogleLogEntry["kind"], number>;
   /** Search calls per customer id. */
@@ -932,8 +936,11 @@ export function createFakeGoogleAds(
     users?: Record<string, FakeGoogleUser>;
     /** Rows per Google search page (default 10,000 — the documented fixed page size). */
     pageSize?: number;
-    /** "test" developer tokens may only access test accounts. */
-    developerTokenLevel?: "test" | "basic";
+    /**
+     * Access level of the Google Cloud project that owns the OAuth client (default
+     * "explorer"): a "test" project may only reach test accounts.
+     */
+    accessLevel?: "test" | "explorer";
     /** Metrics to leave out of a segmented result row (GR12 missing-vs-zero scenarios). */
     omitMetrics?: (context: { from: string; row: Record<string, unknown> }) => string[];
   } = {},
@@ -941,6 +948,7 @@ export function createFakeGoogleAds(
   const dataset = options.dataset ?? fakeGoogleDataset();
   const users = options.users ?? FAKE_GOOGLE_USERS;
   const pageSize = options.pageSize ?? 10_000;
+  let accessLevel = options.accessLevel ?? "explorer";
   const log: GoogleLogEntry[] = [];
   const rules: GoogleInjectRule[] = [];
   const codes = new Map<
@@ -1305,12 +1313,7 @@ export function createFakeGoogleAds(
     }
     if (entry.kind === "userinfo") return json(200, { sub: user.sub });
 
-    // --- Google Ads API: developer token ----------------------------------------
-    if (request.headers.get("developer-token") !== FAKE_DEVELOPER_TOKEN) {
-      return toResponse(
-        adsError(401, "UNAUTHENTICATED", "authenticationError", "DEVELOPER_TOKEN_INVALID"),
-      );
-    }
+    // --- Google Ads API (no developer token: sunset 2026-09-09, the header is ignored) ---
     if (entry.kind === "accessible") {
       if (user.notAdsUser) {
         return toResponse(adsError(401, "UNAUTHENTICATED", "authenticationError", "NOT_ADS_USER"));
@@ -1346,9 +1349,14 @@ export function createFakeGoogleAds(
         adsError(403, "PERMISSION_DENIED", "authorizationError", "CUSTOMER_NOT_ENABLED"),
       );
     }
-    if (options.developerTokenLevel === "test" && !target.testAccount) {
+    if (accessLevel === "test" && !target.testAccount) {
       return toResponse(
-        adsError(403, "PERMISSION_DENIED", "authorizationError", "DEVELOPER_TOKEN_NOT_APPROVED"),
+        adsError(
+          403,
+          "PERMISSION_DENIED",
+          "authorizationError",
+          "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION",
+        ),
       );
     }
 
@@ -1422,19 +1430,14 @@ export function createFakeGoogleAds(
       kind === "token_exchange" || kind === "token_refresh"
         ? formKeys(await request.clone().text())
         : [];
-    const allTokens = [
-      ...accessTokens.keys(),
-      ...refreshTokens.keys(),
-      FAKE_DEVELOPER_TOKEN,
-      FAKE_GOOGLE_CLIENT_SECRET,
-    ];
+    const allTokens = [...accessTokens.keys(), ...refreshTokens.keys(), FAKE_GOOGLE_CLIENT_SECRET];
     const entry: GoogleLogEntry = {
       method: request.method,
       host: url.host,
       path: url.pathname,
       kind,
       hasBearer: (request.headers.get("authorization") ?? "").startsWith("Bearer "),
-      developerToken: request.headers.get("developer-token") === FAKE_DEVELOPER_TOKEN,
+      developerTokenHeader: request.headers.has("developer-token"),
       ...(request.headers.get("login-customer-id") !== null
         ? { loginCustomerId: request.headers.get("login-customer-id")! }
         : {}),
@@ -1443,7 +1446,7 @@ export function createFakeGoogleAds(
       ...(searchBody !== undefined ? { pageToken: searchBody.pageToken !== undefined } : {}),
       formFields,
       secretInUrl:
-        ["access_token", "refresh_token", "client_secret", "code", "developer_token"].some((p) =>
+        ["access_token", "refresh_token", "client_secret", "code"].some((p) =>
           url.searchParams.has(p),
         ) || allTokens.some((token) => request.url.includes(token)),
     };
@@ -1493,6 +1496,9 @@ export function createFakeGoogleAds(
     },
     expirePageTokens() {
       validPageTokens = new Map();
+    },
+    setAccessLevel(level) {
+      accessLevel = level;
     },
     counts() {
       const out = {

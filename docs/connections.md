@@ -89,13 +89,13 @@ and allowlists `http://localhost:3000/`.
 
 ## Platform requirements (for Phases 8–9)
 
-|             | Meta                                                                     | Google Ads                                                    |
-| ----------- | ------------------------------------------------------------------------ | ------------------------------------------------------------- |
-| Login       | Facebook Login for Business (`config_id`)                                | OAuth 2.0 web client, `access_type=offline`, `prompt=consent` |
-| Scopes      | `ads_read` only (Phase 8, D9; `business_management` only if G1 requires) | `…/auth/adwords`, `openid`, `email`                           |
-| Identity    | `/me` id                                                                 | ID token `sub`                                                |
-| Token model | long-lived user token (~60 days), no refresh → `needs_reauth` on expiry  | refresh token; `invalid_grant` → `needs_reauth`               |
-| Also        | `appsecret_proof`; deauthorize + data-deletion callbacks (Phase 11)      | developer token; `login-customer-id` from `parentExternalId`  |
+|             | Meta                                                                     | Google Ads                                                                                   |
+| ----------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| Login       | Facebook Login for Business (`config_id`)                                | OAuth 2.0 web client, `access_type=offline`, `prompt=consent`                                |
+| Scopes      | `ads_read` only (Phase 8, D9; `business_management` only if G1 requires) | `…/auth/adwords`, `openid` (no email; Phase 9)                                               |
+| Identity    | `/me` id                                                                 | ID token `sub`                                                                               |
+| Token model | long-lived user token (~60 days), no refresh → `needs_reauth` on expiry  | refresh token; `invalid_grant` → `needs_reauth`                                              |
+| Also        | `appsecret_proof`; deauthorize + data-deletion callbacks (Phase 11)      | Cloud-project access level (no developer token); `login-customer-id` from `parentExternalId` |
 
 ### Instagram (Phase 10, organic)
 
