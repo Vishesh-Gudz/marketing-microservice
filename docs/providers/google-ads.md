@@ -171,10 +171,21 @@ conversion metrics) and a deterministic `ORDER BY` (fields must be selected).
   `FROM customer_client` hierarchy (level ≥ 1, ordered by id).
   - Managers are listed with `isManager: true` (not linkable); hidden clients are skipped.
   - Status: `ENABLED` → active, `CANCELED`/`CLOSED` → closed, `SUSPENDED` → disabled, else unknown.
+    Google documents that test accounts also have status `CLOSED`.
   - An accessible customer is always listed on its own (direct route, no `parentExternalId`);
     hierarchy clients get `parentExternalId` = the routing manager (the first accessible manager,
     in sorted order, that lists them). Duplicates are listed once.
-  - Test accounts carry `attributes.testAccount = "true"`.
+  - **Three-way manager / test-account status.** `customer.manager` / `customer.test_account` and
+    `customer_client.manager` / `customer_client.test_account` are `optional bool` in the v25
+    protos (explicit presence: a reported `false` is serialized). Discovery keeps all three cases:
+    `managerStatus` = `manager` | `client` | `unknown` and `testAccountStatus` = `test` | `not_test`
+    | `unknown`, where `unknown` means "not reported" and is never read as `client` / `not_test`.
+    `isManager` is `true` only for an explicit `true`; a manager's hierarchy is expanded only then.
+    Both statuses are stored with the discovered assets and returned by
+    `v1/connections:listDiscoveredAssets` (with `parentExternalId`); only an effective `client`
+    can be linked (`INVALID_ARGUMENT` / `manager_status_unknown` otherwise). A stored google_ads
+    row without a status (older discovery) is `unknown` until discovery runs again.
+  - Test accounts also keep `attributes.testAccount = "true"` (unchanged).
   - Pages are filled up to the page size (discovery runs at most 20 pages); a hierarchy beyond
     10,000 accounts fails closed (`unknown` / `google_hierarchy_limit`). An accessible customer that
     cannot be read (for example cancelled) is skipped — it has no currency/time zone to describe.
@@ -488,7 +499,57 @@ mapping), `registry` (D8 matrix); `convex/connections/googleFlow.test.ts` and
 pruning, removal, partial failure and coverage, quota throttling, expired page tokens, transient
 retries, capability-driven planning, the quota table, tenant isolation, secret scan);
 `tests/lint/google-guards.test.ts` (analytics ban, purity, no logging, read-only source scan,
-allowlisted hosts).
+allowlisted hosts). `convex/providers/google/accountStatus.test.ts` (true / false / omitted for
+`manager` and `test_account` on both queries); `convex/connections/googleTesterWorkflow.e2e.test.ts`
+(the tester workflow on the fake API: callback success and failures, three-way discovery, exactly
+one link, sync status and allowlisted error reasons, v1 analytics, cross-tenant isolation);
+`convex/sync/publicStatus.test.ts`; `tests/unit/google-ads-tester.test.ts` (guard, selection,
+typed confirmation, redaction, one-time redirect, arguments).
+
+## Tester validation (dev / validation deployments only)
+
+`scripts/google-ads-tester.mjs` lets an authorized tester exercise the existing integration as
+the **parent app would** (D17 unchanged): only the public v1 API, with short-lived (5 min)
+dev-issuer JWTs minted in the tool's process and never printed. Results are sanitized terminal
+reports (no dashboard change).
+
+**Deployment guard (fails closed).** The tool acts on ONE validation deployment:
+
+1. `.google-ads-tester.local.json` (git-ignored) names it — `{"validationDeployment": "<name>",
+"org": "gads-validation"}` — and `--deployment` must equal it. URLs, `local`, `prod`, `dev` and
+   loopback targets are refused.
+2. The Convex CLI (the operator's login) must report it as a **dev** deployment with that exact
+   name (an `env get` probe of a non-existent variable prints only the deployment label).
+3. The project's production deployment (`--prod` probe) must resolve and must be different.
+4. `DEPLOYMENT_ROLE` on the target must equal `google-ads-validation`.
+5. `AUTH_ISSUERS` must trust the dev issuer and `GOOGLE_CLIENT_ID` must be a Google web client id
+   (compared in memory, never printed; the client secret is never read). `PROVIDER_MODE` is
+   reported, never changed. Convex URLs are derived from the verified name only.
+
+**Commands** (`node scripts/google-ads-tester.mjs <command> --deployment <name>`):
+
+| Command                                                             | Does                                                                                                                                         |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `guard-check`                                                       | runs the guard only                                                                                                                          |
+| `connect [--port N]`                                                | requires `PROVIDER_MODE=live`; `beginConnect` (verifies `redirect_uri`), one-time redirect at `http://127.0.0.1:<port>/start`, waits ≤10 min |
+| `discover [--connection id]`                                        | customer id, name, type, manager relation, `testAccountStatus` (literal `unknown`), status, linked                                           |
+| `link --customer <id> [--connection id] [--allow-non-test-account]` | exactly ONE confirmed client; the exact customer id must be typed to confirm                                                                 |
+| `status`                                                            | connection health and per-account sync state / last error reason                                                                             |
+| `report [--days N]`                                                 | v1 analytics overview, coverage and campaign rows of the linked Google accounts                                                              |
+
+- `--allow-non-test-account` is an acknowledgement only (for `not_test` / `unknown`): it never
+  unlocks managers or unknown types and never bypasses Google's access rules (a Test-access Cloud
+  project still gets `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION` on production accounts).
+- Every printed line passes a redactor (JWTs, bearer tokens, OAuth URLs and `state` / `code` /
+  token parameters, Google token shapes, deploy keys, private keys, emails).
+- The OAuth return URL is the dev integration app's allowlisted `http://localhost:3000/`; the tool
+  learns the result from `v1/connections:list` and the sanitized `connection.oauth_failed` audit.
+
+**Operator steps outside the tool (each needs explicit approval):** set `DEPLOYMENT_ROLE` on the
+validation deployment, deploy the code, set `PROVIDER_MODE=live` there only, add the tester's
+Google account as an OAuth test user, confirm the Cloud project's access level (Test: test
+accounts only; Explorer or higher: production accounts), and return the deployment to safe mode
+afterwards.
 
 ## Runbooks
 

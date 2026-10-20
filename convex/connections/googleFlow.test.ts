@@ -142,7 +142,7 @@ describe("Google connect flow (live mode, fake Google Ads API)", () => {
       ["6660000001", "Fake Cancelled", "USD", false, "closed"],
       ["7770000001", "777-000-0001", "GBP", false, "active"],
     ]);
-    // The routing manager is kept internally (not part of the public DTO).
+    // The routing manager (also exposed as parentExternalId in the discovered-asset DTO).
     const discovered = await t.run((ctx) => ctx.db.query("discoveredAssets").collect());
     expect(
       Object.fromEntries(discovered.map((a) => [a.externalId, a.parentExternalId ?? null])),

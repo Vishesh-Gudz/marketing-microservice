@@ -76,6 +76,15 @@ export type Placement = (typeof PLACEMENTS)[number];
 export const AD_ACCOUNT_STATUSES = ["active", "disabled", "closed", "pending", "unknown"] as const;
 export type AdAccountStatus = (typeof AD_ACCOUNT_STATUSES)[number];
 
+/**
+ * Discovery-time account facts the platform may or may not report (Google: `optional bool`
+ * fields). "unknown" means not reported; it is never read as "client" or "not_test".
+ */
+export const MANAGER_STATUSES = ["manager", "client", "unknown"] as const;
+export type ManagerStatus = (typeof MANAGER_STATUSES)[number];
+export const TEST_ACCOUNT_STATUSES = ["test", "not_test", "unknown"] as const;
+export type TestAccountStatus = (typeof TEST_ACCOUNT_STATUSES)[number];
+
 /** Configured status of a campaign / ad group / ad. */
 export const ENTITY_STATUSES = [
   "active",

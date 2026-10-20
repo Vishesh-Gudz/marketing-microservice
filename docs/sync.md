@@ -69,6 +69,16 @@ See [providers/instagram.md](providers/instagram.md).
 **Fields a future DTO may expose (Phase 6/7):** run `kind`/`status`/`window`/`counts`/timestamps,
 error `kind` + generic `message`, `coveredFrom`/`coveredThrough`, `lastSuccessAt`, `state`.
 
+**Public sync status (`convex/sync/publicStatus.ts`).** `v1/adAccounts:list` now exposes a subset
+of those per ad account: `syncState` (the row's `state`; renamed because `state` is reserved for
+OAuth in the v1 contract guard), `lastSuccessAt`, the last run's `status`, `consecutiveFailures`,
+`nextRunAt` (= `nextPlanAt`), `coveredFrom` / `coveredThrough`, and `lastError { kind, message,
+reason?, at }`. The platform `code` stays internal: a known code becomes a `reason` through an
+explicit allowlist (`CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION` →
+`cloud_project_not_approved_for_production`, `invalid_grant` → `reauth_required`,
+`google_config_invalid` → `provider_config_invalid`, …); anything else keeps kind + generic message
+only. Read-only: nothing here changes scheduling or error handling.
+
 ## Lifecycle
 
 ```text

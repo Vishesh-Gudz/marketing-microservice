@@ -13,12 +13,14 @@ import {
   DELIVERY_STATUSES,
   ENTITY_LEVELS,
   ENTITY_STATUSES,
+  MANAGER_STATUSES,
   OBJECTIVES,
   PLACEMENTS,
   SOCIAL_ACCOUNT_STATUSES,
   SOCIAL_ACCOUNT_TYPES,
   SOCIAL_PLATFORMS,
   SOCIAL_POST_TYPES,
+  TEST_ACCOUNT_STATUSES,
 } from "./types";
 
 /**
@@ -41,6 +43,8 @@ export const connectionProviderValidator = literalUnion(CONNECTION_PROVIDERS);
 export const entityLevelValidator = literalUnion(ENTITY_LEVELS);
 export const placementValidator = literalUnion(PLACEMENTS);
 export const adAccountStatusValidator = literalUnion(AD_ACCOUNT_STATUSES);
+export const managerStatusValidator = literalUnion(MANAGER_STATUSES);
+export const testAccountStatusValidator = literalUnion(TEST_ACCOUNT_STATUSES);
 export const entityStatusValidator = literalUnion(ENTITY_STATUSES);
 export const deliveryStatusValidator = literalUnion(DELIVERY_STATUSES);
 export const objectiveValidator = literalUnion(OBJECTIVES);

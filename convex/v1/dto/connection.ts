@@ -4,7 +4,10 @@ import {
   adAccountStatusValidator,
   adPlatformValidator,
   connectionProviderValidator,
+  managerStatusValidator,
+  testAccountStatusValidator,
 } from "../../domain/validators";
+import { effectiveManagerStatus, effectiveTestAccountStatus } from "../../connections/assetStatus";
 import { toIso } from "../../lib/dto";
 import { connectionStatusValidator } from "../../tables/connections";
 
@@ -73,7 +76,14 @@ export const discoveredAssetDto = v.object({
   currency: v.string(),
   timezone: v.string(),
   status: adAccountStatusValidator,
+  /** True only when the platform explicitly reported a manager. */
   isManager: v.boolean(),
+  /** "manager" | "client" | "unknown" (not reported). Only "client" can be linked. */
+  managerStatus: managerStatusValidator,
+  /** "test" | "not_test" | "unknown" (not reported). Never defaulted. */
+  testAccountStatus: testAccountStatusValidator,
+  /** The manager account it was discovered through (absent: directly accessible). */
+  parentExternalId: v.optional(v.string()),
   /** Already linked to this connection. */
   linked: v.boolean(),
   discoveredAt: v.string(),
@@ -92,6 +102,9 @@ export function toDiscoveredAssetDto(
     timezone: asset.timezone,
     status: asset.status,
     isManager: asset.isManager,
+    managerStatus: effectiveManagerStatus(asset),
+    testAccountStatus: effectiveTestAccountStatus(asset),
+    ...(asset.parentExternalId !== undefined ? { parentExternalId: asset.parentExternalId } : {}),
     linked,
     discoveredAt: toIso(asset.discoveredAt),
   };

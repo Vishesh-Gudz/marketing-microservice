@@ -58,6 +58,13 @@ export type FakeCustomer = {
   manager?: boolean;
   status: string;
   testAccount?: boolean;
+  /**
+   * `manager` / `test_account` are `optional bool` in the v25 protos (explicit presence), so
+   * the fake serializes a set `false` explicitly. These flags model a field the server did
+   * NOT set (omitted from the JSON → "unknown" downstream).
+   */
+  omitManager?: boolean;
+  omitTestAccount?: boolean;
   /** Direct children (managers only). */
   children?: { id: string; hidden?: boolean }[];
 };
@@ -983,9 +990,9 @@ export function createFakeGoogleAds(
       ...(c.descriptiveName ? { descriptiveName: c.descriptiveName } : {}),
       currencyCode: c.currencyCode,
       timeZone: c.timeZone,
-      ...(c.manager ? { manager: true } : {}),
+      ...(c.omitManager ? {} : { manager: c.manager === true }),
       status: c.status,
-      ...(c.testAccount ? { testAccount: true } : {}),
+      ...(c.omitTestAccount ? {} : { testAccount: c.testAccount === true }),
     };
   }
 

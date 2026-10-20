@@ -52,3 +52,6 @@ next-env.d.ts
 
 # dev-only JWT signing keys (scripts/dev-auth.mjs)
 .dev-keys/
+
+# Google Ads tester: local allowlist of the validation deployment (scripts/google-ads-tester.mjs)
+.google-ads-tester.local.json

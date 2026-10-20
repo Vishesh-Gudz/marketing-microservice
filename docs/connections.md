@@ -45,6 +45,23 @@ v1/connections:linkAdAccounts ─► mapAdAccount(record, OrgScope) ─► adAcc
 - `status=error&error=<code>`, where `<code>` is one of `access_denied`, `invalid_state`,
   `expired_state`, `exchange_failed`, `identity_mismatch`, `internal`.
 
+**Discovered accounts and linking (additive fields).** `listDiscoveredAssets` returns, per account,
+`managerStatus` (`manager` | `client` | `unknown`), `testAccountStatus` (`test` | `not_test` |
+`unknown`) and `parentExternalId` (the manager it was discovered through; absent when directly
+accessible). `unknown` means the platform did not report the fact (Google's `manager` /
+`test_account` are optional fields) and is never treated as `client` / `not_test`.
+`linkAdAccounts` links only accounts whose effective manager status is `client`: managers are
+rejected as before, and an unknown manager status is `INVALID_ARGUMENT` with
+`reason: "manager_status_unknown"` (refresh discovery to re-check). Platforms that always report
+the account type (Meta, the mocks) derive it from `isManager`.
+
+**Sync status (additive).** Each `adAccounts:list` entry carries an optional read-only `sync`
+block: `syncState`, `lastSuccessAt`, `lastRunStatus`, `consecutiveFailures`, `nextRunAt`,
+`coveredFrom` / `coveredThrough` and `lastError { kind, message, reason?, at }`. `reason` comes
+only from an explicit allowlist (`convex/sync/publicStatus.ts`, e.g.
+`cloud_project_not_approved_for_production`, `reauth_required`, `provider_config_invalid`); the
+platform error code itself is never returned. See [sync.md](sync.md).
+
 ## Lifecycle
 
 ```text

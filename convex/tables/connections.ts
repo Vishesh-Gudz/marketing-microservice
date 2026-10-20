@@ -4,8 +4,10 @@ import {
   adAccountStatusValidator,
   adPlatformValidator,
   connectionProviderValidator,
+  managerStatusValidator,
   socialAccountTypeValidator,
   socialPlatformValidator,
+  testAccountStatusValidator,
 } from "../domain/validators";
 import { orgIdField } from "./common";
 
@@ -97,6 +99,13 @@ export const connectionTables = {
     status: adAccountStatusValidator,
     rawStatus: v.optional(v.string()),
     isManager: v.boolean(),
+    /**
+     * Discovery facts as the provider reported them (absent on rows stored before they were
+     * recorded). Read through connections/assetStatus.ts: an absent google_ads value is
+     * "unknown", never "client" / "not_test".
+     */
+    managerStatus: v.optional(managerStatusValidator),
+    testAccountStatus: v.optional(testAccountStatusValidator),
     parentExternalId: v.optional(v.string()),
     discoveredAt: v.number(),
   }).index("by_org_connection_external", ["orgId", "connectionId", "externalId"]),

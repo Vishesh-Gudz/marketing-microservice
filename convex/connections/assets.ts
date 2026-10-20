@@ -9,6 +9,7 @@ import type { ProviderAdAccount } from "../providers/types";
 import { RECORD_VALIDATORS } from "../providers/validate";
 import { ensureSyncAccount } from "../sync/state";
 import { upsertLinkedAdAccount } from "../sync/upsert";
+import { effectiveManagerStatus } from "./assetStatus";
 import { MAX_LINK_BATCH } from "./config";
 
 /**
@@ -67,6 +68,10 @@ export const storeDiscoveredAssets = internalMutation({
         status: record.status,
         ...(record.rawStatus !== undefined ? { rawStatus: record.rawStatus } : {}),
         isManager: record.isManager,
+        ...(record.managerStatus !== undefined ? { managerStatus: record.managerStatus } : {}),
+        ...(record.testAccountStatus !== undefined
+          ? { testAccountStatus: record.testAccountStatus }
+          : {}),
         ...(record.parentExternalId !== undefined
           ? { parentExternalId: record.parentExternalId }
           : {}),
@@ -156,6 +161,15 @@ export async function linkAdAccounts(
     }
     if (asset.isManager) {
       throw apiError("INVALID_ARGUMENT", "Manager accounts cannot be linked.", { externalId });
+    }
+    // Only an account the platform confirmed as a client is linkable: an "unknown" manager
+    // status is never treated as a client (refresh discovery to re-check).
+    if (effectiveManagerStatus(asset) !== "client") {
+      throw apiError(
+        "INVALID_ARGUMENT",
+        "The platform did not confirm that this is a client account; refresh discovery.",
+        { externalId, reason: "manager_status_unknown" },
+      );
     }
 
     // The single canonical write path (convex/sync/upsert.ts), by natural key.
