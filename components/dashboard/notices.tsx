@@ -1,32 +1,49 @@
 "use client";
 
-import { AlertTriangle, Info } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Info, XCircle } from "lucide-react";
+import Link from "next/link";
 import type { ReactNode } from "react";
 import { api } from "@/convex/_generated/api";
 import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
 import type { Coverage, Fx } from "@/lib/analytics/types";
 import { cn } from "@/lib/utils";
 
-function Notice({
+const NOTICE_TONES = {
+  info: { Icon: Info, role: undefined, className: "bg-muted/40 text-muted-foreground" },
+  warning: {
+    Icon: AlertTriangle,
+    role: "status",
+    className:
+      "border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100",
+  },
+  success: {
+    Icon: CheckCircle2,
+    role: "status",
+    className:
+      "border-emerald-300 bg-emerald-50 text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100",
+  },
+  error: {
+    Icon: XCircle,
+    role: "alert",
+    className: "border-destructive/40 bg-destructive/5 text-foreground",
+  },
+} as const;
+
+export function Notice({
   tone,
   children,
   label,
 }: {
-  tone: "info" | "warning";
+  tone: keyof typeof NOTICE_TONES;
   children: ReactNode;
   label: string;
 }) {
-  const Icon = tone === "warning" ? AlertTriangle : Info;
+  const { Icon, role, className } = NOTICE_TONES[tone];
   return (
     <div
-      role={tone === "warning" ? "status" : undefined}
+      role={role}
       aria-label={label}
-      className={cn(
-        "flex items-start gap-2 rounded-md border px-3 py-2 text-sm",
-        tone === "warning"
-          ? "border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100"
-          : "bg-muted/40 text-muted-foreground",
-      )}
+      className={cn("flex items-start gap-2 rounded-md border px-3 py-2 text-sm", className)}
     >
       <Icon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
       <div>{children}</div>
@@ -90,7 +107,10 @@ export function CoverageNotice({ coverage }: { coverage: Coverage }) {
 
 const PROVIDER_LABEL = { meta: "Meta", google_ads: "Google Ads", instagram: "Instagram" } as const;
 
-/** Connections whose credentials stopped working (needs_reauth; read-only, D17). */
+/**
+ * Connections whose credentials stopped working (needs_reauth). Google Ads is reconnected on
+ * the Connections page; other platforms stay read-only here (D17).
+ */
 export function ReauthBanner() {
   const { data: connections } = useAnalyticsQuery(api.v1.connections.list, {});
   const broken = (connections ?? []).filter((c) => c.status === "needs_reauth");
@@ -100,6 +120,14 @@ export function ReauthBanner() {
     <Notice tone="warning" label="Reconnect required">
       {broken.length === 1 ? "A connection needs" : "Some connections need"} to be reconnected (
       {names}). Their accounts stop updating until an admin reconnects them.
+      {broken.some((c) => c.provider === "google_ads") && (
+        <>
+          {" "}
+          <Link href="/connections" className="font-medium underline underline-offset-4">
+            Reconnect Google Ads
+          </Link>
+        </>
+      )}
     </Notice>
   );
 }

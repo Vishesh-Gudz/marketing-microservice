@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Doc, Id } from "../_generated/dataModel";
-import { SYNC_ERROR_REASONS, syncErrorReason, toPublicSyncStatus } from "./publicStatus";
+import {
+  isSyncErrorReason,
+  SYNC_ERROR_REASONS,
+  syncErrorReason,
+  toPublicSyncStatus,
+} from "./publicStatus";
 
 // The public sync view exposes only DTO-safe fields: the platform error `code` never leaves
 // the server, and only allowlisted codes become a `reason`.
@@ -30,6 +35,7 @@ describe("syncErrorReason", () => {
     ["provider_mode_missing", "provider_mode_misconfigured"],
     ["no_route", "account_not_accessible"],
     ["RESOURCE_EXHAUSTED", "rate_limited"],
+    ["NOT_ADS_USER", "not_ads_user"],
     [
       "api_access:CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION",
       "cloud_project_not_approved_for_production",
@@ -54,8 +60,18 @@ describe("syncErrorReason", () => {
       "CUSTOMER_NOT_ENABLED",
       "CUSTOMER_NOT_FOUND",
       "provider_unavailable",
+      "NOT_ADS_USER",
     ]) {
       expect(SYNC_ERROR_REASONS).toContain(syncErrorReason(code));
+    }
+  });
+});
+
+describe("isSyncErrorReason", () => {
+  it("accepts every published reason and nothing else", () => {
+    for (const reason of SYNC_ERROR_REASONS) expect(isSyncErrorReason(reason)).toBe(true);
+    for (const value of [undefined, null, 1, "", "NOT_ADS_USER", "toString", "__proto__"]) {
+      expect(isSyncErrorReason(value)).toBe(false);
     }
   });
 });

@@ -37,11 +37,44 @@
 8. **Exposure.**
    - DTOs have no secret fields. The contract test bans secret-like names in every v1 argument and
      return type.
-   - Stored errors are sanitized to a kind plus a generic message.
+   - Stored errors are sanitized to a kind plus a generic message. Google Ads discovery failures
+     additionally carry an allowlisted public `reason` (never the platform code, which is not
+     stored on the connection).
+   - The dashboard follows `beginConnect`'s authorization URL in the same tab and never renders,
+     logs or stores it (it carries the state nonce and the PKCE challenge); callback result
+     parameters are shown only as fixed text and removed from the URL.
    - Audit entries hold only IDs, statuses and counts.
    - `console` is banned in `convex/connections/`.
 9. **Deletion.** Disconnect schedules a best-effort platform revoke and then **always** deletes the
    credential. The hourly sweep deletes any credential left on a revoked connection.
+
+## Known gap: OAuth callback ownership
+
+> **Required fix before any public or multi-tenant launch. The current connect flow is not safe
+> for public access.** It is acceptable only on local and validation deployments with known test
+> users.
+
+**The gap.** `beginConnect` binds the pending OAuth state to the org, app and user (`sub`) that
+called it, and the callback stores the resulting connection for that org. Nothing binds the state
+to the **browser session or person that completes the platform consent**. Whoever opens a valid
+authorization URL (single-use, 10-minute TTL) and consents attaches **their** platform account to
+the **initiating** org. Example: an admin of org A starts a connection and gets someone else to open
+the link; that person's Google Ads account becomes a connection of org A, which can then link and
+sync its data. The state nonce, PKCE, the return-URL allowlist and credential encryption do not
+prevent this: they protect the exchange, not the ownership.
+
+**Today's mitigations (partial).** The dashboard follows the authorization URL in the same tab and
+never displays, logs or stores it; the tester CLI redacts it and serves it through a one-time
+loopback redirect. Neither stops an initiator who deliberately forwards the URL.
+
+**Required fix (design to be approved).** The callback must not activate a connection on its own.
+It stores the grant as a **pending** connection and returns a short-lived, single-use claim to the
+return URL; the connection becomes active only when the **same authenticated user** (same issuer,
+org and `sub` as the initiator), in the same app, confirms it through an authenticated v1 call
+within a short window. Unclaimed or mismatched grants are deleted. Binding the state to the
+initiating browser (a first-party cookie on the callback origin) is a complementary measure.
+Tests must show that a consent completed by someone else can never become another org's active
+connection.
 
 ## Global indexes (approved exceptions to "orgId first")
 

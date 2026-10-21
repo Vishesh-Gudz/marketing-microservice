@@ -7,6 +7,7 @@ import { getOwned, type Tenant } from "../lib/tenancy";
 import { orgScopeFromTenant } from "../mapping/scope";
 import type { ProviderAdAccount } from "../providers/types";
 import { RECORD_VALIDATORS } from "../providers/validate";
+import { syncErrorReason } from "../sync/publicStatus";
 import { ensureSyncAccount } from "../sync/state";
 import { upsertLinkedAdAccount } from "../sync/upsert";
 import { effectiveManagerStatus } from "./assetStatus";
@@ -94,15 +95,28 @@ export const storeDiscoveredAssets = internalMutation({
   },
 });
 
-/** Records a sanitized connection error (kind + generic message only). */
+/**
+ * Records a sanitized connection error (kind + generic message). For Google Ads, the
+ * platform code is translated into an allowlisted public `reason` (sync/publicStatus.ts);
+ * the code itself is never stored, and other providers record no reason.
+ */
 export const recordConnectionError = internalMutation({
-  args: { connectionId: v.id("connections"), kind: v.string(), message: v.string() },
+  args: {
+    connectionId: v.id("connections"),
+    kind: v.string(),
+    message: v.string(),
+    providerCode: v.optional(v.string()),
+  },
   returns: v.null(),
-  handler: async (ctx, { connectionId, kind, message }) => {
+  handler: async (ctx, { connectionId, kind, message, providerCode }) => {
     const connection = await ctx.db.get(connectionId);
     if (connection === null) return null;
     const now = Date.now();
-    await ctx.db.patch(connectionId, { lastError: { kind, message, at: now }, updatedAt: now });
+    const reason = connection.provider === "google_ads" ? syncErrorReason(providerCode) : undefined;
+    await ctx.db.patch(connectionId, {
+      lastError: { kind, message, ...(reason !== undefined ? { reason } : {}), at: now },
+      updatedAt: now,
+    });
     return null;
   },
 });

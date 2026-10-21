@@ -76,8 +76,11 @@ OAuth in the v1 contract guard), `lastSuccessAt`, the last run's `status`, `cons
 reason?, at }`. The platform `code` stays internal: a known code becomes a `reason` through an
 explicit allowlist (`CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION` →
 `cloud_project_not_approved_for_production`, `invalid_grant` → `reauth_required`,
-`google_config_invalid` → `provider_config_invalid`, …); anything else keeps kind + generic message
-only. Read-only: nothing here changes scheduling or error handling.
+`google_config_invalid` → `provider_config_invalid`, `NOT_ADS_USER` → `not_ads_user`, …); anything
+else keeps kind + generic message only. Read-only: nothing here changes scheduling or error
+handling. The same allowlist explains Google Ads discovery failures on a connection
+([connections.md](connections.md)). The dashboard's `/connections` page shows this block for linked
+Google Ads accounts ([dashboard.md](dashboard.md#connections-google-ads)).
 
 ## Lifecycle
 
@@ -340,7 +343,8 @@ Routine runs are not audited (`syncRuns` is the operational log). Audited, subje
 ```bash
 npm run dev:backend                     # local Convex backend
 npm run dev:auth setup                  # dev issuer, encryption key, dashboard token
-# connect + link through v1 (dashboard in Phase 7, or tests/live/connections.live.test.ts)
+# connect + link through v1: npm run dev:seed (mock accounts), the dashboard's /connections page
+# (Google Ads only, local dev token), or tests/live/connections.live.test.ts
 npx convex run sync/planner:tick        # plan now instead of waiting for the cron
 npx convex run sync/admin:requestSync '{"adAccountId":"<id>"}'
 npx convex run sync/admin:runStatus '{"runId":"<id>"}'

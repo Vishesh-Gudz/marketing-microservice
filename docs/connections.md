@@ -8,6 +8,20 @@ credentials are handled. The code lives in `convex/connections/`, `convex/v1/con
 > arrives in Phase 8 and the real Google Ads spec in Phase 9. They implement the same `OAuthSpec`
 > interface (`convex/providers/oauth.ts`), so nothing else changes.
 
+**Who starts connections.** Every client uses the same v1 functions below; there is no second
+integration and no other credential store.
+
+- **Google Ads:** the standalone dashboard's `/connections` page
+  ([dashboard.md](dashboard.md#connections-google-ads); ADR 0008 D17 amendment), and later the
+  parent app through v1. Today the dashboard runs with the local development token in mock mode
+  only; hosted users cannot sign in or connect yet.
+- **Meta Ads and Instagram:** the parent app through v1. The dashboard shows their status
+  read-only.
+
+> **Not ready for public use:** the OAuth callback stores a connection for whoever _started_ the
+> sign-in, not for whoever _completed_ it. This must be fixed before any public or multi-tenant
+> launch; see [Callback ownership](#security-requirement-callback-ownership).
+
 ## Flow
 
 ```text
@@ -39,11 +53,24 @@ v1/connections:linkAdAccounts ─► mapAdAccount(record, OrgScope) ─► adAcc
 
 `beginConnect` args: `{ provider, returnUrl?, reconnectConnectionId? }` → `{ authorizeUrl, expiresAt }`.
 
-**Callback result parameters:**
+**Callback result parameters** (appended to the allowlisted `returnUrl`; never tokens, codes or
+messages):
 
-- `status=connected&connection=<id>`, plus `&warning=discovery_failed` when discovery failed.
+- `status=connected&connection=<id>`, plus `&warning=discovery_failed` when discovery failed: the
+  connection is stored and active, and its `lastError` says why discovery failed (below).
 - `status=error&error=<code>`, where `<code>` is one of `access_denied`, `invalid_state`,
-  `expired_state`, `exchange_failed`, `identity_mismatch`, `internal`.
+  `expired_state`, `exchange_failed`, `identity_mismatch`, `internal`. The published code set
+  (`CALLBACK_ERROR_CODES`) also contains `discovery_failed`, but the callback reports discovery
+  failures only as the warning above; clients should still handle it (the dashboard does).
+- Clients must treat unknown codes as a generic failure and must not display parameter values.
+
+**Google Ads today (Phase 9).** `beginConnect` builds Google's authorization URL (`adwords` and
+`openid` scopes, `access_type=offline`, `prompt=consent`, PKCE S256). The callback exchanges the
+code (a refresh token is required), reads the OpenID `sub` as the identity, and probes Google Ads
+API access (`listAccessibleCustomers`) **before** anything is stored: a Google account with no
+Google Ads access (`NOT_ADS_USER`) fails as `exchange_failed`, with no connection created. Then
+it encrypts and stores the credential and runs discovery (manager hierarchies included). Details:
+[providers/google-ads.md](providers/google-ads.md#connection-flow-and-credential).
 
 **Discovered accounts and linking (additive fields).** `listDiscoveredAssets` returns, per account,
 `managerStatus` (`manager` | `client` | `unknown`), `testAccountStatus` (`test` | `not_test` |
@@ -53,7 +80,24 @@ accessible). `unknown` means the platform did not report the fact (Google's `man
 `linkAdAccounts` links only accounts whose effective manager status is `client`: managers are
 rejected as before, and an unknown manager status is `INVALID_ARGUMENT` with
 `reason: "manager_status_unknown"` (refresh discovery to re-check). Platforms that always report
-the account type (Meta, the mocks) derive it from `isManager`.
+the account type (Meta, the mocks) derive it from `isManager`. Google Ads rows discovered before
+these fields were recorded read `unknown` until discovery runs again. Linking never trusts a
+client-supplied customer id: only ids this connection discovered can be linked.
+
+**Discovery errors (additive).** A failed discovery (in the callback or a retry) keeps the
+connection and records a sanitized `lastError { kind, message, reason?, at }` on it:
+`kind` is the provider error kind and `message` a generic text. For **Google Ads** connections
+only, the platform code is translated into an allowlisted public `reason` (the same allowlist as
+sync errors, `convex/sync/publicStatus.ts`), e.g. `cloud_project_not_approved_for_production`,
+`not_ads_user`, `reauth_required`, `rate_limited`. The code itself is never stored or returned, an
+unlisted code yields no `reason`, and Meta / Instagram record none. A successful discovery clears
+`lastError`. (Google Ads skips individual customers it cannot read, e.g. permission or not
+found; those are not discovery failures.)
+
+**Retry discovery.** `v1/connections:refreshAssets` (admin) re-runs discovery in the background
+for an **active** connection (otherwise `CONFLICT`, `reason: "connection_inactive"`). Discovery
+replaces the connection's discovered accounts. Completion is visible on the connection: its
+`updatedAt` changes and `lastError` is cleared or set.
 
 **Sync status (additive).** Each `adAccounts:list` entry carries an optional read-only `sync`
 block: `syncState`, `lastSuccessAt`, `lastRunStatus`, `consecutiveFailures`, `nextRunAt`,
@@ -86,6 +130,16 @@ active | needs_reauth ─disconnect─► revoked   (credential deleted; ad acco
   `internal.connections.lifecycle.markNeedsReauth`) inside its own failure transaction, audited as
   subject `system:sync`, and cancels the connection's other active runs.
 
+## Security requirement: callback ownership
+
+**Must be fixed before any public or multi-tenant launch.** The OAuth state binds a pending
+connection to the org, app and user that called `beginConnect`, but **not** to the browser or
+person that completes the platform consent. Whoever opens a valid authorization URL (single-use,
+10 minutes) and consents attaches **their** platform access to the initiating org. The current
+flow is therefore not safe for public access, even with the existing CSRF, PKCE, allowlist and
+encryption protections. Full description and the required fix:
+[security/credentials.md](security/credentials.md#known-gap-oauth-callback-ownership).
+
 ## Configuration
 
 | Convex env var                                           | Purpose                                                                                                                      |
@@ -102,7 +156,9 @@ Per app, the return-URL allowlist is set with
 It matches the exact origin plus a path prefix.
 
 Development: `npm run dev:auth setup` also generates `TOKEN_ENCRYPTION_KEYS` into the dev deployment
-and allowlists `http://localhost:3000/`.
+and allowlists `http://localhost:3000/` and `http://127.0.0.1:3000/` (any path below them, e.g. the
+dashboard's `/connections`). Other origins, including Playwright's `http://127.0.0.1:3100`, are
+not allowlisted: `beginConnect` refuses them with `INVALID_ARGUMENT` (`field: "returnUrl"`).
 
 ## Platform requirements (for Phases 8–9)
 

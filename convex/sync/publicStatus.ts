@@ -8,7 +8,8 @@ import { syncRunStatusValidator } from "../tables/sync";
  * what docs/sync.md lists as DTO-safe: state, schedule, coverage, last run status and the
  * error KIND with its generic message. The platform error `code` stays internal; a known
  * code is translated into a `reason` through the explicit allowlist below and anything
- * else is dropped (kind + generic message only).
+ * else is dropped (kind + generic message only). The same allowlist explains Google Ads
+ * discovery failures on a connection (connections/assets.ts recordConnectionError).
  */
 
 export const SYNC_ERROR_REASONS = [
@@ -17,6 +18,7 @@ export const SYNC_ERROR_REASONS = [
   "provider_mode_misconfigured",
   "provider_unavailable",
   "reauth_required",
+  "not_ads_user",
   "permission_denied",
   "account_not_enabled",
   "account_not_accessible",
@@ -39,6 +41,7 @@ const REASON_BY_CODE: Readonly<Record<string, SyncErrorReason>> = {
   invalid_grant: "reauth_required",
   credential_invalid: "reauth_required",
   client_id_mismatch: "reauth_required",
+  NOT_ADS_USER: "not_ads_user",
   USER_PERMISSION_DENIED: "permission_denied",
   CUSTOMER_NOT_ENABLED: "account_not_enabled",
   no_route: "account_not_accessible",
@@ -54,6 +57,11 @@ export function syncErrorReason(code: string | undefined): SyncErrorReason | und
   return Object.prototype.hasOwnProperty.call(REASON_BY_CODE, bare)
     ? REASON_BY_CODE[bare]
     : undefined;
+}
+
+/** True only for a published reason (re-checks a stored value before it leaves the server). */
+export function isSyncErrorReason(value: unknown): value is SyncErrorReason {
+  return typeof value === "string" && (SYNC_ERROR_REASONS as readonly string[]).includes(value);
 }
 
 export const syncErrorReasonValidator = v.union(...SYNC_ERROR_REASONS.map((r) => v.literal(r)));

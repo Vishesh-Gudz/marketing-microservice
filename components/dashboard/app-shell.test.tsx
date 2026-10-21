@@ -71,6 +71,30 @@ describe("AppShell / OrgGate", () => {
     );
   });
 
+  it("lists Connections last in the main navigation, marked current on /connections", () => {
+    auth.isAuthenticated = false;
+    setUrl("/connections", "preset=last_7_days&status=connected");
+    render(<AppShell>content</AppShell>);
+    const nav = screen.getAllByRole("navigation", { name: "Main" })[0]!;
+    const links = within(nav).getAllByRole("link");
+    expect(links.map((link) => link.textContent)).toEqual([
+      "Overview",
+      "Campaigns",
+      "Breakdowns",
+      "Conversions",
+      "Accounts",
+      "Organic",
+      "Connections",
+    ]);
+    const connections = within(nav).getByRole("link", { name: "Connections" });
+    expect(connections).toHaveAttribute("aria-current", "page");
+    // Like every link it carries only the global filters, never page or callback params.
+    expect(connections).toHaveAttribute("href", "/connections?preset=last_7_days");
+    for (const link of links.filter((l) => l !== connections)) {
+      expect(link).not.toHaveAttribute("aria-current");
+    }
+  });
+
   it("has a skip link to the main content", () => {
     auth.isAuthenticated = false;
     render(<AppShell>content</AppShell>);

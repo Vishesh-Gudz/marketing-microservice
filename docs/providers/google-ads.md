@@ -3,13 +3,27 @@
 The Google Ads API behind the existing `AdsProvider` and `OAuthSpec` contracts
 ([architecture.md](architecture.md)). Decisions: [ADR 0010](../adr/0010-google-ads-provider.md).
 
-> **Status: Stage B (mappings).** Connecting a Google account, discovering customers through
-> manager hierarchies, and syncing campaigns, ad groups, Performance Max asset groups, ads,
-> creatives, daily metrics with network placements and conversion-action rows into the canonical
-> tables work end to end in live mode. Mappings are implemented from the Google Ads API v25
-> reference; the items marked provisional are **not verified against a real account** (no real
-> Google Ads account has been used; nothing here is real-account evidence). See
-> [Real-account validation required](#real-account-validation-required).
+> **Status: Stage B (mappings) and the 2026-10 access model. Live-validated only up to account
+> discovery.**
+>
+> - **Implemented and tested against the fake Google Ads API** (live provider code, no network):
+>   connecting a Google account, discovering customers through manager hierarchies, and syncing
+>   campaigns, ad groups, Performance Max asset groups, ads, creatives, daily metrics with network
+>   placements and conversion-action rows into the canonical tables. Mappings follow the Google Ads
+>   API v25 reference.
+> - **Verified live** (2026-10-20, an isolated validation deployment, a real Google OAuth client and
+>   a tester's own Google account): Google consent, token exchange (PKCE, refresh token), OpenID
+>   identity, encrypted credential storage, and account discovery with real Google Ads API calls
+>   (no developer-token header), which returned manager and client accounts (all reported
+>   `CLOSED`). An earlier run with a Google account that had no Google Ads access stopped at the
+>   API-access check as designed (`NOT_ADS_USER` → `exchange_failed`, nothing stored). These runs
+>   predate the dashboard Connections page and the three-way account type / test status; whether
+>   the discovered accounts are test accounts could not be proven.
+> - **Not verified:** linking an account and any live sync, so no real structure, metrics, mappings
+>   or analytics; the Cloud project's access level; the dashboard `/connections` journey against
+>   a live deployment (mock mode only); the provisional items in
+>   [Real-account validation required](#real-account-validation-required). Nothing here shows
+>   end-to-end production readiness or verified production analytics.
 
 ## Stages
 
@@ -19,7 +33,8 @@ The Google Ads API behind the existing `AdsProvider` and `OAuthSpec` contracts
 | Stage A    | Done: config, credential, client, errors, GAQL, cursor, routing, OAuth, discovery.            |
 | Stage B    | Done: structure/metric/action/placement mappings + "Real-account validation required".        |
 | Access     | Done (2026-10): no developer token; Cloud-project access levels ([API access](#api-access)).  |
-| Validation | A Test-access Cloud project with test accounts, then Explorer/Basic access on a real account. |
+| Dashboard  | Connections page, mock mode only ([Dashboard connection flow](#dashboard-connection-flow)).   |
+| Validation | Partly: live OAuth and account discovery (2026-10-20); linking, live sync, analytics pending. |
 
 ## Provider mode
 
@@ -432,9 +447,10 @@ geo/device, platform revoke (G-D6), `searchStream`, any synthetic Performance Ma
 
 ## Real-account validation required
 
-No real Google Ads account or Google Cloud project access level has been used. **Nothing below is
-verified.** The
-fake Google Ads API models documented behavior only.
+Only OAuth and account discovery have run against the real Google APIs (see the status note at
+the top). No account has been linked or synced live, and the Cloud project's access level is
+unconfirmed. **Nothing below is verified.** The fake Google Ads API models documented behavior
+only.
 
 | Id   | Item                                                                                                                                             | Status      |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- |
@@ -505,13 +521,75 @@ allowlisted hosts). `convex/providers/google/accountStatus.test.ts` (true / fals
 one link, sync status and allowlisted error reasons, v1 analytics, cross-tenant isolation);
 `convex/sync/publicStatus.test.ts`; `tests/unit/google-ads-tester.test.ts` (guard, selection,
 typed confirmation, redaction, one-time redirect, arguments).
+`convex/connections/discoveryReason.test.ts` (allowlisted discovery-failure reasons on the fake
+API: Test-access project, quota, `NOT_ADS_USER`, revoked grant; unknown codes and other
+providers get none; never the raw code; tenant isolation). The dashboard flow:
+`lib/connections/*.test.ts` and `components/dashboard/views/connections-view.test.tsx` (mocked
+v1; see [dashboard.md](../dashboard.md#tests)).
+
+## Dashboard connection flow
+
+The user-facing flow is the standalone dashboard's `/connections` page (ADR 0008, D17 amendment;
+[dashboard.md](../dashboard.md#connections-google-ads)). It uses the same v1 functions as the
+parent app and the tester CLI; there is no second Google integration and no Google logic in the
+frontend beyond labels and messages.
+
+1. An admin clicks **Connect Google Ads**: `beginConnect` returns Google's authorization URL, and
+   the browser follows it in the same tab (never shown, logged or stored).
+2. Google consent, then the [callback](#connection-flow-and-credential): exchange, identity, API
+   access probe, encrypted credential, discovery. The browser returns to `/connections` with a
+   fixed success or error notice; the result parameters are removed from the URL.
+3. The discovered customers are listed with customer id, name, account type (manager / client /
+   not reported), test-account status (test / not a test account / not reported), currency, time
+   zone and the manager they were found through.
+4. The admin chooses **exactly one** account that Google confirmed as a client and links it.
+   Managers and unreported types cannot be chosen; the server re-checks every rule.
+5. The first sync starts automatically (the planner runs every 15 minutes). The page shows the
+   sync status, coverage and last / next sync with allowlisted error explanations (for example a
+   Test-access Cloud project), and **View analytics** opens the Overview filtered to the account.
+6. **Retry discovery** re-runs discovery; **Reconnect Google Ads** renews the credential of the
+   same Google account (a different account is refused with `identity_mismatch`).
+
+**Status: mock mode only.** Implemented and tested against the local backend (instant mock
+consent, mock accounts). **No real Google account has been connected from the dashboard.** The
+dashboard has no hosted login: its only identity is the local development token, so hosted users
+cannot sign in or connect real accounts yet (Phase 15).
+
+**Before testing with a real Google Ads account** (each step needs explicit approval):
+
+1. **Deployment:** a separate validation deployment in `PROVIDER_MODE=live` (never the local
+   mock deployment, never production) running this branch, with `GOOGLE_CLIENT_ID` and
+   `GOOGLE_CLIENT_SECRET` set and its redirect URI `https://<deployment>.convex.site/oauth/callback`
+   registered on the OAuth client ([Setup runbook](#setup-runbook-operator)).
+2. **Google OAuth consent screen:** while it is in "Testing", the tester's Google account must be
+   a listed test user, and authorizations expire after about 7 days (the connection then shows
+   "Reconnect required").
+3. **Cloud-project access level:** Test access reaches test accounts only (production accounts
+   fail with `cloud_project_not_approved_for_production`); Explorer or higher is needed for
+   production accounts ([API access](#api-access)).
+4. **The tester's Google account must have Google Ads access;** otherwise the OAuth exchange fails
+   (`exchange_failed`, from `NOT_ADS_USER`) and no connection is created.
+5. **Dashboard identity and return URL:** a local dashboard pointed at the validation deployment,
+   with a dev-issuer token for a test org on that deployment, and the dashboard's origin
+   allowlisted for the dev integration app there (`admin/integrationApps:setAllowedReturnUrls`).
+   How to configure this without changing `.env.local` is still to be decided. Never use the dev
+   issuer on production.
+6. **Known test users only:** the
+   [callback ownership gap](../security/credentials.md#known-gap-oauth-callback-ownership) makes
+   the flow unsafe for public or multi-tenant use.
+7. Afterwards, return the deployment to safe mode (remove `PROVIDER_MODE`).
+
+What a first real run should confirm: consent and return to `/connections`; discovery through a
+manager hierarchy with reported account types and test status (GR3, GR21, GR22); linking one
+client; the first sync, its status and the analytics link.
 
 ## Tester validation (dev / validation deployments only)
 
-`scripts/google-ads-tester.mjs` lets an authorized tester exercise the existing integration as
-the **parent app would** (D17 unchanged): only the public v1 API, with short-lived (5 min)
-dev-issuer JWTs minted in the tool's process and never printed. Results are sanitized terminal
-reports (no dashboard change).
+`scripts/google-ads-tester.mjs` lets an authorized operator exercise the existing integration as
+the **parent app would**: only the public v1 API, with short-lived (5 min) dev-issuer JWTs minted
+in the tool's process and never printed. Results are sanitized terminal reports. It is a
+validation tool, not the user-facing flow (that is the dashboard's
+[`/connections` page](#dashboard-connection-flow)).
 
 **Deployment guard (fails closed).** The tool acts on ONE validation deployment:
 
@@ -557,7 +635,8 @@ afterwards.
   release. Set `GOOGLE_ADS_API_VERSION=vNN` on a dev deployment, run a sync, compare, then bump the
   constant and remove the override. In-flight cursors of the old version restart their task once.
 - **Reconnect:** `invalid_grant` moves a connection to `needs_reauth`; the user reconnects through
-  `beginConnect`. Reconnecting the same Google user updates the credential in place.
+  `beginConnect` (in the dashboard: **Reconnect Google Ads** on `/connections`). Reconnecting the
+  same Google user updates the credential in place.
 - **Monitoring:** `needs_reauth`, `rate_limited` spikes and `throttledUntil` (quota),
   `google_config_invalid` / `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION` (raise the project's
   access level), `not_found` / `permission` blocks (routing), and

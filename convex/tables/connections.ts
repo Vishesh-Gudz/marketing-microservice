@@ -38,8 +38,19 @@ export const connectionTables = {
     credentialVersion: v.number(),
     /** Access-token expiry when the platform has one (Meta ~60 days). */
     tokenExpiresAt: v.optional(v.number()),
-    /** Sanitized last failure: kind + generic message only, never platform payloads. */
-    lastError: v.optional(v.object({ kind: v.string(), message: v.string(), at: v.number() })),
+    /**
+     * Sanitized last failure: kind + generic message, never platform payloads or codes.
+     * `reason` (Google Ads discovery failures only) is an allowlisted public reason from
+     * sync/publicStatus.ts, never the platform code itself.
+     */
+    lastError: v.optional(
+      v.object({
+        kind: v.string(),
+        message: v.string(),
+        reason: v.optional(v.string()),
+        at: v.number(),
+      }),
+    ),
     connectedBySubject: v.string(),
     connectedAt: v.number(),
     revokedAt: v.optional(v.number()),

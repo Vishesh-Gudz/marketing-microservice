@@ -9,6 +9,7 @@ import {
 } from "../../domain/validators";
 import { effectiveManagerStatus, effectiveTestAccountStatus } from "../../connections/assetStatus";
 import { toIso } from "../../lib/dto";
+import { isSyncErrorReason, syncErrorReasonValidator } from "../../sync/publicStatus";
 import { connectionStatusValidator } from "../../tables/connections";
 
 /** Days before token expiry from which a connection is flagged `expiresSoon`. */
@@ -29,7 +30,15 @@ export const connectionDto = v.object({
   missingScopes: v.array(v.string()),
   tokenExpiresAt: v.optional(v.string()),
   expiresSoon: v.boolean(),
-  lastError: v.optional(v.object({ kind: v.string(), message: v.string(), at: v.string() })),
+  lastError: v.optional(
+    v.object({
+      kind: v.string(),
+      message: v.string(),
+      /** Google Ads discovery failures: allowlisted reason (never the platform code). */
+      reason: v.optional(syncErrorReasonValidator),
+      at: v.string(),
+    }),
+  ),
   connectedAt: v.string(),
   updatedAt: v.string(),
 });
@@ -60,6 +69,9 @@ export function toConnectionDto(
           lastError: {
             kind: connection.lastError.kind,
             message: connection.lastError.message,
+            ...(isSyncErrorReason(connection.lastError.reason)
+              ? { reason: connection.lastError.reason }
+              : {}),
             at: toIso(connection.lastError.at),
           },
         }

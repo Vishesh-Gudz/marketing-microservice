@@ -1,9 +1,46 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { render, screen, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { queryResults, resetHarness } from "@/tests/unit/dashboard-harness";
 
 vi.mock("convex/react", async () => (await import("@/tests/unit/dashboard-harness")).convexReact);
 
-import { CoverageNotice, FxNotice } from "./notices";
+import { CoverageNotice, FxNotice, ReauthBanner } from "./notices";
+
+describe("ReauthBanner", () => {
+  beforeEach(() => resetHarness());
+
+  it("is silent while every connection works", () => {
+    queryResults.set("v1/connections:list", [
+      { id: "g1", provider: "google_ads", status: "active" },
+    ]);
+    const { container } = render(<ReauthBanner />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("links a Google Ads reconnection to the Connections page", () => {
+    queryResults.set("v1/connections:list", [
+      { id: "g1", provider: "google_ads", status: "needs_reauth" },
+    ]);
+    render(<ReauthBanner />);
+    const banner = screen.getByLabelText("Reconnect required");
+    expect(banner).toHaveTextContent("A connection needs to be reconnected (Google Ads).");
+    expect(within(banner).getByRole("link", { name: "Reconnect Google Ads" })).toHaveAttribute(
+      "href",
+      "/connections",
+    );
+  });
+
+  it.each([
+    ["meta", "Meta"],
+    ["instagram", "Instagram"],
+  ])("keeps the %s banner read-only (no link)", (provider, name) => {
+    queryResults.set("v1/connections:list", [{ id: "x1", provider, status: "needs_reauth" }]);
+    render(<ReauthBanner />);
+    const banner = screen.getByLabelText("Reconnect required");
+    expect(banner).toHaveTextContent(`(${name}). Their accounts stop updating`);
+    expect(within(banner).queryByRole("link")).toBeNull();
+  });
+});
 
 describe("FxNotice", () => {
   it("is silent when no conversion is needed", () => {

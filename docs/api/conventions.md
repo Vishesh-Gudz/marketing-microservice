@@ -128,3 +128,9 @@ Google Ads tester support (additive, no new function): `DiscoveredAssetDto` gain
 read-only `sync` block. `linkAdAccounts` additionally rejects accounts whose manager status the
 platform did not report (`INVALID_ARGUMENT`, `reason: "manager_status_unknown"`). See
 [../connections.md](../connections.md).
+
+Google Ads connections page (additive, no new function): `ConnectionDto.lastError` gained an
+optional `reason` for Google Ads discovery failures (allowlisted; never the platform code), and the
+published error reasons gained `not_ads_user` (also used by the `sync` block). The dashboard's
+`/connections` page calls `beginConnect`, `listDiscoveredAssets`, `linkAdAccounts` and
+`refreshAssets` ([../dashboard.md](../dashboard.md#connections-google-ads)).

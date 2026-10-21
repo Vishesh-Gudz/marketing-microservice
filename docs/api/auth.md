@@ -34,9 +34,15 @@ RS256 (or ES256) JWT, lifetime of 15 minutes or less recommended.
 
 **Roles** (hierarchical: viewer < editor < admin):
 
-- viewer: read everything in the org
+- viewer: read everything in the org, including connection status (`v1/connections:list` / `get`)
+  and ad accounts with their sync status (`v1/adAccounts:list`)
 - editor: normal writes
-- admin: org settings, the audit log, and later connections and alert rules
+- admin: org settings, the audit log, and **platform connections** (all `v1/connections:*`
+  functions except `list` / `get`): `beginConnect` (start or reconnect OAuth),
+  `listDiscoveredAssets` / `listDiscoveredSocialAccounts`, `linkAdAccounts` /
+  `linkSocialAccounts`, `unlinkAdAccount` / `unlinkSocialAccount`, `refreshAssets` and
+  `disconnect` ([../connections.md](../connections.md), including the callback-ownership fix
+  required before a public launch). Alert rules come later.
 
 The role is read from every token, so a role change takes effect with the next token.
 
@@ -92,6 +98,10 @@ const convex = new ConvexReactClient(MARKETING_CONVEX_URL);
 // useParentAuth().fetchAccessToken returns the parent's JWT for this service.
 ```
 
+This is the intended parent-app integration. The standalone dashboard does not implement it yet:
+its parent token source (the token handoff into an embedded dashboard) is Phase 15. Until then the
+dashboard authenticates only with the local development token (section 7).
+
 Server-to-server:
 
 ```ts
@@ -138,3 +148,17 @@ npm run dev:auth -- token --org acme --role viewer      # mint any token
 The dev issuer is `https://dev-issuer.marketing.local`. Its keys live in `.dev-keys/` (git-ignored)
 and its JWKS is inlined as a `data:` URI, so no HTTP endpoint is needed. **Never configure the dev
 issuer on a production deployment.**
+
+**Today's identity vs. the parent integration.**
+
+|                   | Local development (today)                                                                             | Parent-app integration (target)                                          |
+| ----------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Who signs the JWT | `scripts/dev-auth.mjs`, standing in for a parent app                                                  | The parent app, with its own registered issuer                           |
+| Dashboard token   | `NEXT_PUBLIC_DEV_AUTH_TOKEN` in `.env.local`: org `dev-org`, role `admin`, 30 days (`dev:auth setup`) | Short-lived tokens handed over by the parent (Phase 15, not implemented) |
+| Where it works    | The local deployment, or an isolated dev/validation deployment that trusts the dev issuer             | Any deployment that trusts the parent's issuer                           |
+
+The dev token is not a login: anyone using the local dashboard acts as that one admin of
+`dev-org`. Production builds of the dashboard drop it, so a hosted dashboard shows "Not signed in"
+and nobody can sign in or connect accounts there until the parent token handoff exists. The
+dashboard's Google Ads `/connections` page therefore runs locally only today
+([../dashboard.md](../dashboard.md#connections-google-ads)).

@@ -221,5 +221,34 @@ describe("data views", () => {
     const google = document.querySelector('[data-account-id="a2"]') as HTMLElement;
     expect(google).toHaveTextContent("Unlinked");
     expect(google).toHaveTextContent("Never");
+    // Google Ads is managed on /connections; Meta keeps its read-only badge (D17).
+    expect(within(google).getByRole("link", { name: "Manage in Connections" })).toHaveAttribute(
+      "href",
+      "/connections",
+    );
+    expect(within(meta).queryByRole("link", { name: "Manage in Connections" })).toBeNull();
+  });
+
+  it("accounts: a Google Ads account needing reconnection links to Connections", () => {
+    setUrl("/accounts");
+    queryResults.set("v1/adAccounts:list", [{ ...accounts[1], linked: true, connectionId: "g1" }]);
+    queryResults.set("v1/connections:list", [
+      { id: "g1", provider: "google_ads", status: "needs_reauth" },
+    ]);
+    queryResults.set("v1/analytics:breakdown", {
+      by: "account",
+      level: "account",
+      range: { from: "2026-08-26", to: "2026-09-24" },
+      groups: [],
+      coverage: { dataState: "unknown", accounts: [] },
+      fx,
+    });
+    renderWithOrg(<AccountsView />);
+    const google = document.querySelector('[data-account-id="a2"]') as HTMLElement;
+    expect(google).toHaveTextContent("Reconnect required");
+    expect(within(google).getByRole("link", { name: "Manage in Connections" })).toHaveAttribute(
+      "href",
+      "/connections",
+    );
   });
 });
