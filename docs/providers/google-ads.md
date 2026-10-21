@@ -549,6 +549,8 @@ frontend beyond labels and messages.
    Test-access Cloud project), and **View analytics** opens the Overview filtered to the account.
 6. **Retry discovery** re-runs discovery; **Reconnect Google Ads** renews the credential of the
    same Google account (a different account is refused with `identity_mismatch`).
+   **Disconnect Google Ads** (admin, after a confirmation) revokes the connection and deletes our
+   credential; **Connect Google Ads** then accepts any Google account.
 
 **Status: mock mode only.** Implemented and tested against the local backend (instant mock
 consent, mock accounts). **No real Google account has been connected from the dashboard.** The

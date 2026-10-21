@@ -9,9 +9,12 @@ import {
 } from "../providers/mock/oauth";
 import {
   as,
+  connectMockInstagram,
   expectMarketingError,
   followCallback,
   ISSUER_ERP,
+  linkMock,
+  linkSocial,
   newBackend,
   redirectParams,
   registerAppWithReturnUrls,
@@ -360,6 +363,49 @@ describe("lifecycle", () => {
     expect((await as(t).mutation(api.v1.connections.disconnect, { connectionId })).status).toBe(
       "revoked",
     );
+  });
+
+  it("disconnecting Google Ads leaves the org's Meta and Instagram connections untouched", async () => {
+    vi.useFakeTimers();
+    const t = await setup();
+    const google = await connect(t, "google_ads");
+    const meta = await connect(t, "meta");
+    const instagram = (await connectMockInstagram(t)).get("connection")!;
+    await linkMock(t, google.connectionId, ["1112223333"]);
+    await linkMock(t, meta.connectionId, ["1001"]);
+    const [igAsset] = await as(t).query(api.v1.connections.listDiscoveredSocialAccounts, {
+      connectionId: instagram,
+    });
+    await linkSocial(t, instagram, [igAsset!.externalId]);
+    const before = await t.run(async (ctx) => ({
+      credentials: (await ctx.db.query("credentials").collect()).map((c) => c._id),
+      socialAssets: await ctx.db.query("discoveredSocialAccounts").collect(),
+    }));
+
+    await as(t).mutation(api.v1.connections.disconnect, { connectionId: google.connectionId });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const status = Object.fromEntries((await connections(t)).map((c) => [c.provider, c.status]));
+    expect(status).toEqual({ google_ads: "revoked", meta: "active", instagram: "active" });
+    const accounts = await as(t).query(api.v1.adAccounts.list, {});
+    expect(accounts.map((a) => [a.platform, a.linked, a.connectionId ?? null])).toEqual(
+      expect.arrayContaining([
+        ["google_ads", false, null],
+        ["meta", true, meta.connectionId],
+      ]),
+    );
+    const social = await as(t).query(api.v1.socialAccounts.list, {
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+    expect(social.page.map((s) => [s.linked, s.connectionId])).toEqual([[true, instagram]]);
+    const after = await t.run(async (ctx) => ({
+      credentials: (await ctx.db.query("credentials").collect()).map((c) => c._id),
+      socialAssets: await ctx.db.query("discoveredSocialAccounts").collect(),
+    }));
+    // Only the Google credential is gone; Instagram discovery is kept as it was.
+    expect(after.credentials).toHaveLength(2);
+    expect(before.credentials).toEqual(expect.arrayContaining(after.credentials));
+    expect(after.socialAssets).toEqual(before.socialAssets);
   });
 
   it("refreshAssets re-runs discovery; inactive connections are refused", async () => {

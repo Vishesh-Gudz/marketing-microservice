@@ -115,6 +115,22 @@ async function connectU1(t: Backend) {
   return params.get("connection")!;
 }
 
+/** An explicit reconnect of `connectionId`, completed at the fake Google as `user`. */
+async function reconnectGoogleFake(t: Backend, connectionId: string, user: string) {
+  const { authorizeUrl } = await as(t).action(api.v1.connections.beginConnect, {
+    provider: "google_ads",
+    returnUrl: RETURN_URL,
+    reconnectConnectionId: connectionId,
+  });
+  const params = new URL(authorizeUrl).searchParams;
+  const code = fake.issueCode(user, params.get("code_challenge")!, params.get("redirect_uri")!);
+  const response = await t.fetch(`/oauth/callback?state=${params.get("state")}&code=${code}`, {
+    method: "GET",
+    redirect: "manual",
+  });
+  return new URL(response.headers.get("location")!).searchParams;
+}
+
 describe("Google connect flow (live mode, fake Google Ads API)", () => {
   it("connects with a refresh-token credential, the OpenID sub only, and discovers accounts", async () => {
     const t = newBackend();
@@ -192,21 +208,56 @@ describe("Google connect flow (live mode, fake Google Ads API)", () => {
     const t = newBackend();
     const first = await connectU1(t);
     expect((await connectGoogleFake(t, fake, "u1")).get("connection")).toBe(first);
+    expect((await reconnectGoogleFake(t, first, "u2")).get("error")).toBe("identity_mismatch");
+  });
 
-    const { authorizeUrl } = await as(t).action(api.v1.connections.beginConnect, {
-      provider: "google_ads",
-      returnUrl: RETURN_URL,
-      reconnectConnectionId: first,
-    });
-    const params = new URL(authorizeUrl).searchParams;
-    const code = fake.issueCode("u2", params.get("code_challenge")!, params.get("redirect_uri")!);
-    const response = await t.fetch(`/oauth/callback?state=${params.get("state")}&code=${code}`, {
-      method: "GET",
-      redirect: "manual",
-    });
-    expect(new URL(response.headers.get("location")!).searchParams.get("error")).toBe(
-      "identity_mismatch",
+  it("disconnect lets a fresh Connect authorize a different Google user", async () => {
+    const t = newBackend();
+    const first = await connectU1(t);
+    const [linked] = await linkMock(t, first, ["2220000001"]);
+    expect((await reconnectGoogleFake(t, first, "u2")).get("error")).toBe("identity_mismatch");
+
+    // Only admins can disconnect; the connection is untouched otherwise.
+    for (const role of ["viewer", "editor"] as const) {
+      await expectMarketingError(
+        as(t, { role, sub: `${role}-user` }).mutation(api.v1.connections.disconnect, {
+          connectionId: first,
+        }),
+        "FORBIDDEN",
+      );
+    }
+    expect((await as(t).query(api.v1.connections.get, { connectionId: first })).status).toBe(
+      "active",
     );
+
+    const calls = fake.log.length;
+    await as(t).mutation(api.v1.connections.disconnect, { connectionId: first });
+    await t.finishAllScheduledFunctions(vi.runAllTimers, 1_000);
+    // No platform revoke (G-D6): disconnect never calls Google; the credential is deleted.
+    expect(fake.log).toHaveLength(calls);
+    expect(await t.run((ctx) => ctx.db.query("credentials").collect())).toHaveLength(0);
+
+    const params = await connectGoogleFake(t, fake, "u2");
+    expect(params.get("status"), params.get("error") ?? "").toBe("connected");
+    const second = params.get("connection")!;
+    expect(second).not.toBe(first);
+    expect((await as(t).query(api.v1.connections.list, {})).map((c) => [c.id, c.status])).toEqual(
+      expect.arrayContaining([
+        [first, "revoked"],
+        [second, "active"],
+      ]),
+    );
+    expect(
+      (await as(t).query(api.v1.connections.listDiscoveredAssets, { connectionId: second })).map(
+        (a) => a.externalId,
+      ),
+    ).toEqual(["7770000001"]);
+    // The account linked through the old connection keeps its row (and data), unlinked.
+    expect(
+      (await as(t).query(api.v1.adAccounts.list, {})).find((a) => a.id === linked!.id),
+    ).toMatchObject({ externalId: "2220000001", linked: false });
+    expect(await t.run((ctx) => ctx.db.query("credentials").collect())).toHaveLength(1);
+    expectNoSecrets(await allRows(t));
   });
 
   it("a discovery failure keeps the connection with a warning and a sanitized error", async () => {

@@ -3,6 +3,8 @@ import { apiError } from "@/convex/lib/errors";
 import {
   connectionActionNotice,
   connectionStatusNotice,
+  DISCONNECTED_NOTICE,
+  disconnectActionNotice,
   discoveryErrorNotice,
   ERROR_REASON_MESSAGES,
   syncStatusSummary,
@@ -56,6 +58,12 @@ describe("connectionStatusNotice", () => {
     ["revoked", { ...base, status: "revoked" }, "error", "Disconnected"],
   ] as const)("describes a connection %s", (_label, connection, tone, title) => {
     expect(connectionStatusNotice(connection)).toMatchObject({ tone, title });
+  });
+
+  it("a reconnect-required connection mentions disconnecting to switch Google accounts", () => {
+    expect(connectionStatusNotice({ ...base, status: "needs_reauth" }).message).toMatch(
+      /same Google account, or disconnect Google Ads to use a different one/,
+    );
   });
 
   it("a missing scope wins over expiring soon, and never lists scope strings", () => {
@@ -255,5 +263,41 @@ describe("connectionActionNotice", () => {
       expect(text).not.toContain("secret server detail");
       expect(text).not.toContain("ya29");
     }
+  });
+});
+
+describe("disconnectActionNotice", () => {
+  it.each([
+    ["a non-admin", apiError("FORBIDDEN", "x"), "Admins only", /disconnect Google Ads/],
+    ["a missing connection", apiError("NOT_FOUND", "x"), "Connection not found", /Reload/],
+    ["too many requests", apiError("RATE_LIMITED", "x"), "Too many attempts", /Wait/],
+    ["a missing token", apiError("UNAUTHENTICATED", "x"), "Sign-in required", /./],
+    ["an internal error", apiError("INTERNAL", "x"), "Something went wrong", /Try again/],
+    ["a network failure", new Error("x"), "Something went wrong", /not disconnected/],
+  ])("explains %s", (_label, error, title, message) => {
+    const notice = disconnectActionNotice(error);
+    expect(notice.title).toBe(title);
+    expect(notice.message).toMatch(message);
+  });
+
+  it("never shows error messages or details", () => {
+    for (const error of [
+      apiError("FORBIDDEN", "secret server detail"),
+      apiError("INTERNAL", "secret server detail"),
+      new Error("secret server detail ya29.token"),
+    ]) {
+      const text = JSON.stringify(disconnectActionNotice(error));
+      expect(text).not.toContain("secret server detail");
+      expect(text).not.toContain("ya29");
+    }
+  });
+
+  it("confirms a disconnect and points to a fresh connection", () => {
+    expect(DISCONNECTED_NOTICE).toMatchObject({
+      tone: "success",
+      title: "Google Ads disconnected",
+    });
+    expect(DISCONNECTED_NOTICE.message).toMatch(/data and history are kept/);
+    expect(DISCONNECTED_NOTICE.message).toMatch(/any Google account/);
   });
 });

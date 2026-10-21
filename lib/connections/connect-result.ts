@@ -98,7 +98,8 @@ const ERROR_NOTICES: Readonly<Record<CallbackError | "unknown", Notice>> = {
   identity_mismatch: {
     tone: "error",
     title: "A different Google account was used",
-    message: "Reconnect with the same Google account that created this connection.",
+    message:
+      "Reconnect only accepts the Google account that created this connection. To use another Google account, an admin must disconnect Google Ads first, then connect again.",
   },
   discovery_failed: {
     tone: "error",
