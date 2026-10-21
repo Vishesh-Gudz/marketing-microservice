@@ -1,3 +1,4 @@
+import { PROVIDERS, type AdConnectionProvider } from "./providers";
 import type {
   AccountStatus,
   ConnectionStatus,
@@ -32,16 +33,19 @@ export function assetLinkability(
   return { selectable: true };
 }
 
-const BLOCK_MESSAGES: Readonly<Record<LinkBlock, string>> = {
-  connection_inactive: "Reconnect Google Ads before linking accounts.",
-  already_linked: "Already linked.",
-  manager: "Manager accounts cannot be linked. Link one of its client accounts instead.",
-  manager_status_unknown:
-    "Google did not report whether this is a client account. Retry discovery to check again.",
-};
-
-export function linkBlockMessage(block: LinkBlock): string {
-  return BLOCK_MESSAGES[block];
+/** Why an account cannot be selected, in the provider's words. */
+export function linkBlockMessage(block: LinkBlock, provider: AdConnectionProvider): string {
+  const { name, platform } = PROVIDERS[provider];
+  switch (block) {
+    case "connection_inactive":
+      return `Reconnect ${name} before linking accounts.`;
+    case "already_linked":
+      return "Already linked.";
+    case "manager":
+      return "Manager accounts cannot be linked. Link one of its client accounts instead.";
+    case "manager_status_unknown":
+      return `${platform} did not report whether this is a client account. Retry discovery to check again.`;
+  }
 }
 
 const MANAGER_LABELS: Readonly<Record<ManagerStatus, string>> = {

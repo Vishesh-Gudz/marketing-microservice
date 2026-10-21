@@ -553,6 +553,24 @@ export function fakeMetaDataset(): FakeDataset {
   };
 }
 
+/**
+ * The default dataset plus `count` custom conversions on every delivery cell of account 1001,
+ * each reported in all three windows: one insights row then becomes 3 × (count + its other
+ * conversion types) action records, so a full Graph page normalizes to far more than one
+ * sync page can hold (conversion paging regression).
+ */
+export function fakeMetaDatasetWithConversions(count: number): FakeDataset {
+  const dataset = fakeMetaDataset();
+  for (const cell of dataset.cells["1001"]!) {
+    for (let i = 0; i < count; i++) {
+      const type = `offsite_conversion.custom.${9_000_001 + i}`;
+      cell.actions[type] = { value: 3, "1d_click": 1, "7d_click": 2, "1d_view": 1 };
+      cell.values[type] = { value: 900, "1d_click": 300, "7d_click": 600, "1d_view": 300 };
+    }
+  }
+  return dataset;
+}
+
 export type FakeResponse = {
   status: number;
   body?: unknown;
@@ -583,8 +601,11 @@ export type InjectRule = {
 export type FakeGraph = {
   fetch: typeof fetch;
   log: RequestLogEntry[];
-  /** An authorization code for `user` (single use). */
-  issueCode(user: keyof typeof FAKE_USERS | string): string;
+  /**
+   * An authorization code for `user` (single use). With `redirectUri` (the authorization
+   * request's), the exchange must send exactly that redirect_uri, as Meta requires.
+   */
+  issueCode(user: keyof typeof FAKE_USERS | string, redirectUri?: string): string;
   inject(rule: InjectRule): void;
   /** Number of Graph calls made so far. */
   calls(): number;
@@ -849,7 +870,7 @@ export function createFakeGraph(
   const users = options.users ?? FAKE_USERS;
   const log: RequestLogEntry[] = [];
   const rules: InjectRule[] = [];
-  const codes = new Map<string, { user: string; used: boolean }>();
+  const codes = new Map<string, { user: string; used: boolean; redirectUri?: string }>();
   let codeSeq = 0;
 
   const shortToken = (user: string) => `test-short-${user}`;
@@ -1052,6 +1073,10 @@ export function createFakeGraph(
       const code = form.get("code") ?? "";
       const issued = codes.get(code);
       if (!issued || !form.get("redirect_uri")) return toResponse(graphError(100, 36_007));
+      // "redirect_uri is not identical to the one you used in the OAuth dialog request".
+      if (issued.redirectUri !== undefined && form.get("redirect_uri") !== issued.redirectUri) {
+        return toResponse(graphError(100, 36_008));
+      }
       if (issued.used) return toResponse(graphError(100, 36_009));
       issued.used = true;
       return json(200, {
@@ -1181,10 +1206,14 @@ export function createFakeGraph(
   return {
     fetch: fakeFetch as typeof fetch,
     log,
-    issueCode(user) {
+    issueCode(user, redirectUri) {
       codeSeq += 1;
       const code = `test-code-${codeSeq}`;
-      codes.set(code, { user: String(user), used: false });
+      codes.set(code, {
+        user: String(user),
+        used: false,
+        ...(redirectUri !== undefined ? { redirectUri } : {}),
+      });
       return code;
     },
     inject(rule) {

@@ -3,10 +3,11 @@ import { apiError } from "@/convex/lib/errors";
 import {
   connectionActionNotice,
   connectionStatusNotice,
-  DISCONNECTED_NOTICE,
+  disconnectedNotice,
   disconnectActionNotice,
   discoveryErrorNotice,
   ERROR_REASON_MESSAGES,
+  META_ERROR_REASON_MESSAGES,
   syncStatusSummary,
 } from "./messages";
 import type { ConnectionError, ErrorReason, SyncStatus } from "./types";
@@ -57,21 +58,24 @@ describe("connectionStatusNotice", () => {
     ],
     ["revoked", { ...base, status: "revoked" }, "error", "Disconnected"],
   ] as const)("describes a connection %s", (_label, connection, tone, title) => {
-    expect(connectionStatusNotice(connection)).toMatchObject({ tone, title });
+    expect(connectionStatusNotice(connection, "google_ads")).toMatchObject({ tone, title });
   });
 
   it("a reconnect-required connection mentions disconnecting to switch Google accounts", () => {
-    expect(connectionStatusNotice({ ...base, status: "needs_reauth" }).message).toMatch(
-      /same Google account, or disconnect Google Ads to use a different one/,
-    );
+    expect(
+      connectionStatusNotice({ ...base, status: "needs_reauth" }, "google_ads").message,
+    ).toMatch(/same Google account, or disconnect Google Ads to use a different one/);
   });
 
   it("a missing scope wins over expiring soon, and never lists scope strings", () => {
-    const notice = connectionStatusNotice({
-      ...base,
-      missingScopes: ["https://www.googleapis.com/auth/adwords"],
-      expiresSoon: true,
-    });
+    const notice = connectionStatusNotice(
+      {
+        ...base,
+        missingScopes: ["https://www.googleapis.com/auth/adwords"],
+        expiresSoon: true,
+      },
+      "google_ads",
+    );
     expect(notice.title).toBe("Google Ads access is missing");
     expect(JSON.stringify(notice)).not.toContain("googleapis");
   });
@@ -86,11 +90,11 @@ describe("discoveryErrorNotice", () => {
   });
 
   it("is null without an error", () => {
-    expect(discoveryErrorNotice(undefined)).toBeNull();
+    expect(discoveryErrorNotice(undefined, "google_ads")).toBeNull();
   });
 
   it.each(REASONS)("explains the allowlisted reason %s", (reason) => {
-    expect(discoveryErrorNotice(error({ reason }))).toEqual({
+    expect(discoveryErrorNotice(error({ reason }), "google_ads")).toEqual({
       tone: "error",
       title: "Your Google Ads accounts could not be loaded",
       message: ERROR_REASON_MESSAGES[reason],
@@ -105,7 +109,7 @@ describe("discoveryErrorNotice", () => {
     ["internal", "error", "Retry discovery. If it keeps failing, reconnect Google Ads."],
     ["something_new", "error", "Retry discovery. If it keeps failing, reconnect Google Ads."],
   ])("falls back on the error kind %s without a reason", (kind, tone, message) => {
-    expect(discoveryErrorNotice(error({ kind }))).toMatchObject({ tone, message });
+    expect(discoveryErrorNotice(error({ kind }), "google_ads")).toMatchObject({ tone, message });
   });
 
   it("never shows the server message or an unexpected reason value", () => {
@@ -114,6 +118,7 @@ describe("discoveryErrorNotice", () => {
         message: "raw provider text NOT_ADS_USER",
         reason: "NOT_ADS_USER" as ErrorReason,
       }),
+      "google_ads",
     );
     expect(JSON.stringify(notice)).not.toContain("raw provider text");
     expect(JSON.stringify(notice)).not.toContain("NOT_ADS_USER");
@@ -122,7 +127,7 @@ describe("discoveryErrorNotice", () => {
 
 describe("syncStatusSummary", () => {
   it("before any sync state: first sync scheduled", () => {
-    expect(syncStatusSummary(undefined)).toMatchObject({
+    expect(syncStatusSummary(undefined, "google_ads")).toMatchObject({
       tone: "info",
       label: "First sync scheduled",
     });
@@ -141,14 +146,19 @@ describe("syncStatusSummary", () => {
     ["idle, cancelled", sync({ lastRunStatus: "cancelled" }), "info", "Last sync was cancelled"],
     ["idle, run pruned but succeeded before", sync({ lastSuccessAt: AT }), "success", "Up to date"],
   ] as const)("%s", (_label, status, tone, label) => {
-    expect(syncStatusSummary(status)).toMatchObject({ tone, label });
+    expect(syncStatusSummary(status, "google_ads")).toMatchObject({ tone, label });
   });
 
   it("shows coverage when up to date", () => {
     expect(
-      syncStatusSummary(sync({ lastRunStatus: "succeeded", coveredThrough: "2026-03-07" })),
+      syncStatusSummary(
+        sync({ lastRunStatus: "succeeded", coveredThrough: "2026-03-07" }),
+        "google_ads",
+      ),
     ).toEqual({ tone: "success", label: "Up to date", detail: "Data through 2026-03-07." });
-    expect(syncStatusSummary(sync({ lastRunStatus: "succeeded" }))).not.toHaveProperty("detail");
+    expect(
+      syncStatusSummary(sync({ lastRunStatus: "succeeded" }), "google_ads"),
+    ).not.toHaveProperty("detail");
   });
 
   it("counts consecutive failures and explains an allowlisted reason", () => {
@@ -163,15 +173,17 @@ describe("syncStatusSummary", () => {
           at: AT,
         },
       }),
+      "google_ads",
     );
     expect(summary).toEqual({
       tone: "warning",
       label: "Last sync failed (3 failures in a row)",
       detail: ERROR_REASON_MESSAGES.cloud_project_not_approved_for_production,
     });
-    expect(syncStatusSummary(sync({ lastRunStatus: "failed", consecutiveFailures: 1 })).label).toBe(
-      "Last sync failed",
-    );
+    expect(
+      syncStatusSummary(sync({ lastRunStatus: "failed", consecutiveFailures: 1 }), "google_ads")
+        .label,
+    ).toBe("Last sync failed");
   });
 
   it("a blocked or partial sync explains its reason, else a generic line", () => {
@@ -182,6 +194,7 @@ describe("syncStatusSummary", () => {
           lastRunStatus: "failed",
           ...(reason ? { lastError: { kind: "permission", message: "x", reason, at: AT } } : {}),
         }),
+        "google_ads",
       ).detail;
     expect(blocked("permission_denied")).toBe(ERROR_REASON_MESSAGES.permission_denied);
     expect(blocked()).toMatch(/checked again every 24 hours/);
@@ -191,6 +204,7 @@ describe("syncStatusSummary", () => {
           lastRunStatus: "partial",
           lastError: { kind: "rate_limited", message: "x", reason: "rate_limited", at: AT },
         }),
+        "google_ads",
       ).detail,
     ).toBe(ERROR_REASON_MESSAGES.rate_limited);
   });
@@ -201,6 +215,7 @@ describe("syncStatusSummary", () => {
         lastRunStatus: "failed",
         lastError: { kind: "unknown", message: "raw provider text", at: AT },
       }),
+      "google_ads",
     );
     expect(JSON.stringify(summary)).not.toContain("raw provider text");
   });
@@ -248,7 +263,7 @@ describe("connectionActionNotice", () => {
     ["a thrown string", "x", "Something went wrong"],
     ["nothing", undefined, "Something went wrong"],
   ])("explains %s", (_label, error, title) => {
-    const notice = connectionActionNotice(error);
+    const notice = connectionActionNotice(error, "google_ads");
     expect(notice.title).toBe(title);
     expect(notice.message.length).toBeGreaterThan(0);
   });
@@ -259,7 +274,7 @@ describe("connectionActionNotice", () => {
       apiError("INTERNAL", "secret server detail"),
       new Error("secret server detail ya29.token"),
     ]) {
-      const text = JSON.stringify(connectionActionNotice(error));
+      const text = JSON.stringify(connectionActionNotice(error, "google_ads"));
       expect(text).not.toContain("secret server detail");
       expect(text).not.toContain("ya29");
     }
@@ -275,7 +290,7 @@ describe("disconnectActionNotice", () => {
     ["an internal error", apiError("INTERNAL", "x"), "Something went wrong", /Try again/],
     ["a network failure", new Error("x"), "Something went wrong", /not disconnected/],
   ])("explains %s", (_label, error, title, message) => {
-    const notice = disconnectActionNotice(error);
+    const notice = disconnectActionNotice(error, "google_ads");
     expect(notice.title).toBe(title);
     expect(notice.message).toMatch(message);
   });
@@ -286,18 +301,176 @@ describe("disconnectActionNotice", () => {
       apiError("INTERNAL", "secret server detail"),
       new Error("secret server detail ya29.token"),
     ]) {
-      const text = JSON.stringify(disconnectActionNotice(error));
+      const text = JSON.stringify(disconnectActionNotice(error, "google_ads"));
       expect(text).not.toContain("secret server detail");
       expect(text).not.toContain("ya29");
     }
   });
 
   it("confirms a disconnect and points to a fresh connection", () => {
-    expect(DISCONNECTED_NOTICE).toMatchObject({
+    expect(disconnectedNotice("google_ads")).toMatchObject({
       tone: "success",
       title: "Google Ads disconnected",
     });
-    expect(DISCONNECTED_NOTICE.message).toMatch(/data and history are kept/);
-    expect(DISCONNECTED_NOTICE.message).toMatch(/any Google account/);
+    expect(disconnectedNotice("google_ads").message).toMatch(/data and history are kept/);
+    expect(disconnectedNotice("google_ads").message).toMatch(/any Google account/);
+  });
+});
+
+describe("Meta Ads wording (never Google's)", () => {
+  const base = { status: "active" as const, missingScopes: [], expiresSoon: false };
+  const error = (overrides: Partial<ConnectionError> = {}): ConnectionError => ({
+    kind: "unknown",
+    message: "Meta request failed (unknown)",
+    at: AT,
+    ...overrides,
+  });
+
+  it("has distinct, code-free Meta text for every reason", () => {
+    expect(Object.keys(META_ERROR_REASON_MESSAGES).sort()).toEqual([...REASONS].sort());
+    const texts = REASONS.map((reason) => META_ERROR_REASON_MESSAGES[reason]);
+    expect(new Set(texts).size).toBe(REASONS.length);
+    for (const text of texts) {
+      expect(text).toMatch(/Meta|Facebook/);
+      expect(text).not.toContain("Google");
+      for (const code of [...RAW_CODES, "190", "ads_read", "Graph"])
+        expect(text).not.toContain(code);
+      expect(text).not.toMatch(/[a-z]+_[a-z_]+/);
+    }
+  });
+
+  it.each([
+    ["active", base, "success", "Connected", "Meta Ads is connected."],
+    [
+      "active with a missing scope",
+      { ...base, missingScopes: ["ads_read"] },
+      "warning",
+      "Meta Ads access is missing",
+      "Reconnect and allow access to Meta Ads when Meta asks.",
+    ],
+    [
+      "active and expiring soon (Meta tokens last about 60 days)",
+      { ...base, expiresSoon: true },
+      "info",
+      "Access expires soon",
+      "Reconnect Meta Ads soon to keep syncing.",
+    ],
+    [
+      "needing reauthorization",
+      { ...base, status: "needs_reauth" },
+      "warning",
+      "Reconnect required",
+      "Meta access expired or was revoked. Reconnect with the same Facebook account, or disconnect Meta Ads to use a different one.",
+    ],
+    [
+      "revoked",
+      { ...base, status: "revoked" },
+      "error",
+      "Disconnected",
+      "This Meta Ads connection was disconnected. Connect again to resume syncing.",
+    ],
+  ] as const)("describes a Meta connection %s", (_label, connection, tone, title, message) => {
+    const notice = connectionStatusNotice(connection, "meta");
+    expect(notice).toEqual({ tone, title, message });
+    expect(JSON.stringify(notice)).not.toContain("ads_read");
+  });
+
+  it.each(REASONS)("explains a Meta discovery failure with reason %s in Meta words", (reason) => {
+    expect(discoveryErrorNotice(error({ reason }), "meta")).toEqual({
+      tone: "error",
+      title: "Your Meta ad accounts could not be loaded",
+      message: META_ERROR_REASON_MESSAGES[reason],
+    });
+  });
+
+  it.each([
+    ["auth", "error", META_ERROR_REASON_MESSAGES.reauth_required],
+    ["rate_limited", "warning", "Meta Ads did not respond. Retry discovery in a few minutes."],
+    ["unknown", "error", "Retry discovery. If it keeps failing, reconnect Meta Ads."],
+  ])("falls back on the Meta error kind %s without a reason", (kind, tone, message) => {
+    expect(discoveryErrorNotice(error({ kind }), "meta")).toMatchObject({ tone, message });
+  });
+
+  it("explains Meta sync states with Meta reasons and a Meta default", () => {
+    expect(syncStatusSummary(sync({ syncState: "blocked" }), "meta").detail).toBe(
+      "Meta denied access to this account or it no longer exists. It is checked again every 24 hours.",
+    );
+    expect(
+      syncStatusSummary(
+        sync({
+          lastRunStatus: "failed",
+          lastError: { kind: "permission", message: "x", reason: "permission_denied", at: AT },
+        }),
+        "meta",
+      ).detail,
+    ).toBe(META_ERROR_REASON_MESSAGES.permission_denied);
+    expect(
+      syncStatusSummary(
+        sync({
+          syncState: "blocked",
+          lastError: { kind: "not_found", message: "x", reason: "account_not_accessible", at: AT },
+        }),
+        "meta",
+      ).detail,
+    ).toBe(META_ERROR_REASON_MESSAGES.account_not_accessible);
+  });
+
+  it.each([
+    [apiError("INVALID_ARGUMENT", "x", { field: "provider" }), "Meta Ads is not available"],
+    [apiError("FORBIDDEN", "x"), "Admins only"],
+    [apiError("PROVIDER_ERROR", "x"), "Meta Ads did not respond"],
+    [apiError("CONFLICT", "x", { reason: "connection_inactive" }), "Connection not active"],
+    [apiError("INVALID_ARGUMENT", "x", { externalId: "1" }), "This account cannot be linked"],
+  ])("explains Meta action errors (%#) in Meta words", (caught, title) => {
+    const notice = connectionActionNotice(caught, "meta");
+    expect(notice.title).toBe(title);
+    expect(JSON.stringify(notice)).not.toContain("Google");
+  });
+
+  it("disconnect notices name Meta Ads and the Facebook account", () => {
+    expect(disconnectedNotice("meta")).toEqual({
+      tone: "success",
+      title: "Meta Ads disconnected",
+      message:
+        "Linked accounts stopped syncing; their data and history are kept. Connect Meta Ads to sign in with any Facebook account.",
+    });
+    expect(disconnectActionNotice(apiError("FORBIDDEN", "x"), "meta").message).toBe(
+      "Only organization admins can disconnect Meta Ads.",
+    );
+    expect(disconnectActionNotice(new Error("x"), "meta").message).toBe(
+      "Meta Ads was not disconnected. Try again.",
+    );
+  });
+
+  it("no Meta notice ever contains Google wording", () => {
+    const notices = [
+      ...(["active", "needs_reauth", "revoked"] as const).map((status) =>
+        connectionStatusNotice({ ...base, status }, "meta"),
+      ),
+      connectionStatusNotice({ ...base, missingScopes: ["x"] }, "meta"),
+      ...["auth", "rate_limited", "unknown"].map((kind) =>
+        discoveryErrorNotice(error({ kind }), "meta"),
+      ),
+      ...(["parked", "blocked", "running"] as const).map((syncState) =>
+        syncStatusSummary(sync({ syncState }), "meta"),
+      ),
+      ...(["succeeded", "partial", "failed", "cancelled"] as const).map((lastRunStatus) =>
+        syncStatusSummary(sync({ lastRunStatus }), "meta"),
+      ),
+      ...[
+        apiError("INVALID_ARGUMENT", "x", { field: "returnUrl" }),
+        apiError("INVALID_ARGUMENT", "x", { field: "provider" }),
+        apiError("NOT_FOUND", "x"),
+        apiError("RATE_LIMITED", "x"),
+        apiError("FORBIDDEN", "x"),
+        apiError("APP_DISABLED", "x"),
+        new Error("x"),
+      ].flatMap((caught) => [
+        connectionActionNotice(caught, "meta"),
+        disconnectActionNotice(caught, "meta"),
+      ]),
+      disconnectedNotice("meta"),
+    ];
+    for (const notice of notices) expect(JSON.stringify(notice)).not.toContain("Google");
   });
 });

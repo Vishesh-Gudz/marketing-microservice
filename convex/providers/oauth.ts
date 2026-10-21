@@ -63,6 +63,11 @@ export interface OAuthSpec<TCredential = unknown> {
   readonly requiredScopes: readonly string[];
   readonly usesPkce: boolean;
 
+  /**
+   * False when the platform app settings this spec needs are missing or invalid, so a
+   * connection is refused before any OAuth state is created. Absent: always configured.
+   */
+  isConfigured?(config: OAuthClientConfig): boolean;
   buildAuthorizationUrl(input: AuthorizationUrlInput): string;
   exchangeCode(input: ExchangeCodeInput): Promise<OAuthGrant<TCredential>>;
   /**

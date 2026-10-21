@@ -2,11 +2,13 @@ import { createServer } from "node:net";
 import { defineConfig, devices } from "@playwright/test";
 import { assertLocalSetup, E2E_PORT } from "./scripts/e2e-connections.mjs";
 
-// The Google Ads Connections journey (tests/e2e/connections-journey.spec.mts): LOCAL ONLY and
-// opt-in. It drives the real dashboard against the local Convex backend in mock provider mode,
-// as the throwaway org "e2e-google-ads" (see docs/dashboard.md "Tests"):
+// The Connections journeys: Google Ads (tests/e2e/connections-journey.spec.mts, throwaway org
+// "e2e-google-ads") and Meta Ads (tests/e2e/meta-ads-journey.spec.mts, throwaway org
+// "e2e-meta-ads"). LOCAL ONLY and opt-in. They drive the real dashboard against the local
+// Convex backend in mock provider mode (see docs/dashboard.md "Tests"):
 //
-//   E2E_CONNECTIONS_JOURNEY=1 npm run test:e2e:connections
+//   E2E_CONNECTIONS_JOURNEY=1 npm run test:e2e:connections             # both journeys
+//   E2E_CONNECTIONS_JOURNEY=1 npm run test:e2e:connections -- meta-ads-journey   # Meta only
 //
 // Port 3000 because only localhost:3000 / 127.0.0.1:3000 are allowlisted OAuth return URLs for
 // the dev app. The journey starts its own Next dev server and never reuses a running one (the
@@ -48,7 +50,7 @@ const baseURL = `http://127.0.0.1:${E2E_PORT}`;
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  testMatch: "connections-journey.spec.mts",
+  testMatch: ["connections-journey.spec.mts", "meta-ads-journey.spec.mts"],
   fullyParallel: false,
   workers: 1,
   retries: 0,

@@ -27,7 +27,11 @@ export const list = orgQuery({
         const lastRun = state.lastRunId !== undefined ? await ctx.db.get(state.lastRunId) : null;
         return toAdAccountDto(
           account,
-          toPublicSyncStatus(state, lastRun !== null && lastRun.orgId === orgId ? lastRun : null),
+          toPublicSyncStatus(
+            state,
+            lastRun !== null && lastRun.orgId === orgId ? lastRun : null,
+            account.platform,
+          ),
         );
       }),
     );

@@ -17,9 +17,9 @@ import { api } from "@/convex/_generated/api";
 import { formatDateKey } from "@/lib/analytics/chart-data";
 import { useOrg } from "@/lib/analytics/org-context";
 import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
-import { formatCustomerId } from "@/lib/connections/customer-id";
 import { syncStatusSummary } from "@/lib/connections/messages";
 import { accountAnalyticsHref } from "@/lib/connections/navigation";
+import { PROVIDERS, type AdConnectionProvider } from "@/lib/connections/providers";
 import { EmptyState } from "../empty-state";
 import { formatInstant } from "../freshness-note";
 
@@ -30,31 +30,33 @@ const SUMMARY_BADGE = {
   error: "destructive",
 } as const;
 
-/** Linked Google Ads accounts with their read-only sync status (every role). */
-export function LinkedAccounts() {
+/** The provider's linked ad accounts with their read-only sync status (every role). */
+export function LinkedAccounts({ provider }: { provider: AdConnectionProvider }) {
   const { timezone } = useOrg();
   const searchParams = useSearchParams();
   const { data: accounts } = useAnalyticsQuery(api.v1.adAccounts.list, {});
+  const info = PROVIDERS[provider];
+  const headingId = `${provider}-linked-accounts`;
 
   if (accounts === undefined) {
-    return <Skeleton className="h-24 w-full" aria-label="Loading linked accounts" />;
+    return <Skeleton className="h-24 w-full" aria-label={`Loading linked ${info.name} accounts`} />;
   }
-  const linked = accounts.filter((a) => a.platform === "google_ads" && a.linked && !a.isManager);
+  const linked = accounts.filter((a) => a.platform === provider && a.linked && !a.isManager);
 
   return (
-    <section aria-labelledby="linked-accounts" className="flex flex-col gap-3">
-      <h3 id="linked-accounts" className="text-base font-semibold">
+    <section aria-labelledby={headingId} className="flex flex-col gap-3">
+      <h3 id={headingId} className="text-base font-semibold">
         Linked accounts
       </h3>
       {linked.length === 0 ? (
-        <EmptyState title="No Google Ads account linked yet">
-          Connect Google Ads and link an account to start syncing.
+        <EmptyState title={`No ${info.name} account linked yet`}>
+          Connect {info.name} and link an account to start syncing.
         </EmptyState>
       ) : (
         <div className="overflow-x-auto rounded-md border">
           <Table>
             <TableCaption className="sr-only">
-              Linked Google Ads accounts and sync status
+              Linked {info.name} accounts and sync status
             </TableCaption>
             <TableHeader>
               <TableRow>
@@ -70,14 +72,14 @@ export function LinkedAccounts() {
             </TableHeader>
             <TableBody>
               {linked.map((account) => {
-                const summary = syncStatusSummary(account.sync);
+                const summary = syncStatusSummary(account.sync, provider);
                 const sync = account.sync;
                 return (
                   <TableRow key={account.id} data-account-id={account.id}>
                     <TableCell className="whitespace-normal">
                       <div className="font-medium">{account.name}</div>
                       <div className="font-mono text-xs text-muted-foreground">
-                        {formatCustomerId(account.externalId)}
+                        {info.formatAccountId(account.externalId)}
                       </div>
                     </TableCell>
                     <TableCell className="whitespace-normal">

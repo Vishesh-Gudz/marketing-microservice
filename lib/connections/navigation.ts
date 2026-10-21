@@ -1,19 +1,31 @@
 import { filterParamsOnly, parseFilters, serializeFilters } from "@/lib/analytics/filters";
 import type { Connection } from "@/lib/analytics/types";
+import { CONNECT_PROVIDER_PARAM } from "./connect-result";
+import type { AdConnectionProvider } from "./providers";
 
 /**
  * Where the Connections page sends the browser. The OAuth return URL is this page with the
- * global filters only (the server accepts it only if its origin and path are allowlisted for
- * the app); the authorization URL is followed in the same tab and never rendered, logged or
- * stored (it carries the single-use state and the PKCE challenge).
+ * global filters and a display-only provider hint (the server accepts it only if its origin
+ * and path are allowlisted for the app); the authorization URL is followed in the same tab
+ * and never rendered, logged or stored (it carries the single-use state and, for Google, the
+ * PKCE challenge).
  */
 
 type Params = { toString(): string };
 
-/** `<origin>/connections`, carrying only the global dashboard filters. */
-export function connectReturnUrl(origin: string, current: Params): string {
-  const filters = filterParamsOnly(new URLSearchParams(current.toString())).toString();
-  return `${origin}/connections${filters ? `?${filters}` : ""}`;
+/**
+ * `<origin>/connections` with the global dashboard filters and `connect=<provider>`. The hint
+ * only picks the wording of the result notice (the callback's result names no provider);
+ * it is never trusted for anything else and is removed with the result parameters.
+ */
+export function connectReturnUrl(
+  origin: string,
+  current: Params,
+  provider: AdConnectionProvider,
+): string {
+  const params = filterParamsOnly(new URLSearchParams(current.toString()));
+  params.set(CONNECT_PROVIDER_PARAM, provider);
+  return `${origin}/connections?${params.toString()}`;
 }
 
 /** The Overview filtered to one ad account (the `accounts` filter); the period is kept. */
@@ -23,8 +35,8 @@ export function accountAnalyticsHref(accountId: string, current: Params): string
 }
 
 /**
- * Leaves for the platform's consent page in the same tab (Google's consent page must be a
- * top-level page). Only http(s) URLs are followed.
+ * Leaves for the platform's consent page in the same tab (consent pages must be top-level
+ * pages). Only http(s) URLs are followed.
  */
 export function navigateToAuthorization(
   authorizeUrl: string,
@@ -37,10 +49,13 @@ export function navigateToAuthorization(
   assign(url.toString());
 }
 
-/** Google Ads connections that can still be used (revoked ones are history), newest first. */
-export function googleAdsConnections(connections: readonly Connection[]): Connection[] {
+/** The provider's connections that can still be used (revoked ones are history), newest first. */
+export function adConnections(
+  connections: readonly Connection[],
+  provider: AdConnectionProvider,
+): Connection[] {
   return connections
-    .filter((c) => c.provider === "google_ads" && c.status !== "revoked")
+    .filter((c) => c.provider === provider && c.status !== "revoked")
     .sort((a, b) => (a.connectedAt < b.connectedAt ? 1 : a.connectedAt > b.connectedAt ? -1 : 0));
 }
 

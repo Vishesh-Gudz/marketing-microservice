@@ -1,5 +1,6 @@
 import { isMarketingError } from "@/convex/lib/errors";
 import { describeError } from "@/lib/analytics/errors";
+import { PROVIDERS, type AdConnectionProvider } from "./providers";
 import type {
   ConnectionError,
   ConnectionStatus,
@@ -10,13 +11,15 @@ import type {
 } from "./types";
 
 /**
- * Fixed, user-facing text for the Google Ads connection flow: connection status, discovery
- * failures, sync status and errors from connect / link / refresh. Only public contract
- * values are inspected (status enums, error kind, the allowlisted `reason`, error code +
- * details); server messages and platform codes are never displayed.
+ * Fixed, user-facing text for the ad platform connection flow (Google Ads and Meta Ads):
+ * connection status, discovery failures, sync status and errors from connect / link /
+ * refresh / disconnect. Every text names the provider it is for, so a Meta connection never
+ * shows Google wording. Only public contract values are inspected (status enums, error kind,
+ * the allowlisted `reason`, error code + details); server messages and platform codes are
+ * never displayed.
  */
 
-/** One message per allowlisted reason (exhaustive by type; parity-tested in tests/unit). */
+/** Google Ads: one message per allowlisted reason (exhaustive by type; parity-tested). */
 export const ERROR_REASON_MESSAGES: Readonly<Record<ErrorReason, string>> = {
   cloud_project_not_approved_for_production:
     "This service's Google Cloud project has Test access only, so it can read Google Ads test accounts only. An administrator must request Explorer access or higher.",
@@ -36,72 +39,116 @@ export const ERROR_REASON_MESSAGES: Readonly<Record<ErrorReason, string>> = {
   rate_limited: "Google Ads is limiting requests right now. It is retried automatically.",
 };
 
-function reasonMessage(reason: string | undefined): string | undefined {
-  return reason !== undefined && Object.prototype.hasOwnProperty.call(ERROR_REASON_MESSAGES, reason)
-    ? ERROR_REASON_MESSAGES[reason as ErrorReason]
+/**
+ * Meta Ads: one message per allowlisted reason (exhaustive by type; parity-tested). Meta
+ * errors are mapped by the server from the Graph code and the error kind
+ * (docs/providers/meta.md, "Public reasons"); reasons Meta never produces still get a
+ * Meta-worded fallback.
+ */
+export const META_ERROR_REASON_MESSAGES: Readonly<Record<ErrorReason, string>> = {
+  cloud_project_not_approved_for_production:
+    "This service is not approved to read this Meta ad account yet. Contact an administrator.",
+  provider_config_invalid:
+    "Meta Ads is not configured correctly on this service. Contact an administrator.",
+  provider_mode_misconfigured:
+    "This service is not set up to connect to Meta Ads. Contact an administrator.",
+  provider_unavailable: "Meta Ads is not available on this service right now.",
+  reauth_required: "Meta needs you to sign in again. Reconnect Meta Ads.",
+  not_ads_user:
+    "This Facebook account has no access to a Meta ad account. Connect with a Facebook account that does.",
+  permission_denied:
+    "The connected Facebook account has no permission to read this Meta ad account.",
+  account_not_enabled: "This Meta ad account is not enabled.",
+  account_not_accessible:
+    "This Meta ad account does not exist or can no longer be read with the connected Facebook account.",
+  account_not_found: "Meta could not find this ad account.",
+  rate_limited: "Meta is limiting requests right now. It is retried automatically.",
+};
+
+const REASON_MESSAGES: Readonly<
+  Record<AdConnectionProvider, Readonly<Record<ErrorReason, string>>>
+> = {
+  google_ads: ERROR_REASON_MESSAGES,
+  meta: META_ERROR_REASON_MESSAGES,
+};
+
+function reasonMessage(
+  reason: string | undefined,
+  provider: AdConnectionProvider,
+): string | undefined {
+  const messages = REASON_MESSAGES[provider];
+  return reason !== undefined && Object.prototype.hasOwnProperty.call(messages, reason)
+    ? messages[reason as ErrorReason]
     : undefined;
 }
 
 /** The connection's own state (the discovery error is described separately). */
-export function connectionStatusNotice(connection: {
-  status: ConnectionStatus;
-  missingScopes: readonly string[];
-  expiresSoon: boolean;
-}): Notice {
+export function connectionStatusNotice(
+  connection: {
+    status: ConnectionStatus;
+    missingScopes: readonly string[];
+    expiresSoon: boolean;
+  },
+  provider: AdConnectionProvider,
+): Notice {
+  const { name, platform, identity } = PROVIDERS[provider];
   switch (connection.status) {
     case "revoked":
       return {
         tone: "error",
         title: "Disconnected",
-        message: "This Google Ads connection was disconnected. Connect again to resume syncing.",
+        message: `This ${name} connection was disconnected. Connect again to resume syncing.`,
       };
     case "needs_reauth":
       return {
         tone: "warning",
         title: "Reconnect required",
-        message:
-          "Google access expired or was revoked. Reconnect with the same Google account, or disconnect Google Ads to use a different one.",
+        message: `${platform} access expired or was revoked. Reconnect with the same ${identity}, or disconnect ${name} to use a different one.`,
       };
     case "active":
       if (connection.missingScopes.length > 0) {
         return {
           tone: "warning",
-          title: "Google Ads access is missing",
-          message: "Reconnect and allow access to Google Ads when Google asks.",
+          title: `${name} access is missing`,
+          message: `Reconnect and allow access to ${name} when ${platform} asks.`,
         };
       }
       if (connection.expiresSoon) {
         return {
           tone: "info",
           title: "Access expires soon",
-          message: "Reconnect Google Ads soon to keep syncing.",
+          message: `Reconnect ${name} soon to keep syncing.`,
         };
       }
-      return { tone: "success", title: "Connected", message: "Google Ads is connected." };
+      return { tone: "success", title: "Connected", message: `${name} is connected.` };
   }
 }
 
 /** Why account discovery failed; `null` when the connection has no recorded error. */
-export function discoveryErrorNotice(error: ConnectionError | undefined): Notice | null {
+export function discoveryErrorNotice(
+  error: ConnectionError | undefined,
+  provider: AdConnectionProvider,
+): Notice | null {
   if (error === undefined) return null;
-  const title = "Your Google Ads accounts could not be loaded";
-  const specific = reasonMessage(error.reason);
+  const { name, accountNoun } = PROVIDERS[provider];
+  const title = `Your ${accountNoun}s could not be loaded`;
+  const specific = reasonMessage(error.reason, provider);
   if (specific !== undefined) return { tone: "error", title, message: specific };
   switch (error.kind) {
     case "auth":
-      return { tone: "error", title, message: ERROR_REASON_MESSAGES.reauth_required };
+      return { tone: "error", title, message: REASON_MESSAGES[provider].reauth_required };
     case "rate_limited":
     case "transient":
       return {
         tone: "warning",
         title,
-        message: "Google Ads did not respond. Retry discovery in a few minutes.",
+        message: `${name} did not respond. Retry discovery in a few minutes.`,
       };
     default:
       return {
         tone: "error",
         title,
-        message: "Retry discovery. If it keeps failing, reconnect Google Ads.",
+        message: `Retry discovery. If it keeps failing, reconnect ${name}.`,
       };
   }
 }
@@ -111,7 +158,10 @@ export type SyncSummary = { tone: NoticeTone; label: string; detail?: string };
 const RETRIED = "It is retried automatically.";
 
 /** One line for a linked account's sync status (`undefined`: no sync state yet). */
-export function syncStatusSummary(sync: SyncStatus | undefined): SyncSummary {
+export function syncStatusSummary(
+  sync: SyncStatus | undefined,
+  provider: AdConnectionProvider,
+): SyncSummary {
   if (sync === undefined) {
     return {
       tone: "info",
@@ -127,8 +177,8 @@ export function syncStatusSummary(sync: SyncStatus | undefined): SyncSummary {
         tone: "error",
         label: "Sync blocked",
         detail:
-          reasonMessage(sync.lastError?.reason) ??
-          "Google denied access to this account or it no longer exists. It is checked again every 24 hours.",
+          reasonMessage(sync.lastError?.reason, provider) ??
+          `${PROVIDERS[provider].platform} denied access to this account or it no longer exists. It is checked again every 24 hours.`,
       };
     case "running":
       return { tone: "info", label: "Syncing…" };
@@ -155,7 +205,8 @@ export function syncStatusSummary(sync: SyncStatus | undefined): SyncSummary {
         tone: "warning",
         label: "Last sync partly completed",
         detail:
-          reasonMessage(sync.lastError?.reason) ?? `Some data could not be loaded. ${RETRIED}`,
+          reasonMessage(sync.lastError?.reason, provider) ??
+          `Some data could not be loaded. ${RETRIED}`,
       };
     case "failed": {
       const streak =
@@ -163,7 +214,7 @@ export function syncStatusSummary(sync: SyncStatus | undefined): SyncSummary {
       return {
         tone: "warning",
         label: `Last sync failed${streak}`,
-        detail: reasonMessage(sync.lastError?.reason) ?? RETRIED,
+        detail: reasonMessage(sync.lastError?.reason, provider) ?? RETRIED,
       };
     }
     case "cancelled":
@@ -176,7 +227,8 @@ export function syncStatusSummary(sync: SyncStatus | undefined): SyncSummary {
 }
 
 /** Errors of beginConnect / listDiscoveredAssets / linkAdAccounts / refreshAssets. */
-export function connectionActionNotice(error: unknown): Notice {
+export function connectionActionNotice(error: unknown, provider: AdConnectionProvider): Notice {
+  const { name, platform } = PROVIDERS[provider];
   if (isMarketingError(error)) {
     const { code, details } = error.data;
     switch (code) {
@@ -185,29 +237,30 @@ export function connectionActionNotice(error: unknown): Notice {
           return {
             tone: "error",
             title: "This dashboard address is not allowed",
-            message:
-              "Google sign-in cannot return to this address. An administrator must add it to the app's allowed return URLs.",
+            message: `${platform} sign-in cannot return to this address. An administrator must add it to the app's allowed return URLs.`,
           };
         }
         if (details?.field === "provider") {
           return {
             tone: "error",
-            title: "Google Ads is not available",
-            message: "Google Ads cannot be connected on this service yet.",
+            title: `${name} is not available`,
+            message: `${name} cannot be connected on this service yet.`,
           };
         }
         if (details?.reason === "manager_status_unknown") {
           return {
             tone: "error",
             title: "Account type not confirmed",
-            message:
-              "Google did not confirm this is a client account. Retry discovery, then try again.",
+            message: `${platform} did not confirm this is a client account. Retry discovery, then try again.`,
           };
         }
         return {
           tone: "error",
           title: "This account cannot be linked",
-          message: "Choose a client account from the discovered list.",
+          message:
+            provider === "meta"
+              ? "Choose an ad account from the discovered list."
+              : "Choose a client account from the discovered list.",
         };
       case "NOT_FOUND":
         return {
@@ -220,7 +273,7 @@ export function connectionActionNotice(error: unknown): Notice {
           ? {
               tone: "error",
               title: "Connection not active",
-              message: "Reconnect Google Ads, then try again.",
+              message: `Reconnect ${name}, then try again.`,
             }
           : {
               tone: "error",
@@ -238,7 +291,7 @@ export function connectionActionNotice(error: unknown): Notice {
         return {
           tone: "error",
           title: "Admins only",
-          message: "Only organization admins can connect Google Ads or link accounts.",
+          message: `Only organization admins can connect ${name} or link accounts.`,
         };
       case "APP_DISABLED":
         return {
@@ -249,7 +302,7 @@ export function connectionActionNotice(error: unknown): Notice {
       case "PROVIDER_ERROR":
         return {
           tone: "error",
-          title: "Google Ads did not respond",
+          title: `${name} did not respond`,
           message: "Try again in a few minutes.",
         };
       default:
@@ -267,21 +320,24 @@ export function connectionActionNotice(error: unknown): Notice {
   };
 }
 
-/** Shown after an admin disconnected Google Ads. */
-export const DISCONNECTED_NOTICE: Notice = {
-  tone: "success",
-  title: "Google Ads disconnected",
-  message:
-    "Linked accounts stopped syncing; their data and history are kept. Connect Google Ads to sign in with any Google account.",
-};
+/** Shown after an admin disconnected the provider. */
+export function disconnectedNotice(provider: AdConnectionProvider): Notice {
+  const { name, identity } = PROVIDERS[provider];
+  return {
+    tone: "success",
+    title: `${name} disconnected`,
+    message: `Linked accounts stopped syncing; their data and history are kept. Connect ${name} to sign in with any ${identity}.`,
+  };
+}
 
 /** Errors of disconnect: fixed text, never the server message. */
-export function disconnectActionNotice(error: unknown): Notice {
+export function disconnectActionNotice(error: unknown, provider: AdConnectionProvider): Notice {
+  const { name } = PROVIDERS[provider];
   if (!isMarketingError(error)) {
     return {
       tone: "error",
       title: "Something went wrong",
-      message: "Google Ads was not disconnected. Try again.",
+      message: `${name} was not disconnected. Try again.`,
     };
   }
   switch (error.data.code) {
@@ -289,15 +345,15 @@ export function disconnectActionNotice(error: unknown): Notice {
       return {
         tone: "error",
         title: "Admins only",
-        message: "Only organization admins can disconnect Google Ads.",
+        message: `Only organization admins can disconnect ${name}.`,
       };
     case "NOT_FOUND":
       return {
         tone: "error",
         title: "Connection not found",
-        message: "This Google Ads connection no longer exists. Reload the page.",
+        message: `This ${name} connection no longer exists. Reload the page.`,
       };
     default:
-      return connectionActionNotice(error);
+      return connectionActionNotice(error, provider);
   }
 }

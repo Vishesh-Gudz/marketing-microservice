@@ -153,6 +153,10 @@ describe("Meta connect flow (live mode, fake Graph)", () => {
       connectionId: params.get("connection")!,
     });
     expect(connection.missingScopes).toEqual(["ads_read"]);
+    // The discovery failure is explained with a fixed reason; no Graph code or text.
+    expect(connection.lastError).toMatchObject({ reason: "reauth_required" });
+    expect(Object.keys(connection.lastError!).sort()).toEqual(["at", "kind", "message", "reason"]);
+    expect(JSON.stringify(connection.lastError)).not.toMatch(/Fake Graph|OAuthException|ads_read/);
   });
 });
 
@@ -364,6 +368,56 @@ describe("D8: fail-closed provider mode end to end", () => {
       code: "provider_mode_invalid",
     });
     expect(graph.calls()).toBe(0);
+  });
+});
+
+describe("an unconfigured Meta app is refused before any OAuth state exists", () => {
+  it.each([
+    ["META_APP_ID is missing", { META_APP_ID: undefined }],
+    ["META_APP_SECRET is missing", { META_APP_SECRET: undefined }],
+    ["META_LOGIN_CONFIG_ID is missing", { META_LOGIN_CONFIG_ID: undefined }],
+    ["META_APP_ID is empty", { META_APP_ID: "" }],
+    ["META_APP_ID is not numeric", { META_APP_ID: "my-app" }],
+    ["META_APP_SECRET is too short", { META_APP_SECRET: "short" }],
+    ["META_LOGIN_CONFIG_ID is not numeric", { META_LOGIN_CONFIG_ID: "cfg" }],
+    ["META_GRAPH_API_VERSION is invalid", { META_GRAPH_API_VERSION: "v26" }],
+  ] as const)("%s: provider not available, nothing stored, no Graph call", async (_label, env) => {
+    stubLiveMeta(graph);
+    for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
+    const t = newBackend();
+    await setupSyncOrg(t);
+    let caught: unknown;
+    try {
+      await as(t).action(api.v1.connections.beginConnect, {
+        provider: "meta",
+        returnUrl: RETURN_URL,
+      });
+    } catch (error) {
+      caught = error;
+    }
+    // The same refusal as an unconfigured Google Ads: fixed code and field, no state.
+    expect(caught).toMatchObject({
+      data: { code: "INVALID_ARGUMENT", details: { field: "provider" } },
+    });
+    const db = await t.run(async (ctx) => ({
+      states: await ctx.db.query("oauthStates").collect(),
+      connections: await ctx.db.query("connections").collect(),
+      credentials: await ctx.db.query("credentials").collect(),
+    }));
+    expect(db).toEqual({ states: [], connections: [], credentials: [] });
+    expect(graph.calls()).toBe(0);
+  });
+
+  it("a complete configuration still starts the connection", async () => {
+    stubLiveMeta(graph);
+    const t = newBackend();
+    await setupSyncOrg(t);
+    const { authorizeUrl } = await as(t).action(api.v1.connections.beginConnect, {
+      provider: "meta",
+      returnUrl: RETURN_URL,
+    });
+    expect(new URL(authorizeUrl).searchParams.get("config_id")).toBeTruthy();
+    expect(await t.run((ctx) => ctx.db.query("oauthStates").collect())).toHaveLength(1);
   });
 });
 

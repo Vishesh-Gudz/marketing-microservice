@@ -11,12 +11,11 @@ credentials are handled. The code lives in `convex/connections/`, `convex/v1/con
 **Who starts connections.** Every client uses the same v1 functions below; there is no second
 integration and no other credential store.
 
-- **Google Ads:** the standalone dashboard's `/connections` page
-  ([dashboard.md](dashboard.md#connections-google-ads); ADR 0008 D17 amendment), and later the
-  parent app through v1. Today the dashboard runs with the local development token in mock mode
+- **Google Ads and Meta Ads:** the standalone dashboard's `/connections` page
+  ([dashboard.md](dashboard.md#connections-google-ads-and-meta-ads); ADR 0008 D17 amendments),
+  and later the parent app through v1. Today the dashboard runs with the local development token
   only; hosted users cannot sign in or connect yet.
-- **Meta Ads and Instagram:** the parent app through v1. The dashboard shows their status
-  read-only.
+- **Instagram:** the parent app through v1. The dashboard shows its status read-only.
 
 > **Not ready for public use:** the OAuth callback stores a connection for whoever _started_ the
 > sign-in, not for whoever _completed_ it. This must be fixed before any public or multi-tenant
@@ -86,11 +85,12 @@ client-supplied customer id: only ids this connection discovered can be linked.
 
 **Discovery errors (additive).** A failed discovery (in the callback or a retry) keeps the
 connection and records a sanitized `lastError { kind, message, reason?, at }` on it:
-`kind` is the provider error kind and `message` a generic text. For **Google Ads** connections
-only, the platform code is translated into an allowlisted public `reason` (the same allowlist as
-sync errors, `convex/sync/publicStatus.ts`), e.g. `cloud_project_not_approved_for_production`,
-`not_ads_user`, `reauth_required`, `rate_limited`. The code itself is never stored or returned, an
-unlisted code yields no `reason`, and Meta / Instagram record none. A successful discovery clears
+`kind` is the provider error kind and `message` a generic text. For **Google Ads** connections the
+platform code, and for **Meta Ads** connections the code and the error kind, is translated into an
+allowlisted public `reason` (the same allowlist as sync errors, `convex/sync/publicStatus.ts`),
+e.g. `cloud_project_not_approved_for_production`, `not_ads_user`, `reauth_required`,
+`permission_denied`, `rate_limited` ([meta.md](providers/meta.md#public-reasons)). The code itself
+is never stored or returned, an unlisted code yields no `reason`, and Instagram records none. A successful discovery clears
 `lastError`. (Google Ads skips individual customers it cannot read, e.g. permission or not
 found; those are not discovery failures.)
 
@@ -150,8 +150,26 @@ encryption protections. Full description and the required fix:
 | `CONVEX_SITE_URL`                                        | Built in; the redirect URI is `<CONVEX_SITE_URL>/oauth/callback`                                                             |
 | `PROVIDER_MODE`                                          | Phase 8: `mock` or `live`; **required on every cloud deployment** (fails closed, see [providers/meta.md](providers/meta.md)) |
 | `META_APP_ID`, `META_APP_SECRET`, `META_LOGIN_CONFIG_ID` | Phase 8 (real Meta spec, `PROVIDER_MODE=live`); optional `META_GRAPH_API_VERSION`                                            |
+| `META_OAUTH_REDIRECT_ORIGIN`                             | Optional, Meta only, local deployments only: `http://localhost:<site port>` (see below)                                      |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`               | Phase 9 (real Google spec)                                                                                                   |
 | `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET`               | Phase 10 (Instagram Login, organic Instagram; see [providers/instagram.md](providers/instagram.md))                          |
+
+**Meta redirect origin (`META_OAUTH_REDIRECT_ORIGIN`).** Facebook Login for Business only accepts
+HTTPS redirect URIs, except `http://localhost`, which Meta allows automatically while the app is in
+development mode (it cannot be added to Valid OAuth Redirect URIs). A local deployment's
+`CONVEX_SITE_URL` is `http://127.0.0.1:3211`, which Meta refuses, so the local deployment sets
+`META_OAUTH_REDIRECT_ORIGIN=http://localhost:3211`: Meta's redirect URI becomes
+`http://localhost:3211/oauth/callback` (the same backend). The **only** accepted value is
+`http://localhost:<CONVEX_SITE_URL's port>` (an origin: no path, query, fragment or credentials) on
+a local deployment, one whose `CONVEX_SITE_URL` is plain `http` on a loopback host. Everything
+else is refused, including every `https` origin (even the deployment's own), other loopback names
+(`127.0.0.1`, `[::1]`) and other ports, so an authorization code can never be redirected off the
+deployment. A refused value makes `beginConnect` fail with `INTERNAL` naming the variable (never its
+value) before any OAuth state exists, and a callback that finds it invalid fails with `internal`
+without calling Meta. `beginConnect` and the callback's code exchange compute the URI the same way,
+so authorization and exchange always send the same `redirect_uri`. Google Ads and Instagram always
+use `CONVEX_SITE_URL`. **Cloud deployments leave it unset**: Meta then uses the HTTPS
+`<CONVEX_SITE_URL>/oauth/callback`, which a published app must register exactly.
 
 Per app, the return-URL allowlist is set with
 `npx convex run admin/integrationApps:setAllowedReturnUrls '{"issuer":"…","urls":["https://app.example.com/settings/"]}'`.

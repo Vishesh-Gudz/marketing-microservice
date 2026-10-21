@@ -20,6 +20,7 @@ import type { BreakdownArgs, BreakdownGroup, Coverage } from "@/lib/analytics/ty
 import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
 import { useAnalyticsScope } from "@/lib/analytics/use-dashboard-filters";
 import { VALUES, valueView, type ValueKey } from "@/lib/analytics/values";
+import { isAdConnectionProvider } from "@/lib/connections/providers";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "../empty-state";
 import { FilterBar } from "../filter-bar";
@@ -109,7 +110,7 @@ function AccountsTable({ args }: { args: BreakdownArgs }) {
                       ) : conn?.status === "needs_reauth" ? (
                         <Badge variant="destructive">Reconnect required</Badge>
                       ) : null}
-                      {account.platform === "google_ads" &&
+                      {isAdConnectionProvider(account.platform) &&
                         (!account.linked || conn?.status === "needs_reauth") && (
                           <Link
                             href="/connections"

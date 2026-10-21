@@ -42,9 +42,12 @@ live or to mock.
 | any other value (case-sensitive, including `""`) | any                                                           | config error `provider_mode_invalid` |
 
 - **mock:** the deterministic mock providers for both platforms (unchanged).
-- **live:** the Meta provider and Meta OAuth spec; Google Ads is the generic **unavailable stub**
-  (D8-A): every call throws `auth` / `provider_unavailable`, so leftover mock Google connections
-  move to `needs_reauth` and no synthetic data is written; no Google OAuth spec.
+- **live:** the Meta provider and Meta OAuth spec (a connection is refused before any OAuth state
+  exists while the Meta app settings are missing or invalid; see [Connection flow](#connection-flow)).
+  Google Ads uses its live provider when `GOOGLE_CLIENT_ID` or `GOOGLE_CLIENT_SECRET` is set and
+  otherwise the generic **unavailable stub** (D8-A): every call throws `auth` /
+  `provider_unavailable`, so leftover mock Google connections move to `needs_reauth` and no
+  synthetic data is written; no Google OAuth spec ([google-ads.md](google-ads.md)).
 - **config error:** unavailable stubs for both platforms (declaring the live capabilities, so stored
   data stays readable). Every call throws `unknown` with the mode code; no OAuth specs, so
   `beginConnect` is refused; no Graph calls, no mock data, no reauth, no account block. Fixing the
@@ -62,7 +65,15 @@ portfolio. Its name and id are recorded in the deployment setup, **never in this
 2. Create an FLfB **configuration**: user access token, ad-account assets, permission `ads_read`
    only. Its id is `META_LOGIN_CONFIG_ID`.
 3. Facebook Login settings: strict mode, **exact** redirect URI
-   `https://<deployment>.convex.site/oauth/callback`; enable **Require App Secret**.
+   `https://<deployment>.convex.site/oauth/callback`; enable **Require App Secret**. Local
+   deployment (app in development mode only): Meta refuses `http://127.0.0.1:3211/oauth/callback`,
+   so set `META_OAUTH_REDIRECT_ORIGIN=http://localhost:3211` on it; Meta then uses
+   `http://localhost:3211/oauth/callback`, which it allows automatically in development mode and
+   which is **not** added to Valid OAuth Redirect URIs. That is the only value the setting
+   accepts (any `https` origin is refused); cloud deployments leave it unset. Publishing the app
+   requires an HTTPS redirect URI, a cloud deployment's
+   `https://<deployment>.convex.site/oauth/callback`; see
+   [connections.md](../connections.md#configuration).
 4. App settings: privacy-policy URL and data-deletion **instructions** URL (no callback until
    Phase 11; see [Data deletion](#data-deletion)).
 5. App roles: add the engineers who run the G1 spike and dev syncs.
@@ -75,7 +86,8 @@ portfolio. Its name and id are recorded in the deployment setup, **never in this
    npx convex env set META_LOGIN_CONFIG_ID <configuration id>
    ```
 
-   Optional: `META_GRAPH_API_VERSION` (validated `vNN.0`; default `v26.0`). The existing
+   Optional: `META_GRAPH_API_VERSION` (validated `vNN.0`; default `v26.0`), and on a **local**
+   deployment only `META_OAUTH_REDIRECT_ORIGIN=http://localhost:3211` (step 3). The existing
    `TOKEN_ENCRYPTION_KEYS` is required as for every connection.
 
 7. **Every cloud deployment must set `PROVIDER_MODE`** (`mock` or `live`) before its first deploy,
@@ -100,6 +112,12 @@ parameter, no PKCE) → `/oauth/callback` → `exchangeCode`:
 | `identity`            | `GET me` (user token in the header, `appsecret_proof`); must match `debug_token.user_id`                |
 | `config`              | invalid version / app id / secret / configuration id (before any call)                                  |
 
+- Configuration check first: `beginConnect` asks the spec `isConfigured` before it creates any
+  OAuth state. While `META_APP_ID`, `META_APP_SECRET` or `META_LOGIN_CONFIG_ID` is missing or
+  invalid, or `META_GRAPH_API_VERSION` is set but invalid, the connection is refused with
+  `INVALID_ARGUMENT` (`field: "provider"`), exactly like an unconfigured Google Ads: no OAuth state,
+  connection or credential is written and Graph is not called. The `config` stage above remains for
+  settings that change between `beginConnect` and the callback.
 - Scopes: `requestedScopes = requiredScopes = ["ads_read"]` (D9). A grant without `ads_read`
   connects with a `missingScopes` warning.
 - Credential (`MetaCredential` v1, encrypted at rest): long-lived user token, app id, `expiresAt` =
@@ -141,7 +159,9 @@ payloads. Org admins see the entries through `v1/audit:list` (contract unchanged
 - Cursors (D15): `m1.<base64url>` wrapping Meta's `after` value and a fingerprint of the operation,
   **API version**, account, request window and request plan. A cursor from another request or
   another version is `invalid_request` (`cursor_invalid`), so the sync engine restarts the task
-  once instead of mixing versions.
+  once instead of mixing versions. Insights cursors also carry the stage, the carry, a flush
+  marker and, after a page had to be re-requested with fewer rows, that row count (`l`; see
+  [Page fit](#action-metrics-fetchactionmetrics)).
 
 ## Errors (D22, D23, D24)
 
@@ -157,12 +177,49 @@ Classification uses Graph codes, HTTP status and usage headers only — never me
 | 3, 10, 200–299, HTTP 403                                         | permission probe (`GET me/permissions`): `auth` if `ads_read` is gone, else `permission`                                      |
 | `100/33`, 803, HTTP 404                                          | `not_found` (account blocked)                                                                                                 |
 | 100 (other), 2500, 2635, 3018; own-cursor errors                 | `invalid_request` (one restart if a cursor exists)                                                                            |
-| schema drift, account mismatch                                   | `data`                                                                                                                        |
+| schema drift, account mismatch, `insights_row_too_large`         | `data`                                                                                                                        |
 | missing/invalid `META_*` env; `PROVIDER_MODE` missing or invalid | `unknown` with `meta_config_invalid` / `provider_mode_missing` / `provider_mode_invalid`; fails the task, no reauth, no block |
 | an operation without a mapping entry (defensive; none today)     | `unknown` with `meta_mapping_pending_g1`                                                                                      |
 | anything else                                                    | `unknown`                                                                                                                     |
 
 Messages are generic (`Meta request failed (<kind>)`) and never contain tokens, URLs or bodies.
+
+### Public reasons
+
+Sync errors (`v1/adAccounts:list`, `sync.lastError`) and discovery errors on a connection
+(`v1/connections:get`, `lastError`) keep the error kind and a fixed generic message. A known
+condition also gets an allowlisted `reason` (`convex/sync/publicStatus.ts`); the Graph code itself is
+never stored on the connection or returned. Because one Graph code can be classified differently
+(a permission code becomes `auth` when the `ads_read` probe finds the grant gone), Meta reasons come
+from the code **and** the classified kind; Google Ads codes never explain a Meta error:
+
+| Condition                                                            | `reason`                      |
+| -------------------------------------------------------------------- | ----------------------------- |
+| kind `auth` (190, 102, HTTP 401, `ads_read` gone, foreign app id)    | `reauth_required`             |
+| kind `permission` (3, 10, 200–299, HTTP 403 with `ads_read` granted) | `permission_denied`           |
+| kind `rate_limited` (4, 17, 32, 341, 368, 613, 80000–80014, 429)     | `rate_limited`                |
+| `100/33` (account does not exist or cannot be loaded)                | `account_not_accessible`      |
+| 803 (unknown alias)                                                  | `account_not_found`           |
+| `meta_config_invalid`                                                | `provider_config_invalid`     |
+| `provider_mode_missing` / `provider_mode_invalid`                    | `provider_mode_misconfigured` |
+| `provider_unavailable`                                               | `provider_unavailable`        |
+| anything else (transient, data, invalid request, unknown codes)      | none: kind + message only     |
+
+A disabled ad account is not an error: its `account_status` is reported as the account status
+(discovery and the ad account). The code-to-reason mapping is provisional (R2, R20). The dashboard
+explains these reasons in Meta words (`META_ERROR_REASON_MESSAGES` in `lib/connections/messages.ts`).
+
+### Dashboard connection flow
+
+The dashboard's `/connections` page has a **Meta Ads** section
+([dashboard.md](../dashboard.md#connections-google-ads-and-meta-ads), ADR 0008 amendment):
+**Connect Meta Ads** → Facebook Login for Business → `/oauth/callback` → discovery → choose one ad
+account → **Link selected account** → the first sync starts automatically → the linked account's
+sync status and **View analytics**. Reconnect only accepts the Facebook account that created the
+connection; **Disconnect Meta Ads** lets an admin start over with another one. While the Meta app
+settings are missing, the section explains that Meta Ads is not available (no OAuth state is
+created). Tested with mocks and the fake Graph only: no real Meta account has been connected
+from the dashboard.
 
 ## Account mapping (D10)
 
@@ -276,6 +333,18 @@ not stored, so nothing is counted twice. Different windows are separate rows and
 sums them. The wide `conversions` (ad set attribution setting) and these fixed-window rows are not
 expected to reconcile exactly; that is by design, as for Google (`all_conversions`).
 
+**Page fit.** One insights row becomes up to (conversion types × 3 windows) action rows, while the
+sync engine accepts at most 500 records per page (larger pages fail as `page_too_large`, without
+retry). When a Graph page normalizes to more than `maxPageSize` records, the provider requests the
+**same** position again with fewer rows: an estimate from the page's density, strictly fewer rows
+than the page held, and at least half after the first miss, so it ends within a few requests. Every
+attempt starts from the carry the request arrived with, and the next cursor starts right after the
+rows emitted, so no row is skipped or emitted twice. The cursor keeps the row count that fit (`l`)
+for the stage's next page and doubles it again after a sparse page, up to the page size. A single
+row with more than 500 records fails closed as `data` / `insights_row_too_large` (the task fails;
+nothing is split or dropped). Re-requesting the same `after` with a different `limit` is part of
+R17.
+
 ### Capabilities
 
 `META_CAPABILITIES`: all four entity listings and metric levels; placements `all`, `facebook`,
@@ -311,7 +380,7 @@ tests.
 | R14 | **D20 basis**: with `action_report_time=impression`, conversions are dated on the impression date → `impression_or_click_date`.                                                                                   | Compare daily conversions with `action_report_time=conversion` (spike request 62): the distribution must differ where conversions lag. If Meta's semantics fit neither canonical basis, **stop and report**.                                              | **D20**  |
 | R15 | **D19 conversions** = `omni_purchase` + `lead` with the ad set attribution setting (`use_unified_attribution_setting=true`), value from `action_values`.                                                          | Compare with Ads Manager "Purchases" + "Leads" (and "Purchases conversion value") for the same range. If "Results" is required instead, report.                                                                                                           | **D19**  |
 | R16 | **D20 windows/types**: `1d_click`, `7d_click`, `1d_view` are valid windows; window keys appear per action entry; the listed `omni_*` types exist.                                                                 | Spike requests 58–60; check which window keys and action types real rows carry.                                                                                                                                                                           | **D20**  |
-| R17 | Page size 500 is accepted for listings and insights; rate-limit headers (BUC `estimated_time_to_regain_access` minutes, `x-ad-account-usage` `reset_time_duration` seconds) as parsed.                            | Measure pages and throttling on a real account (G2); adjust `defaultPageSize`/`maxPageSize` if needed.                                                                                                                                                    | D33, D24 |
+| R17 | Page size 500 is accepted for listings and insights, also re-requesting one `after` with a smaller `limit`; rate-limit headers (BUC regain minutes, `x-ad-account-usage` reset seconds) as parsed.                | Measure pages and throttling on a real account (G2); adjust `defaultPageSize`/`maxPageSize` if needed.                                                                                                                                                    | D33, D24 |
 | R18 | Incremental listing (`updated_time` filtering) is **disabled**: every sync lists the full structure.                                                                                                              | Optional: validate the filtering syntax, then enable `incrementalEntities`.                                                                                                                                                                               | V17      |
 | R19 | `debug_token` accepts the user token as the `input_token` query parameter (the only token in a URL).                                                                                                              | Keep; check whether a header/body alternative exists.                                                                                                                                                                                                     | V2       |
 | R20 | `granular_scopes` / expiry fields of `debug_token` have the shape the OAuth spec reads; long-lived tokens last about 60 days.                                                                                     | Connect once; check the stored expiry on the connection.                                                                                                                                                                                                  | D5       |
@@ -342,14 +411,21 @@ tests.
   - `convex/providers/meta/carry.test.ts` and `placementPaging.test.ts`: `other` accumulated
     across pages (page caps 1/2/3/unlimited give identical rows), explicit zero, missing,
     mixed, replayed pages, `all` rows unaffected, fail closed on carry overflow.
-  - `client`, `errors`, `cursor` (staged cursors), `provider` (config, D10, permission probe,
-    version identity, fail-closed engine path, injection guard), `oauth`.
+  - `actionPaging.test.ts` (page fit): with many conversions every page holds at most 500
+    records and all pages equal the one-row-per-page reference; the row count is kept for the
+    stage; one oversized row fails closed (`insights_row_too_large`).
+  - `client`, `errors`, `cursor` (staged cursors, row count), `provider` (config, D10, permission
+    probe, version identity, fail-closed engine path, injection guard), `oauth` (incl.
+    `isConfigured`).
   - `convex/providers/mode.test.ts` (D8), `convex/connections/metaFlow.test.ts` (connect, D28b,
-    tenant isolation, D8, D1), `convex/connections/oauthDiagnostics.test.ts`.
+    tenant isolation, D8, D1, refusal before any OAuth state for each missing or invalid
+    setting), `convex/connections/oauthDiagnostics.test.ts`, `convex/connections/discoveryReason.test.ts`
+    and `convex/sync/publicStatus.test.ts` (public reasons).
   - `convex/sync/meta.e2e.test.ts`: fake Graph → provider → sync → canonical tables → v1 analytics
     (overview, timeSeries, performance, breakdown, actions); idempotent re-sync; stored rows
-    identical with Graph pages of 2 rows (R9); throttled page;
-    tenant isolation; leak scan; Google stub; 190; 17; 10; `100/33`; `1487534`.
+    identical with Graph pages of 2 rows (R9); an account with many conversions completes with
+    coverage and the same rows as 2-row pages; throttled page; tenant isolation; leak scan; Google
+    stub; 190, `100/33` and 10 with their public reasons; 17; `1487534`.
   - `convex/sync/compat.test.ts` (D34).
 
 ## Runbooks

@@ -161,4 +161,4 @@ The dev token is not a login: anyone using the local dashboard acts as that one 
 `dev-org`. Production builds of the dashboard drop it, so a hosted dashboard shows "Not signed in"
 and nobody can sign in or connect accounts there until the parent token handoff exists. The
 dashboard's Google Ads `/connections` page therefore runs locally only today
-([../dashboard.md](../dashboard.md#connections-google-ads)).
+([../dashboard.md](../dashboard.md#connections-google-ads-and-meta-ads)).

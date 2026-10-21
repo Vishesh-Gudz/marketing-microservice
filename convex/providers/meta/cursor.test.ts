@@ -91,6 +91,24 @@ describe("Meta cursor codec (D15)", () => {
     expect(() => encodeMetaPosition("fp1", { stage: 1, carry })).toThrow();
   });
 
+  it("carries the Graph row count of the next page together with the after value", () => {
+    const cursor = encodeMetaPosition("fp1", { stage: 1, after: "QVFI", rows: 15 });
+    expect(decodeMetaCursorPosition(cursor, "fp1", "fetchActionMetrics")).toEqual({
+      stage: 1,
+      after: "QVFI",
+      rows: 15,
+    });
+    // A plain (entity listing) cursor never carries a row count.
+    const stage0 = encodeMetaPosition("fp1", { stage: 0, after: "QVFI", rows: 15 });
+    expect(() => decodeMetaCursor(stage0, "fp1", "listCampaigns")).toThrow(
+      expect.objectContaining({ providerCode: "cursor_invalid" }),
+    );
+    for (const rows of [0, 1.5, 5001]) {
+      expect(() => encodeMetaPosition("fp1", { stage: 0, after: "QVFI", rows })).toThrow();
+    }
+    expect(() => encodeMetaPosition("fp1", { stage: 1, rows: 15 })).toThrow();
+  });
+
   it("refuses to build a cursor beyond the size cap (the engine fails closed)", () => {
     const carry = Array.from({ length: 5_000 }, (_, i) => ({
       r: { entityExternalId: String(i), date: "2026-03-02", placement: "other", impressions: i },
@@ -111,6 +129,12 @@ describe("Meta cursor codec (D15)", () => {
     ["negative stage", { v: 1, fp: "fp1", s: -1 }],
     ["fractional stage", { v: 1, fp: "fp1", s: 1.5 }],
     ["stage out of range", { v: 1, fp: "fp1", s: 8 }],
+    ["row count without after", { v: 1, fp: "fp1", s: 1, l: 5 }],
+    ["row count on a flush", { v: 1, fp: "fp1", s: 1, f: 1, l: 5, c: [{}] }],
+    ["zero row count", { v: 1, fp: "fp1", after: "x", l: 0 }],
+    ["fractional row count", { v: 1, fp: "fp1", after: "x", l: 2.5 }],
+    ["row count beyond Graph's page size", { v: 1, fp: "fp1", after: "x", l: 5001 }],
+    ["string row count", { v: 1, fp: "fp1", after: "x", l: "5" }],
   ])("rejects a forged cursor: %s", (_label, payload) => {
     const forged = `m1.${btoa(JSON.stringify(payload)).replace(/=+$/, "")}`;
     expect(() => decodeMetaCursorPosition(forged, "fp1", "fetchDailyMetrics")).toThrow(

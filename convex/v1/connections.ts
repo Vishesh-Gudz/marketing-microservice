@@ -60,7 +60,12 @@ export const beginConnect = orgAdminAction({
   returns: v.object({ authorizeUrl: v.string(), expiresAt: v.string() }),
   handler: async (ctx, args): Promise<{ authorizeUrl: string; expiresAt: string }> => {
     const registry = providerRegistry();
-    if (!registry.hasOAuth(args.provider)) {
+    // Refused before any OAuth state exists: the platform is not registered, or its app
+    // settings are missing or invalid (Meta).
+    if (
+      !registry.hasOAuth(args.provider) ||
+      registry.oauth(args.provider).isConfigured?.(oauthClientConfig(args.provider)) === false
+    ) {
       throw apiError("INVALID_ARGUMENT", "This platform cannot be connected yet.", {
         field: "provider",
       });
@@ -68,7 +73,8 @@ export const beginConnect = orgAdminAction({
     const spec = registry.oauth(args.provider);
     const nonce = randomToken();
     const codeVerifier = spec.usesPkce ? randomToken() : undefined;
-    const redirectUri = oauthRedirectUri();
+    // Before any OAuth state exists: an invalid redirect override refuses here.
+    const redirectUri = oauthRedirectUri(args.provider);
 
     const { expiresAt }: { expiresAt: number } = await ctx.runMutation(
       internal.connections.oauthState.create,

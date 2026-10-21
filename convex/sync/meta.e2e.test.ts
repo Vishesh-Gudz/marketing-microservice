@@ -6,6 +6,7 @@ import {
   FAKE_APP_SECRET,
   FAKE_RANGE,
   fakeMetaDataset,
+  fakeMetaDatasetWithConversions,
   graphError,
   type FakeCell,
   type FakeGraph,
@@ -107,6 +108,12 @@ async function syncMeta(t: Backend) {
 }
 
 const cells = (): FakeCell[] => fakeMetaDataset().cells["1001"]!;
+
+/** The public sync error of an ad account (v1/adAccounts:list, as the dashboard reads it). */
+async function publicSyncError(t: Backend, externalId: string) {
+  const accounts = await as(t).query(api.v1.adAccounts.list, {});
+  return accounts.find((a) => a.externalId === externalId)?.sync?.lastError;
+}
 const sum = (list: FakeCell[], pick: (c: FakeCell) => number) =>
   list.reduce((total, c) => total + pick(c), 0);
 
@@ -391,6 +398,40 @@ describe("Meta Ads end to end (fake Graph → provider → sync → canonical ta
     expect(await canonicalRows(t)).toEqual(expected);
   });
 
+  it("an account with many conversions syncs completely: no page exceeds the sync limit", async () => {
+    // 10 extra custom conversions in 3 windows: every insights row becomes 30+ action
+    // records, so a full Graph page of the busier levels normalizes to more than the sync
+    // engine's 500-record page (before the fix: page_too_large, a partial run, no coverage).
+    const dataset = () => fakeMetaDatasetWithConversions(10);
+    graph = createFakeGraph({ dataset: dataset() });
+    const t = newBackend();
+    await syncMeta(t);
+    const db = await snapshot(t);
+    expect(
+      db.tasks.filter((task) => task.status !== "succeeded").map((task) => task.lastError),
+    ).toEqual([]);
+    expect(db.runs[0]).toMatchObject({ kind: "initial", status: "succeeded" });
+    expect(db.runs[0]!.counts).toMatchObject({ unresolved: 0, rejected: 0 });
+    expect(db.states[0]).toMatchObject({
+      coveredFrom: "2026-02-07",
+      coveredThrough: "2026-03-08",
+      consecutiveFailures: 0,
+    });
+    expect(db.actions.length).toBeGreaterThan(2_000);
+    // The provider asked Graph for fewer rows instead of over-filling a page.
+    const actionLimits = graph.log
+      .filter((e) => e.path === "act_1001/insights" && e.params.action_attribution_windows)
+      .map((e) => Number(e.params.limit));
+    expect(Math.min(...actionLimits)).toBeLessThan(500);
+
+    // Reference: Graph returns 2 rows per page, so no page ever needs to shrink.
+    graph = createFakeGraph({ dataset: dataset(), pageCap: 2 });
+    const reference = newBackend();
+    await syncMeta(reference);
+    expect((await snapshot(reference)).runs[0]!.status).toBe("succeeded");
+    expect(await canonicalRows(t)).toEqual(await canonicalRows(reference));
+  });
+
   it("stores no token, secret or Graph URL anywhere", async () => {
     const t = newBackend();
     await syncMeta(t);
@@ -444,6 +485,10 @@ describe("Meta failure handling during sync", () => {
       kind: "auth",
       code: "190/460",
     });
+    // Public: a fixed reason and the generic message; never the Graph code.
+    const error = await publicSyncError(t, "1001");
+    expect(error).toMatchObject({ kind: "auth", reason: "reauth_required" });
+    expect(JSON.stringify(error)).not.toContain("190");
   });
 
   it("a throttled preflight (17) is retried after the header-derived delay and then succeeds", async () => {
@@ -490,6 +535,7 @@ describe("Meta failure handling during sync", () => {
       lastError: { kind: "not_found", code: "100/33" },
     });
     expect(db.tasks.find((task) => task.operation === "getAccount")!.totalAttempts).toBe(1);
+    expect(await publicSyncError(t, "1001")).toMatchObject({ reason: "account_not_accessible" });
   });
 
   it("'too much data' (100/1487534) on an insights page is transient: retried, then completes", async () => {
@@ -528,5 +574,7 @@ describe("Meta failure handling during sync", () => {
     const blocked = db.states.filter((s) => s.state === "blocked");
     expect(blocked).toHaveLength(1);
     expect(blocked[0]!.lastError).toMatchObject({ kind: "permission" });
+    expect(await publicSyncError(t, "1002")).toMatchObject({ reason: "permission_denied" });
+    expect(await publicSyncError(t, "1001")).toBeUndefined();
   });
 });

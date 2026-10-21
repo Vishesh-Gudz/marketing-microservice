@@ -8,8 +8,8 @@ import { syncRunStatusValidator } from "../tables/sync";
  * what docs/sync.md lists as DTO-safe: state, schedule, coverage, last run status and the
  * error KIND with its generic message. The platform error `code` stays internal; a known
  * code is translated into a `reason` through the explicit allowlist below and anything
- * else is dropped (kind + generic message only). The same allowlist explains Google Ads
- * discovery failures on a connection (connections/assets.ts recordConnectionError).
+ * else is dropped (kind + generic message only). The same allowlist explains Google Ads and
+ * Meta Ads discovery failures on a connection (connections/assets.ts recordConnectionError).
  */
 
 export const SYNC_ERROR_REASONS = [
@@ -50,13 +50,43 @@ const REASON_BY_CODE: Readonly<Record<string, SyncErrorReason>> = {
   RESOURCE_TEMPORARILY_EXHAUSTED: "rate_limited",
 };
 
-/** The allowlisted reason of a stored error code (a "stage:" prefix is ignored). */
-export function syncErrorReason(code: string | undefined): SyncErrorReason | undefined {
-  if (code === undefined) return undefined;
-  const bare = code.includes(":") ? code.slice(code.lastIndexOf(":") + 1) : code;
-  return Object.prototype.hasOwnProperty.call(REASON_BY_CODE, bare)
-    ? REASON_BY_CODE[bare]
-    : undefined;
+/**
+ * Meta Ads: Graph codes are "<code>" or "<code>/<subcode>" and one code can be classified
+ * differently (a permission code becomes "auth" when the ads_read probe finds the grant
+ * gone), so the provider's classified KIND decides; codes only name configuration and
+ * missing or inaccessible accounts. Google codes never explain a Meta error.
+ * [PROVISIONAL R2/R20: needs a real Meta account to confirm the codes.]
+ */
+const META_REASON_BY_CODE: Readonly<Record<string, SyncErrorReason>> = {
+  meta_config_invalid: "provider_config_invalid",
+  provider_mode_missing: "provider_mode_misconfigured",
+  provider_mode_invalid: "provider_mode_misconfigured",
+  provider_unavailable: "provider_unavailable",
+  "100/33": "account_not_accessible",
+  "803": "account_not_found",
+};
+const META_REASON_BY_KIND: Readonly<Record<string, SyncErrorReason>> = {
+  auth: "reauth_required",
+  permission: "permission_denied",
+  rate_limited: "rate_limited",
+};
+
+const lookup = (table: Readonly<Record<string, SyncErrorReason>>, key: string | undefined) =>
+  key !== undefined && Object.prototype.hasOwnProperty.call(table, key) ? table[key] : undefined;
+
+/**
+ * The allowlisted reason of a stored error code (a "stage:" prefix is ignored). Meta Ads
+ * errors also pass the platform and the error kind (see META_REASON_BY_CODE).
+ */
+export function syncErrorReason(
+  code: string | undefined,
+  context?: { platform: string; kind: string },
+): SyncErrorReason | undefined {
+  const bare = code?.includes(":") ? code.slice(code.lastIndexOf(":") + 1) : code;
+  if (context?.platform === "meta") {
+    return lookup(META_REASON_BY_CODE, bare) ?? lookup(META_REASON_BY_KIND, context.kind);
+  }
+  return lookup(REASON_BY_CODE, bare);
 }
 
 /** True only for a published reason (re-checks a stored value before it leaves the server). */
@@ -93,9 +123,16 @@ export type PublicSyncStatus = Infer<typeof publicSyncStatusDto>;
 export function toPublicSyncStatus(
   account: Doc<"syncAccounts">,
   lastRun: Pick<Doc<"syncRuns">, "status"> | null,
+  platform?: string,
 ): PublicSyncStatus {
   const error = account.lastError;
-  const reason = syncErrorReason(error?.code);
+  const reason =
+    error !== undefined
+      ? syncErrorReason(
+          error.code,
+          platform !== undefined ? { platform, kind: error.kind } : undefined,
+        )
+      : undefined;
   return {
     syncState: account.state,
     ...(account.lastSuccessAt !== undefined ? { lastSuccessAt: toIso(account.lastSuccessAt) } : {}),

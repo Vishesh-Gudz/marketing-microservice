@@ -96,9 +96,10 @@ export const storeDiscoveredAssets = internalMutation({
 });
 
 /**
- * Records a sanitized connection error (kind + generic message). For Google Ads, the
- * platform code is translated into an allowlisted public `reason` (sync/publicStatus.ts);
- * the code itself is never stored, and other providers record no reason.
+ * Records a sanitized connection error (kind + generic message). For Google Ads and Meta
+ * Ads, the platform code (and for Meta the error kind) is translated into an allowlisted
+ * public `reason` (sync/publicStatus.ts); the code itself is never stored, and Instagram
+ * records no reason.
  */
 export const recordConnectionError = internalMutation({
   args: {
@@ -112,7 +113,12 @@ export const recordConnectionError = internalMutation({
     const connection = await ctx.db.get(connectionId);
     if (connection === null) return null;
     const now = Date.now();
-    const reason = connection.provider === "google_ads" ? syncErrorReason(providerCode) : undefined;
+    const reason =
+      connection.provider === "google_ads"
+        ? syncErrorReason(providerCode)
+        : connection.provider === "meta"
+          ? syncErrorReason(providerCode, { platform: "meta", kind })
+          : undefined;
     await ctx.db.patch(connectionId, {
       lastError: { kind, message, ...(reason !== undefined ? { reason } : {}), at: now },
       updatedAt: now,
