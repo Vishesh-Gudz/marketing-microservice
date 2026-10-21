@@ -86,11 +86,12 @@ client-supplied customer id: only ids this connection discovered can be linked.
 
 **Discovery errors (additive).** A failed discovery (in the callback or a retry) keeps the
 connection and records a sanitized `lastError { kind, message, reason?, at }` on it:
-`kind` is the provider error kind and `message` a generic text. For **Google Ads** connections
-only, the platform code is translated into an allowlisted public `reason` (the same allowlist as
-sync errors, `convex/sync/publicStatus.ts`), e.g. `cloud_project_not_approved_for_production`,
-`not_ads_user`, `reauth_required`, `rate_limited`. The code itself is never stored or returned, an
-unlisted code yields no `reason`, and Meta / Instagram record none. A successful discovery clears
+`kind` is the provider error kind and `message` a generic text. For **Google Ads** connections the
+platform code, and for **Meta Ads** connections the code and the error kind, is translated into an
+allowlisted public `reason` (the same allowlist as sync errors, `convex/sync/publicStatus.ts`),
+e.g. `cloud_project_not_approved_for_production`, `not_ads_user`, `reauth_required`,
+`permission_denied`, `rate_limited` ([meta.md](providers/meta.md#public-reasons)). The code itself
+is never stored or returned, an unlisted code yields no `reason`, and Instagram records none. A successful discovery clears
 `lastError`. (Google Ads skips individual customers it cannot read, e.g. permission or not
 found; those are not discovery failures.)
 

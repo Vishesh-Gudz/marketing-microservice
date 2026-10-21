@@ -10,6 +10,7 @@ import {
   as,
   connectGoogleFake,
   connectMock,
+  connectMockInstagram,
   drainScheduler,
   expectMarketingError,
   ISSUER_CRM,
@@ -143,16 +144,21 @@ describe("Google Ads discovery failures: no reason unless allowlisted", () => {
     expect(json).not.toContain("INTERNAL_ERROR");
   });
 
-  it("only allowlisted Google codes become a reason; other providers never get one", async () => {
-    // Mock mode: one Google Ads and one Meta connection through the real connect flow.
+  it("only allowlisted codes become a reason: Google by code, Meta by code and kind, Instagram never", async () => {
+    // Mock mode: Google Ads, Meta and Instagram connections through the real connect flow.
     const t = newBackend();
     await setupSyncOrg(t);
     const googleId = (await connectMock(t, "google_ads")) as Id<"connections">;
     const metaId = (await connectMock(t, "meta")) as Id<"connections">;
-    const record = async (connectionId: Id<"connections">, providerCode?: string) => {
+    const instagramId = (await connectMockInstagram(t)).get("connection") as Id<"connections">;
+    const record = async (
+      connectionId: Id<"connections">,
+      providerCode?: string,
+      kind = "unknown",
+    ) => {
       await t.mutation(internal.connections.assets.recordConnectionError, {
         connectionId,
-        kind: "unknown",
+        kind,
         message: GENERIC,
         ...(providerCode !== undefined ? { providerCode } : {}),
       });
@@ -165,9 +171,26 @@ describe("Google Ads discovery failures: no reason unless allowlisted", () => {
     for (const code of [undefined, "", "SOMETHING_NEW", "toString", "__proto__", "req-12345"]) {
       expect(await record(googleId, code)).not.toHaveProperty("reason");
     }
-    expect(await record(metaId, "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION")).not.toHaveProperty(
-      "reason",
-    );
+    // The Google allowlist ignores the kind.
+    expect(await record(googleId, "190", "auth")).not.toHaveProperty("reason");
+
+    // Meta discovery errors: fixed reasons from the code and the classified kind.
+    expect(await record(metaId, "190", "auth")).toMatchObject({ reason: "reauth_required" });
+    expect(await record(metaId, "17", "rate_limited")).toMatchObject({ reason: "rate_limited" });
+    expect(await record(metaId, "200", "permission")).toMatchObject({
+      reason: "permission_denied",
+    });
+    expect(await record(metaId, "meta_config_invalid")).toMatchObject({
+      reason: "provider_config_invalid",
+    });
+    for (const code of [undefined, "SOMETHING_NEW", "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION"]) {
+      expect(await record(metaId, code)).not.toHaveProperty("reason");
+    }
+    expect(await record(instagramId, "190", "auth")).not.toHaveProperty("reason");
+    // The message stays the generic one; no code is ever exposed.
+    const meta = await record(metaId, "190/463", "auth");
+    expect(meta!.message).toBe(GENERIC);
+    expect(JSON.stringify(meta)).not.toContain("190");
   });
 });
 

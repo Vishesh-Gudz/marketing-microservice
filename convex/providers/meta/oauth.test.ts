@@ -74,6 +74,26 @@ describe("Meta OAuth spec: authorization URL", () => {
     }
     expect(graph.calls()).toBe(0);
   });
+
+  it("reports whether the app settings are complete and valid (checked before any OAuth state)", () => {
+    const { graph, spec } = setup();
+    expect(spec.isConfigured?.(FAKE_APP_CONFIG)).toBe(true);
+    const extra = FAKE_APP_CONFIG.extra;
+    for (const config of [
+      {},
+      { clientSecret: FAKE_APP_SECRET, extra },
+      { clientId: FAKE_APP_ID, extra },
+      { clientId: FAKE_APP_ID, clientSecret: FAKE_APP_SECRET },
+      { clientId: "my-app", clientSecret: FAKE_APP_SECRET, extra },
+      { clientId: FAKE_APP_ID, clientSecret: "short", extra },
+      { clientId: FAKE_APP_ID, clientSecret: FAKE_APP_SECRET, extra: { configId: "cfg" } },
+    ]) {
+      expect(spec.isConfigured?.(config)).toBe(false);
+    }
+    // An invalid version override is a configuration error too.
+    expect(createMetaOAuthSpec({ version: "v26" }).isConfigured?.(FAKE_APP_CONFIG)).toBe(false);
+    expect(graph.calls()).toBe(0);
+  });
 });
 
 describe("Meta OAuth spec: code exchange", () => {

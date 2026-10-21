@@ -553,6 +553,24 @@ export function fakeMetaDataset(): FakeDataset {
   };
 }
 
+/**
+ * The default dataset plus `count` custom conversions on every delivery cell of account 1001,
+ * each reported in all three windows: one insights row then becomes 3 × (count + its other
+ * conversion types) action records, so a full Graph page normalizes to far more than one
+ * sync page can hold (conversion paging regression).
+ */
+export function fakeMetaDatasetWithConversions(count: number): FakeDataset {
+  const dataset = fakeMetaDataset();
+  for (const cell of dataset.cells["1001"]!) {
+    for (let i = 0; i < count; i++) {
+      const type = `offsite_conversion.custom.${9_000_001 + i}`;
+      cell.actions[type] = { value: 3, "1d_click": 1, "7d_click": 2, "1d_view": 1 };
+      cell.values[type] = { value: 900, "1d_click": 300, "7d_click": 600, "1d_view": 300 };
+    }
+  }
+  return dataset;
+}
+
 export type FakeResponse = {
   status: number;
   body?: unknown;

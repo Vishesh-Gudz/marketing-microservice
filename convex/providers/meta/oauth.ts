@@ -39,13 +39,22 @@ export const META_SCOPES = ["ads_read"] as const;
 
 type Config = { appId: string; appSecret: string; configId: string };
 
-function requireConfig(config: OAuthClientConfig): Config {
+/** The app id, secret and Login for Business configuration id, when all are valid. */
+function validConfig(config: OAuthClientConfig): Config | undefined {
   const configId = config.extra?.configId;
   if (
     !isValidMetaAppId(config.clientId) ||
     !isValidMetaSecret(config.clientSecret) ||
     !isValidMetaConfigId(configId)
   ) {
+    return undefined;
+  }
+  return { appId: config.clientId, appSecret: config.clientSecret, configId };
+}
+
+function requireConfig(config: OAuthClientConfig): Config {
+  const valid = validConfig(config);
+  if (valid === undefined) {
     throw metaError(
       "unknown",
       "oauthExchange",
@@ -53,7 +62,7 @@ function requireConfig(config: OAuthClientConfig): Config {
       "Meta app configuration is missing or invalid",
     );
   }
-  return { appId: config.clientId, appSecret: config.clientSecret, configId };
+  return valid;
 }
 
 /** Seconds → epoch ms; 0 or absent means "never" (debug_token convention). */
@@ -100,6 +109,8 @@ export function createMetaOAuthSpec(
     requestedScopes: META_SCOPES,
     requiredScopes: META_SCOPES,
     usesPkce: false,
+
+    isConfigured: (config) => version.valid && validConfig(config) !== undefined,
 
     buildAuthorizationUrl({ state, redirectUri, config }) {
       if (!version.valid) {

@@ -184,7 +184,12 @@ export function createMetaAdsProvider(
 
   /** A listing cursor: stage 0, no flush, no carry. */
   function isPlainPosition(position: MetaCursorPosition): boolean {
-    return position.stage === 0 && position.flush === undefined && position.carry === undefined;
+    return (
+      position.stage === 0 &&
+      position.flush === undefined &&
+      position.carry === undefined &&
+      position.rows === undefined
+    );
   }
 
   function assertAccountId(value: string, operation: ProviderOperation) {
@@ -359,16 +364,52 @@ export function createMetaAdsProvider(
             ? decodeMetaCursorPosition(request.cursor, fp, operation)
             : { stage: 0 };
         if (stages[position.stage] === undefined) throw invalidCursor(operation);
-        let carry: Carry;
-        try {
-          carry = decodeCarry(position.carry, entry.carry, {
-            platform: "meta",
-            accountExternalId: request.accountExternalId,
-            level: request.level,
-          });
-        } catch {
-          throw invalidCursor(operation);
-        }
+        /** The carry the request arrived with (decoded afresh for every Graph attempt). */
+        const incomingCarry = (): Carry => {
+          try {
+            return decodeCarry(position.carry, entry.carry, {
+              platform: "meta",
+              accountExternalId: request.accountExternalId,
+              level: request.level,
+            });
+          } catch {
+            throw invalidCursor(operation);
+          }
+        };
+        /** One Graph page → the records to emit; accumulating records go to `into`. */
+        const pageItems = (data: unknown[], into: Carry): ProviderRecordByKind[K][] => {
+          let records: ProviderRecordByKind[K][];
+          try {
+            records = entry.normalizePage(data, {
+              request,
+              stage: position.stage === 0 ? 0 : 1,
+            });
+          } catch (error) {
+            if (error instanceof ProviderError) throw error;
+            throw metaError("data", operation, "normalize", "Could not normalize Meta insights");
+          }
+          for (const record of records) assertValidRecord(kind, record, "meta", operation);
+          // Unique keys are emitted with their page; keys that can collect several raw rows
+          // are accumulated across ALL pages of the stage (carried in the cursor).
+          const out: ProviderRecordByKind[K][] = [];
+          const keys = new Set<string>();
+          try {
+            for (const record of records) {
+              if (entry.carry.accumulates(record)) {
+                addToCarry(into, record, entry.carry);
+                continue;
+              }
+              const key = entry.carry.key(record);
+              if (keys.has(key)) throw new Error("duplicate insights row");
+              keys.add(key);
+              out.push(record);
+            }
+          } catch {
+            throw metaError("data", operation, "normalize", "Inconsistent Meta insights rows");
+          }
+          return out;
+        };
+        let carry = incomingCarry();
         const limit = pageLimit(request, ctx.attempt);
         const nextStage = (): MetaCursorPosition | undefined =>
           position.stage + 1 < stages.length ? { stage: position.stage + 1 } : undefined;
@@ -383,52 +424,54 @@ export function createMetaAdsProvider(
               ? { stage: position.stage, flush: true, carry: encodeCarry(carry, entry.carry) }
               : nextStage();
         } else {
-          const page = await fetchPage(
-            operation,
-            s,
-            stages[position.stage]!,
-            limit,
-            position.after,
-          );
-          let records: ProviderRecordByKind[K][];
-          try {
-            records = entry.normalizePage(page.data, {
-              request,
-              stage: position.stage === 0 ? 0 : 1,
-            });
-          } catch (error) {
-            if (error instanceof ProviderError) throw error;
-            throw metaError("data", operation, "normalize", "Could not normalize Meta insights");
-          }
-          for (const record of records) assertValidRecord(kind, record, "meta", operation);
-          // Unique keys are emitted with their page; keys that can collect several raw rows
-          // are accumulated across ALL pages of the stage (carried in the cursor).
-          items = [];
-          const keys = new Set<string>();
-          try {
-            for (const record of records) {
-              if (entry.carry.accumulates(record)) {
-                addToCarry(carry, record, entry.carry);
-                continue;
-              }
-              const key = entry.carry.key(record);
-              if (keys.has(key)) throw new Error("duplicate insights row");
-              keys.add(key);
-              items.push(record);
+          // One Graph row can become many records (one action row per conversion type and
+          // window), so a full Graph page may not fit one sync page. Then the SAME position is
+          // re-requested with fewer rows until it fits; every attempt starts from the incoming
+          // carry, and the next cursor starts right after the rows emitted, so no row is
+          // skipped or emitted twice. The row count found is kept for the stage's next page.
+          let rows = Math.min(limit, position.rows ?? limit);
+          for (let shrinks = 0; ; shrinks++) {
+            carry = incomingCarry();
+            const page = await fetchPage(
+              operation,
+              s,
+              stages[position.stage]!,
+              rows,
+              position.after,
+            );
+            items = pageItems(page.data, carry);
+            if (items.length <= caps.maxPageSize) {
+              // A sparse page lets the next one ask for more rows again (up to the limit).
+              const nextRows =
+                items.length * 2 <= caps.maxPageSize ? Math.min(limit, rows * 2) : rows;
+              next =
+                page.nextAfter !== undefined
+                  ? {
+                      stage: position.stage,
+                      after: page.nextAfter,
+                      ...(nextRows < limit ? { rows: nextRows } : {}),
+                      ...(carry.size > 0 ? { carry: encodeCarry(carry, entry.carry) } : {}),
+                    }
+                  : carry.size > 0
+                    ? { stage: position.stage, flush: true, carry: encodeCarry(carry, entry.carry) }
+                    : nextStage();
+              break;
             }
-          } catch {
-            throw metaError("data", operation, "normalize", "Inconsistent Meta insights rows");
+            if (page.data.length <= 1) {
+              // Fail closed: never split or drop the records of one Graph row.
+              throw metaError(
+                "data",
+                operation,
+                "insights_row_too_large",
+                "One Meta insights row has more records than fit in one page",
+              );
+            }
+            // Rows that should fit at this page's density; strictly fewer than requested, and
+            // at least halved after the first miss, so the loop ends within a few requests.
+            const fitting = Math.floor((caps.maxPageSize * page.data.length) / items.length);
+            const ceiling = shrinks === 0 ? page.data.length - 1 : Math.floor(page.data.length / 2);
+            rows = Math.max(1, Math.min(fitting, ceiling));
           }
-          next =
-            page.nextAfter !== undefined
-              ? {
-                  stage: position.stage,
-                  after: page.nextAfter,
-                  ...(carry.size > 0 ? { carry: encodeCarry(carry, entry.carry) } : {}),
-                }
-              : carry.size > 0
-                ? { stage: position.stage, flush: true, carry: encodeCarry(carry, entry.carry) }
-                : nextStage();
         }
         // Accumulated records are re-validated when emitted (sums of valid parts).
         for (const record of items) assertValidRecord(kind, record, "meta", operation);

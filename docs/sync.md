@@ -7,8 +7,10 @@ connection ─► encrypted credential ─► provider (tenant-free) ─► page
   ─► canonical upsert (natural keys) ─► checkpoint ─► next page / next task
 ```
 
-It runs completely on the deterministic mock providers today. The real Meta and Google providers
-(Phases 8 and 9) plug in behind the same `AdsProvider` contract. The engine has no platform branches.
+It runs on the deterministic mock providers in mock mode and on the real Meta and Google Ads
+providers (Phases 8 and 9) in live mode, behind the same `AdsProvider` contract. The engine has no
+platform branches. Providers keep every page within the engine's page limit (Meta re-requests fewer
+Graph rows when conversion rows would overflow a page; [meta.md](providers/meta.md)).
 
 Code: `convex/sync/`. Tables: `convex/tables/sync.ts`. Decision record:
 [ADR 0006](adr/0006-sync-engine.md).
@@ -77,8 +79,10 @@ reason?, at }`. The platform `code` stays internal: a known code becomes a `reas
 explicit allowlist (`CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION` →
 `cloud_project_not_approved_for_production`, `invalid_grant` → `reauth_required`,
 `google_config_invalid` → `provider_config_invalid`, `NOT_ADS_USER` → `not_ads_user`, …); anything
-else keeps kind + generic message only. Read-only: nothing here changes scheduling or error
-handling. The same allowlist explains Google Ads discovery failures on a connection
+else keeps kind + generic message only. For Meta Ads accounts the reason comes from the code and
+the classified error kind, and Google codes never apply
+([meta.md](providers/meta.md#public-reasons)). Read-only: nothing here changes scheduling or error
+handling. The same allowlist explains Google Ads and Meta Ads discovery failures on a connection
 ([connections.md](connections.md)). The dashboard's `/connections` page shows this block for linked
 Google Ads accounts ([dashboard.md](dashboard.md#connections-google-ads)).
 
