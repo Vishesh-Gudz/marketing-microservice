@@ -73,36 +73,45 @@ const actionRequests = (graph: ReturnType<typeof provider>["graph"]) =>
   graph.log.filter((e) => e.path === "act_1001/insights" && e.params.action_attribution_windows);
 
 describe("Meta action rows: every page fits one sync page", () => {
+  // Extra custom conversions per case: the fewest that still make one full Graph page
+  // normalize to more than one sync page (the original failure) with several output pages.
+  // Record validation dominates the runtime (about 0.3 ms per record), so the fixtures are
+  // kept as small as that allows; the account level has only 7 rows and needs more.
   it.each([
-    ["ad", "placement"],
-    ["ad", "none"],
-    ["campaign", "placement"],
-    ["account", "none"],
+    ["ad", "placement", 10],
+    ["ad", "none", 10],
+    ["campaign", "placement", 10],
+    ["account", "none", 30],
   ] as const)(
     "%s level (%s): pages hold at most one sync page and together equal the one-row-per-page reference",
-    async (level, breakdown) => {
-      // Reference: Graph returns one row per page, so no page can overflow.
-      const reference = provider(30, 1);
+    async (level, breakdown, conversions) => {
+      // Reference: Graph returns one row per page, so no page can overflow and the provider
+      // never re-requests fewer rows (an oracle independent of the page-fit logic).
+      const reference = provider(conversions, 1);
       const expected = (await pages(reference.provider, request(level, breakdown))).flat();
+      expect(actionRequests(reference.graph).every((e) => Number(e.params.limit) === PAGE)).toBe(
+        true,
+      );
+      // The original failure condition: the expected rows do not fit one sync page.
+      expect(expected.length).toBeGreaterThan(PAGE);
 
-      const { graph, provider: p } = provider(30);
+      const { graph, provider: p } = provider(conversions);
       const result = await pages(p, request(level, breakdown));
       expect(result.every((items) => items.length <= PAGE)).toBe(true);
+      expect(result.length).toBeGreaterThan(1);
       const rows = result.flat();
       expect(rows.length).toBe(expected.length);
       expect(sorted(rows)).toEqual(sorted(expected));
       expect(new Set(sorted(rows)).size).toBe(rows.length);
-      if (expected.length > PAGE) {
-        // Fewer Graph rows were requested than the page size (never more than one page).
-        expect(Math.min(...actionRequests(graph).map((e) => Number(e.params.limit)))).toBeLessThan(
-          PAGE,
-        );
-      }
+      // A full Graph page overflowed, so fewer Graph rows were requested.
+      expect(Math.min(...actionRequests(graph).map((e) => Number(e.params.limit)))).toBeLessThan(
+        PAGE,
+      );
     },
   );
 
   it("keeps the row count that fits for the stage's next page (no full-size retry per page)", async () => {
-    const { graph, provider: p } = provider(30);
+    const { graph, provider: p } = provider(10);
     const result = await pages(p, request("ad", "placement"));
     expect(result.length).toBeGreaterThan(3);
     const limits = actionRequests(graph).map((e) => Number(e.params.limit));
@@ -118,8 +127,6 @@ describe("Meta action rows: every page fits one sync page", () => {
     const { provider: p } = provider(170);
     const call = p.fetchActionMetrics(ctx, request("account", "none"));
     await expectProviderError(call, "data");
-    await expect(p.fetchActionMetrics(ctx, request("account", "none"))).rejects.toMatchObject({
-      providerCode: "insights_row_too_large",
-    });
+    await expect(call).rejects.toMatchObject({ providerCode: "insights_row_too_large" });
   });
 });

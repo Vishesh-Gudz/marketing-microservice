@@ -8,9 +8,9 @@ It has no server-side data fetching, no route handlers and no backend of its own
 
 - **Data (D1, D2):** every value comes from `useQuery(api.v1.*)` (`convex/react`) in the browser,
   authenticated with the parent-issued JWT. Convex `useQuery` is the only cache (reactive, deduplicated);
-  there is no TanStack Query, Redux or Zustand. The only writes are on `/connections` (Google Ads:
-  `useAction(beginConnect)`, `useMutation(linkAdAccounts | refreshAssets)`) and the org gate's
-  `ensure`.
+  there is no TanStack Query, Redux or Zustand. The only writes are on `/connections` (Google Ads
+  and Meta Ads: `useAction(beginConnect)`, `useMutation(linkAdAccounts | refreshAssets |
+disconnect)`) and the org gate's `ensure`.
 - **Identity (today: local development only):** the token comes from a token source
   (`lib/auth/token-source.ts`). The only implemented source is the dev token
   (`NEXT_PUBLIC_DEV_AUTH_TOKEN`, minted by `npm run dev:auth setup` for org `dev-org`, role
@@ -37,15 +37,17 @@ app/(dashboard)/layout.tsx        Suspense + AppShell (OrgGate, nav, header)
   breakdowns/ conversions/ accounts/
   social/page.tsx                 Organic Instagram (Phase 10 Stage B)
   social/posts/[postId]/page.tsx  One Instagram post
-  connections/page.tsx            Google Ads connection management (ADR 0008 amendment)
+  connections/page.tsx            Google Ads + Meta Ads connections (ADR 0008 amendment)
   loading.tsx error.tsx not-found.tsx
 components/dashboard/             shell, filters, KPI cards, charts, tables, notices, views/
 components/dashboard/organic/     organic-only KPI grid, series chart, posts table, account
                                   picker, coverage notes, Instagram link
-components/dashboard/connections/ Google Ads connection status, Connect/Reconnect/Disconnect,
-                                  discovered accounts + link, linked accounts' sync status
-lib/connections/                  pure, React-free connection helpers: callback result, link
-                                  rules, labels, messages, customer ids, return URL / navigation
+components/dashboard/connections/ one provider-aware card per ad platform (Google Ads, Meta Ads):
+                                  status, Connect/Reconnect/Disconnect, discovered accounts +
+                                  link, linked accounts' sync status
+lib/connections/                  pure, React-free connection helpers: per-provider wording and
+                                  display rules (providers.ts), callback result, link rules,
+                                  labels, messages, customer ids, return URL / navigation
 lib/analytics/                    pure logic: types, format, filters, deltas, states, values,
                                   errors, chart-data, labels; hooks: use-analytics-query,
                                   use-dashboard-filters; org-context
@@ -66,14 +68,15 @@ lib/analytics/                    pure logic: types, format, filters, deltas, st
 | `/accounts`                                     | Accounts with KPIs, currency, time zone, link/connection health, coverage, last sync     | `breakdown(account)`, `adAccounts:list`, `connections:list`                                                               |
 | `/social` (nav "Organic")                       | One Instagram account: 6 headline + 7 detail KPIs, UTC series, posts (lifetime totals)   | `socialAccounts:list`/`get`, `organicAnalytics:overview`/`accountSeries`, `socialPosts:list`, `connections:list`          |
 | `/social/posts/[postId]`                        | One post: caption, latest lifetime totals, lifetime totals at each capture               | `socialPosts:get`                                                                                                         |
-| `/connections`                                  | Google Ads: status, Connect/Reconnect/Disconnect, discovered accounts, link, sync status | `connections:list`/`listDiscoveredAssets`/`beginConnect`/`linkAdAccounts`/`refreshAssets`/`disconnect`, `adAccounts:list` |
+| `/connections`                                  | Google Ads and Meta Ads: status, Connect/Reconnect/Disconnect, accounts, link, sync      | `connections:list`/`listDiscoveredAssets`/`beginConnect`/`linkAdAccounts`/`refreshAssets`/`disconnect`, `adAccounts:list` |
 
 There is no org-wide ads page: the API requires a campaign or ad-group parent for ads (read budget).
-Connection management is on `/connections` for **Google Ads only** (ADR 0008, D17 amendment).
-Meta Ads and Instagram connections stay out of the dashboard. An admin can disconnect the Google
-Ads connection (after a confirmation); single accounts cannot be unlinked here. The "reconnect required" banner (Overview, Accounts, Organic) links to
-`/connections` only for a Google Ads connection; for Meta and Instagram it stays read-only. On
-`/accounts`, unlinked or reconnect-required Google Ads accounts link to "Manage in Connections".
+Connection management is on `/connections` for the **ad platforms, Google Ads and Meta Ads**
+(ADR 0008, D17 amendments). Instagram (organic) connections stay out of the dashboard. An admin can
+disconnect a connection (after a confirmation); single accounts cannot be unlinked here. The
+"reconnect required" banner (Overview, Accounts, Organic) links to `/connections` for a Google
+Ads or Meta Ads connection; for Instagram it stays read-only. On `/accounts`, unlinked or
+reconnect-required Google Ads and Meta Ads accounts link to "Manage in Connections".
 
 A foreign, unknown or malformed entity id (API `NOT_FOUND`), or an ad group opened under the wrong
 campaign, renders `app/(dashboard)/not-found.tsx` inside the shell. Unmatched URLs use
@@ -181,11 +184,15 @@ granularity for any valid range.
 - **Post page:** lifetime totals at each capture day (UTC), charted and tabled as cumulative
   values, never differenced into daily performance.
 
-## Connections (Google Ads)
+## Connections (Google Ads and Meta Ads)
 
-`/connections` (ADR 0008, D17 amendment) is the only dashboard page that changes data. It uses
-the existing public v1 functions only ([connections.md](connections.md)); the **server** decides
-who may act and which accounts may be linked. The UI mirrors those rules
+`/connections` (ADR 0008, D17 amendments) is the only dashboard page that changes data. It has one
+section per ad platform, **Google Ads** and **Meta Ads**, rendered by the same provider-aware card
+(`components/dashboard/connections/ad-connection.tsx`). Each section shows only its own provider's
+connections and accounts, in its own words (`lib/connections/providers.ts`, `messages.ts`), so a
+Meta connection never shows Google wording. Instagram (organic) connections never appear. The page
+uses the existing public v1 functions only ([connections.md](connections.md)); the **server**
+decides who may act and which accounts may be linked. The UI mirrors those rules
 (`lib/connections/linkability.ts`) only to decide what to offer.
 
 | Part                                           | Admin | Editor, viewer                                                   |
@@ -195,36 +202,47 @@ who may act and which accounts may be linked. The UI mirrors those rules
 | Discovered accounts, Link, Retry discovery     | yes   | no (`listDiscoveredAssets` is admin-only and is not even called) |
 | Linked accounts, sync status, "View analytics" | yes   | yes                                                              |
 
-1. **Status.** The page shows one Google Ads connection: the one the callback just reported, else
-   the newest active one, else the newest (revoked connections are hidden; several connections
-   get a "Google connection" selector). States: connected, Google Ads access missing (a required
-   scope was not granted), access expires soon, reconnect required. For an active connection a
-   discovery failure is explained from its allowlisted `reason`, never the server message.
-2. **Connect / Reconnect.** `beginConnect` with `provider: "google_ads"`, a `returnUrl` and, for
-   Reconnect, `reconnectConnectionId`. The return URL is `<origin>/connections` plus the global
-   filters only; the server accepts it only if the app's allowlist covers that origin and path (local
+1. **Status.** Each section shows one connection of its provider: the one the callback just
+   reported, else the newest active one, else the newest (revoked connections are hidden; several
+   connections get a "Google connection" / "Meta connection" selector). States: connected, access
+   missing (a required scope was not granted), access expires soon (Meta tokens last about 60
+   days), reconnect required. For an active connection a discovery failure is explained from its
+   allowlisted `reason` in the provider's words, never the server message.
+2. **Connect / Reconnect.** `beginConnect` with `provider: "google_ads"` or `"meta"`, a
+   `returnUrl` and, for Reconnect, `reconnectConnectionId`. The return URL is
+   `<origin>/connections` plus the global filters and a display-only `connect=<provider>` hint;
+   the server accepts it only if the app's allowlist covers that origin and path (local
    development: `http://localhost:3000/` and `http://127.0.0.1:3000/`). Reconnect passes the
-   shown connection's id, so a different Google account is refused (`identity_mismatch`). The
-   returned authorization URL is followed in the same tab (http(s) only) and is **never rendered,
-   logged or stored**: it carries the single-use state and the PKCE challenge. In mock mode it is
-   the callback URL itself (instant consent).
-3. **Disconnect.** Admins see **Disconnect Google Ads** next to Reconnect; it first asks for
-   confirmation (Cancel has focus; Escape cancels). Confirming calls `disconnect` for the shown
-   connection: the server revokes it, unlinks its accounts (rows and synced data are kept), drops
-   its discovered accounts and deletes the credential (no call to Google, G-D6). Meta Ads and
-   Instagram connections are not touched. The page then shows "Google Ads disconnected" and
-   **Connect Google Ads** starts a fresh connection, which may use any Google account. This is the
-   way out of `identity_mismatch`: Reconnect only accepts the Google account that created the
-   connection.
+   shown connection's id, so a different Google or Facebook account is refused
+   (`identity_mismatch`). The button stays disabled until the page is left, so a connection is
+   never started twice. The returned authorization URL is followed in the same tab (http(s) only)
+   and is **never rendered, logged or stored**: it carries the single-use state (and, for Google,
+   the PKCE challenge). In mock mode it is the callback URL itself (instant consent). A deployment
+   without the Meta app settings refuses Meta before any OAuth state exists ("Meta Ads is not
+   available").
+3. **Disconnect.** Admins see **Disconnect Google Ads** / **Disconnect Meta Ads** next to
+   Reconnect; it first asks for confirmation (Cancel has focus; Escape cancels). Confirming calls
+   `disconnect` for the shown connection: the server revokes it, unlinks its accounts (rows and
+   synced data are kept), drops its discovered accounts and deletes the credential. Neither Google
+   nor Meta is called: platform access is not revoked at the platform (G-D6, D7). The other
+   provider's connections and Instagram connections are not touched. The section then shows
+   "… disconnected" and **Connect** starts a fresh connection, which may use any Google or
+   Facebook account. This is the way out of `identity_mismatch`: Reconnect only accepts the
+   account that created the connection.
 4. **Callback result.** Parsed once (`lib/connections/connect-result.ts`): connected (with the
    `discovery_failed` warning), a known error code, an unknown code, or malformed (repeated
-   parameters, an invalid connection id). Each has fixed text; parameter values are never shown.
-   The result parameters (and any stray `code` / `state`) are then removed with
-   `router.replace`, keeping the global filters, so a reload never replays the notice.
-5. **Discovered accounts.** Customer id (`123-456-7890`), name, type (manager, client, "not
-   reported"), test-account status (test, not a test account, "not reported"), currency, time
-   zone, account status, the manager it was discovered through (or "Direct access"), and whether
-   it can be linked.
+   parameters, an invalid connection id). The callback names no provider: the `connect` hint
+   picks the wording (Google, Meta, or neutral without a hint) and is trusted for nothing else.
+   Each has fixed text; parameter values are never shown. The result parameters, the hint and any
+   stray `code` / `state` are then removed with `router.replace`, keeping the global filters, so
+   a reload never replays the notice.
+5. **Discovered accounts.** Google Ads: customer id (`123-456-7890`), name, type (manager,
+   client, "not reported"), test-account status (test, not a test account, "not reported"),
+   currency, time zone, account status, the manager it was discovered through (or "Direct
+   access"), and whether it can be linked. Meta Ads: ad account id (digits, as Meta shows it),
+   name, currency, time zone, account status (a disabled account is shown as such and can still be
+   linked), the business it belongs to, and whether it can be linked; Meta reports no account type
+   or test status, so those columns are not shown.
 6. **Select and link.** One radio choice: only an unlinked account the platform **confirmed** as a
    client, on an active connection, can be selected. Managers, unreported account types, linked
    accounts and inactive connections are disabled with the reason as the control's description.
@@ -237,15 +255,16 @@ who may act and which accounts may be linked. The UI mirrors those rules
    or a recorded error), without polling. Use it after a discovery failure, or when Google did
    not report an account's type (accounts discovered before the type was recorded read "not
    reported" until discovery runs again).
-8. **Linked accounts** (every linked Google Ads account of the org): sync status from the
+8. **Linked accounts** (every linked account of the section's provider): sync status from the
    read-only `sync` block (first sync scheduled, syncing, up to date, partly completed, failed
    with the failure streak, blocked, cancelled, not syncing), data coverage, last successful sync,
    next sync, and the allowlisted reason's explanation.
 9. **View analytics** opens the Overview filtered to the account (`/?accounts=<id>`), keeping the
    period and clearing a platform filter.
 
-Errors of these calls map to fixed text (`lib/connections/messages.ts`): return URL not allowed,
-Google Ads not configured, account type not confirmed, not found, connection not active, too many
+Errors of these calls map to fixed text in the provider's words (`lib/connections/messages.ts`):
+return URL not allowed, provider not available, account type not confirmed, not found, connection
+not active, too many
 attempts, admins only, integration disabled, provider failure; sign-in and org errors as in D15.
 Disconnect failures (admins only, connection not found, not disconnected) have their own fixed
 text. Unexpected errors never show their message.
@@ -254,10 +273,13 @@ text. Unexpected errors never show their message.
 
 - **Local development only.** The only identity is the local dev token (above). Hosted users
   cannot sign in or connect real accounts until the Phase 15 parent-token handoff.
-- **Mock mode only.** Verified against the local backend (`PROVIDER_MODE` unset on loopback =
-  mock: instant consent, mock accounts and data). No real Google account has been connected from
-  the dashboard; real-account testing needs a separate live-mode validation deployment
-  ([providers/google-ads.md](providers/google-ads.md#dashboard-connection-flow)).
+- **Real accounts.** Google Ads: a real Google sign-in and account discovery were completed from
+  the dashboard on the local deployment in live mode (2026-10-21); linking and a live sync were
+  not ([providers/google-ads.md](providers/google-ads.md#dashboard-connection-flow)). Meta Ads:
+  tested with mocks and the fake Graph only; no real Meta account has been connected. A live Meta
+  connection needs the Meta app settings (`META_APP_ID`, `META_APP_SECRET`,
+  `META_LOGIN_CONFIG_ID`) and the real-account checks in
+  [providers/meta.md](providers/meta.md#real-account-validation-required).
 - **Not safe for public access.** The OAuth callback ownership gap
   ([security/credentials.md](security/credentials.md#known-gap-oauth-callback-ownership)) must be
   fixed before any public or multi-tenant launch.
@@ -323,7 +345,9 @@ mirrored in the script and kept equal to the mock by `tests/unit/dev-seed.test.t
 through the mock consent (the authorization URL is the local callback) and returns to
 `http://localhost:3000/connections`. Run "Retry discovery" once for Google accounts discovered
 before the account type was recorded; until then they read "Account type not reported" and
-cannot be linked.
+cannot be linked. The Meta Ads section works the same way with the mock Meta user (`dev:seed`
+already connects it and links accounts 1001 and 1002). In live mode without the Meta app
+settings, "Connect Meta Ads" explains that Meta Ads is not available.
 
 If a dynamic route unexpectedly returns 404 in `next dev` after pulling new routes, delete
 `.next/dev` (a stale Turbopack dev cache) and restart.

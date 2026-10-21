@@ -84,7 +84,7 @@ the classified error kind, and Google codes never apply
 ([meta.md](providers/meta.md#public-reasons)). Read-only: nothing here changes scheduling or error
 handling. The same allowlist explains Google Ads and Meta Ads discovery failures on a connection
 ([connections.md](connections.md)). The dashboard's `/connections` page shows this block for linked
-Google Ads accounts ([dashboard.md](dashboard.md#connections-google-ads)).
+Google Ads and Meta Ads accounts ([dashboard.md](dashboard.md#connections-google-ads-and-meta-ads)).
 
 ## Lifecycle
 

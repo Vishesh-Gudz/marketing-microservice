@@ -30,14 +30,40 @@ describe("ReauthBanner", () => {
     );
   });
 
-  it.each([
-    ["meta", "Meta"],
-    ["instagram", "Instagram"],
-  ])("keeps the %s banner read-only (no link)", (provider, name) => {
-    queryResults.set("v1/connections:list", [{ id: "x1", provider, status: "needs_reauth" }]);
+  it("links a Meta Ads connection to the Connections page too", () => {
+    queryResults.set("v1/connections:list", [
+      { id: "m1", provider: "meta", status: "needs_reauth" },
+    ]);
     render(<ReauthBanner />);
     const banner = screen.getByLabelText("Reconnect required");
-    expect(banner).toHaveTextContent(`(${name}). Their accounts stop updating`);
+    expect(banner).toHaveTextContent("(Meta). Their accounts stop updating");
+    expect(within(banner).getByRole("link", { name: "Reconnect Meta Ads" })).toHaveAttribute(
+      "href",
+      "/connections",
+    );
+    expect(within(banner).queryByRole("link", { name: /Google/ })).toBeNull();
+  });
+
+  it("offers one link per broken ad platform", () => {
+    queryResults.set("v1/connections:list", [
+      { id: "g1", provider: "google_ads", status: "needs_reauth" },
+      { id: "m1", provider: "meta", status: "needs_reauth" },
+    ]);
+    render(<ReauthBanner />);
+    const links = within(screen.getByLabelText("Reconnect required")).getAllByRole("link");
+    expect(links.map((link) => link.textContent)).toEqual([
+      "Reconnect Google Ads",
+      "Reconnect Meta Ads",
+    ]);
+  });
+
+  it("keeps the Instagram banner read-only (no link)", () => {
+    queryResults.set("v1/connections:list", [
+      { id: "x1", provider: "instagram", status: "needs_reauth" },
+    ]);
+    render(<ReauthBanner />);
+    const banner = screen.getByLabelText("Reconnect required");
+    expect(banner).toHaveTextContent("(Instagram). Their accounts stop updating");
     expect(within(banner).queryByRole("link")).toBeNull();
   });
 });

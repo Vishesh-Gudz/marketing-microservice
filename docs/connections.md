@@ -11,12 +11,11 @@ credentials are handled. The code lives in `convex/connections/`, `convex/v1/con
 **Who starts connections.** Every client uses the same v1 functions below; there is no second
 integration and no other credential store.
 
-- **Google Ads:** the standalone dashboard's `/connections` page
-  ([dashboard.md](dashboard.md#connections-google-ads); ADR 0008 D17 amendment), and later the
-  parent app through v1. Today the dashboard runs with the local development token in mock mode
+- **Google Ads and Meta Ads:** the standalone dashboard's `/connections` page
+  ([dashboard.md](dashboard.md#connections-google-ads-and-meta-ads); ADR 0008 D17 amendments),
+  and later the parent app through v1. Today the dashboard runs with the local development token
   only; hosted users cannot sign in or connect yet.
-- **Meta Ads and Instagram:** the parent app through v1. The dashboard shows their status
-  read-only.
+- **Instagram:** the parent app through v1. The dashboard shows its status read-only.
 
 > **Not ready for public use:** the OAuth callback stores a connection for whoever _started_ the
 > sign-in, not for whoever _completed_ it. This must be fixed before any public or multi-tenant

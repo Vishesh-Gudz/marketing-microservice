@@ -6,23 +6,27 @@ import { Button } from "@/components/ui/button";
 import { api } from "@/convex/_generated/api";
 import type { Connection } from "@/lib/analytics/types";
 import { disconnectActionNotice } from "@/lib/connections/messages";
+import { PROVIDERS, type AdConnectionProvider } from "@/lib/connections/providers";
 import type { Notice } from "@/lib/connections/types";
 import { ConnectionNotice } from "./connection-notice";
 
 /**
- * Admin-only: disconnects the shown Google Ads connection through v1/connections:disconnect
+ * Admin-only: disconnects the shown ad platform connection through v1/connections:disconnect
  * after an explicit confirmation. The server revokes the connection, unlinks its accounts
  * (rows and data are kept) and deletes its credential. Afterwards Connect starts a fresh
- * connection, which may use a different Google account (Reconnect only accepts the same one).
+ * connection, which may use a different account (Reconnect only accepts the same one).
  */
 export function DisconnectButton({
+  provider,
   connection,
   onDisconnected,
 }: {
+  provider: AdConnectionProvider;
   connection: Connection;
   onDisconnected: () => void;
 }) {
   const disconnect = useMutation(api.v1.connections.disconnect);
+  const { name, platform, identity } = PROVIDERS[provider];
   const [confirming, setConfirming] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<Notice | null>(null);
@@ -30,6 +34,7 @@ export function DisconnectButton({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const opened = useRef(false);
+  const inFlight = useRef(false);
 
   // Focus the safe choice when the confirmation opens, and return to the trigger when it closes.
   useEffect(() => {
@@ -39,13 +44,16 @@ export function DisconnectButton({
   }, [confirming]);
 
   async function confirm() {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setPending(true);
     setError(null);
     try {
       await disconnect({ connectionId: connection.id });
       onDisconnected();
     } catch (caught) {
-      setError(disconnectActionNotice(caught));
+      setError(disconnectActionNotice(caught, provider));
+      inFlight.current = false;
       setPending(false);
       setConfirming(false);
     }
@@ -63,7 +71,7 @@ export function DisconnectButton({
             setConfirming(true);
           }}
         >
-          Disconnect Google Ads
+          Disconnect {name}
         </Button>
         {error && <ConnectionNotice notice={error} />}
       </div>
@@ -80,12 +88,12 @@ export function DisconnectButton({
       }}
     >
       <p id={titleId} className="font-medium">
-        Disconnect Google Ads?
+        Disconnect {name}?
       </p>
       <ul className="list-disc pl-5 text-muted-foreground">
         <li>Linked accounts stop syncing. Their data and history are kept.</li>
-        <li>The stored Google access is deleted.</li>
-        <li>Afterwards, connect again to sign in with any Google account.</li>
+        <li>The stored {platform} access is deleted.</li>
+        <li>Afterwards, connect again to sign in with any {identity}.</li>
       </ul>
       <div className="flex gap-2">
         <Button

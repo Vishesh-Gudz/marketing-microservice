@@ -198,7 +198,19 @@ from the code **and** the classified kind; Google Ads codes never explain a Meta
 
 A disabled ad account is not an error: its `account_status` is reported as the account status
 (discovery and the ad account). The code-to-reason mapping is provisional (R2, R20). The dashboard
-shows these reasons for Google Ads only so far; Meta wording comes with the Meta Connections UI.
+explains these reasons in Meta words (`META_ERROR_REASON_MESSAGES` in `lib/connections/messages.ts`).
+
+### Dashboard connection flow
+
+The dashboard's `/connections` page has a **Meta Ads** section
+([dashboard.md](../dashboard.md#connections-google-ads-and-meta-ads), ADR 0008 amendment):
+**Connect Meta Ads** → Facebook Login for Business → `/oauth/callback` → discovery → choose one ad
+account → **Link selected account** → the first sync starts automatically → the linked account's
+sync status and **View analytics**. Reconnect only accepts the Facebook account that created the
+connection; **Disconnect Meta Ads** lets an admin start over with another one. While the Meta app
+settings are missing, the section explains that Meta Ads is not available (no OAuth state is
+created). Tested with mocks and the fake Graph only: no real Meta account has been connected
+from the dashboard.
 
 ## Account mapping (D10)
 

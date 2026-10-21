@@ -221,12 +221,15 @@ describe("data views", () => {
     const google = document.querySelector('[data-account-id="a2"]') as HTMLElement;
     expect(google).toHaveTextContent("Unlinked");
     expect(google).toHaveTextContent("Never");
-    // Google Ads is managed on /connections; Meta keeps its read-only badge (D17).
+    // Google Ads and Meta Ads are managed on /connections (ADR 0008, D17 amendment).
     expect(within(google).getByRole("link", { name: "Manage in Connections" })).toHaveAttribute(
       "href",
       "/connections",
     );
-    expect(within(meta).queryByRole("link", { name: "Manage in Connections" })).toBeNull();
+    expect(within(meta).getByRole("link", { name: "Manage in Connections" })).toHaveAttribute(
+      "href",
+      "/connections",
+    );
   });
 
   it("accounts: a Google Ads account needing reconnection links to Connections", () => {

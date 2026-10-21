@@ -54,8 +54,21 @@ describe("assetLinkability (UI only; the server re-checks)", () => {
       "manager",
       "manager_status_unknown",
     ];
-    for (const block of blocks) expect(linkBlockMessage(block).length).toBeGreaterThan(0);
-    expect(new Set(blocks.map(linkBlockMessage)).size).toBe(blocks.length);
+    for (const provider of ["google_ads", "meta"] as const) {
+      const messages = blocks.map((block) => linkBlockMessage(block, provider));
+      expect(messages.every((message) => message.length > 0)).toBe(true);
+      expect(new Set(messages).size).toBe(blocks.length);
+    }
+  });
+
+  it("names the provider: Google wording for Google Ads, Meta wording for Meta Ads", () => {
+    expect(linkBlockMessage("connection_inactive", "google_ads")).toBe(
+      "Reconnect Google Ads before linking accounts.",
+    );
+    expect(linkBlockMessage("connection_inactive", "meta")).toBe(
+      "Reconnect Meta Ads before linking accounts.",
+    );
+    expect(linkBlockMessage("manager_status_unknown", "meta")).not.toContain("Google");
   });
 });
 

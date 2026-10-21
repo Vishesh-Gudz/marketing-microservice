@@ -2,10 +2,11 @@
 
 import { AlertTriangle, CheckCircle2, Info, XCircle } from "lucide-react";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { api } from "@/convex/_generated/api";
 import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
 import type { Coverage, Fx } from "@/lib/analytics/types";
+import { AD_CONNECTION_PROVIDERS, PROVIDERS as AD_PROVIDERS } from "@/lib/connections/providers";
 import { cn } from "@/lib/utils";
 
 const NOTICE_TONES = {
@@ -108,8 +109,8 @@ export function CoverageNotice({ coverage }: { coverage: Coverage }) {
 const PROVIDER_LABEL = { meta: "Meta", google_ads: "Google Ads", instagram: "Instagram" } as const;
 
 /**
- * Connections whose credentials stopped working (needs_reauth). Google Ads is reconnected on
- * the Connections page; other platforms stay read-only here (D17).
+ * Connections whose credentials stopped working (needs_reauth). Google Ads and Meta Ads are
+ * reconnected on the Connections page; Instagram stays read-only here (D17).
  */
 export function ReauthBanner() {
   const { data: connections } = useAnalyticsQuery(api.v1.connections.list, {});
@@ -120,14 +121,16 @@ export function ReauthBanner() {
     <Notice tone="warning" label="Reconnect required">
       {broken.length === 1 ? "A connection needs" : "Some connections need"} to be reconnected (
       {names}). Their accounts stop updating until an admin reconnects them.
-      {broken.some((c) => c.provider === "google_ads") && (
-        <>
+      {AD_CONNECTION_PROVIDERS.filter((provider) =>
+        broken.some((c) => c.provider === provider),
+      ).map((provider) => (
+        <Fragment key={provider}>
           {" "}
           <Link href="/connections" className="font-medium underline underline-offset-4">
-            Reconnect Google Ads
+            Reconnect {AD_PROVIDERS[provider].name}
           </Link>
-        </>
-      )}
+        </Fragment>
+      ))}
     </Notice>
   );
 }

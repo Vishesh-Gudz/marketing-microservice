@@ -133,4 +133,4 @@ Google Ads connections page (additive, no new function): `ConnectionDto.lastErro
 optional `reason` for Google Ads discovery failures (allowlisted; never the platform code), and the
 published error reasons gained `not_ads_user` (also used by the `sync` block). The dashboard's
 `/connections` page calls `beginConnect`, `listDiscoveredAssets`, `linkAdAccounts` and
-`refreshAssets` ([../dashboard.md](../dashboard.md#connections-google-ads)).
+`refreshAssets` ([../dashboard.md](../dashboard.md#connections-google-ads-and-meta-ads)).

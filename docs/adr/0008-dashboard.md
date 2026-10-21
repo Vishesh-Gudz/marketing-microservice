@@ -39,8 +39,9 @@ faithfully.
 15. **D15** Error mapping; too-much-data errors offer to narrow the range.
 16. **D16** Org gate: `ensure` → `me`, org context, "Not signed in" screen.
 17. **D17** Connection management UI deferred; read-only freshness and a reconnect banner.
-    _Amended 2026-10-20 for Google Ads only; see
-    [Amendment: Google Ads connections](#amendment-2026-10-20-google-ads-connections-d17)._
+    _Amended 2026-10-20 for Google Ads and 2026-10-21 for Meta Ads (Instagram unchanged); see
+    [Amendment: Google Ads connections](#amendment-2026-10-20-google-ads-connections-d17) and
+    [Amendment: Meta Ads connections](#amendment-2026-10-21-meta-ads-connections-d17)._
 18. **D18** `npm run dev:seed` for local demo data.
 19. **D19** Playwright CI-safe specs plus local-only data specs; axe checks.
 20. **D20** WCAG 2.1 AA target. **D21** Responsive layout. **D22** `/` is the Overview.
@@ -80,7 +81,7 @@ a second Google integration.
 
 **Decision.** D17 is revised **for Google Ads only**:
 
-- The dashboard gets a `/connections` page ([dashboard.md](../dashboard.md#connections-google-ads)).
+- The dashboard gets a `/connections` page ([dashboard.md](../dashboard.md#connections-google-ads-and-meta-ads)).
   Admins can connect, reconnect or disconnect Google Ads (`v1/connections:beginConnect`;
   `disconnect` after an explicit confirmation), see the discovered customer accounts
   (`listDiscoveredAssets`), link exactly one confirmed client account (`linkAdAccounts`) and
@@ -115,3 +116,28 @@ a second Google integration.
   embedded (iframe) dashboard, Google's consent page needs a top-level navigation or a popup;
   this is to be decided with Phase 15.
 - Pure connection helpers live in `lib/connections/` (React-free; reusable by the Phase 14 SDK).
+
+## Amendment 2026-10-21: Meta Ads connections (D17)
+
+**Context.** Users must also connect their own Meta account, choose one of their Meta ad accounts
+and see its data, through the same service. The Meta Ads provider, its OAuth flow, discovery,
+linking and sync exist since Phase 8 (ADR 0009); only the dashboard UI was missing.
+
+**Decision.** D17 is revised **for Meta Ads too** (Instagram unchanged):
+
+- `/connections` has one section per ad platform, Google Ads and Meta Ads, rendered by one
+  provider-aware card (`components/dashboard/connections/ad-connection.tsx`); no second card, no
+  new endpoint, no new OAuth or sync code. The Meta section uses the same v1 functions with
+  `provider: "meta"` and the same roles (admins act; every role sees status and linked accounts).
+- Every text is the provider's own (`lib/connections/providers.ts`, `messages.ts`): a Meta
+  connection never shows Google wording. Meta errors use the server's Meta reasons
+  ([meta.md](../providers/meta.md#public-reasons)). Meta discovery shows the business an account
+  belongs to; it has no account type or test status.
+- The callback result names no provider, so the dashboard's return URL carries a display-only
+  `connect=<provider>` hint that only picks the notice's wording (neutral without it).
+- The reconnect banner and "Manage in Connections" on `/accounts` cover Meta Ads.
+- **Instagram (organic) connection management stays out of the dashboard.**
+
+**Constraints.** As above: local development identity only, and the callback ownership gap must be
+fixed before any public or multi-tenant launch. No real Meta account has been connected; a live
+Meta connection needs the Meta app settings, and every Meta mapping stays provisional (R1–R20).

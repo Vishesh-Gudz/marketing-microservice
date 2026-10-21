@@ -136,7 +136,8 @@ describe("connection status and roles", () => {
     renderWithOrg(<ConnectionsView />);
     expect(screen.getByText("Google Ads is not connected.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect Google Ads" })).toBeEnabled();
-    expect(lastArgs(DISCOVERED)).toBeUndefined();
+    // Discovery is only asked for the Meta connection (on the Meta Ads card).
+    expect(lastArgs(DISCOVERED)).toEqual({ connectionId: "m1" });
   });
 
   it("shows a viewer the status and linked accounts, but no actions and no discovery", () => {
@@ -211,7 +212,7 @@ describe("Connect / Reconnect", () => {
 
     expect(mockAction(BEGIN)).toHaveBeenCalledExactlyOnceWith({
       provider: "google_ads",
-      returnUrl: `${window.location.origin}/connections?preset=last_7_days`,
+      returnUrl: `${window.location.origin}/connections?preset=last_7_days&connect=google_ads`,
     });
     expect(navigateToAuthorization).toHaveBeenCalledWith(AUTHORIZE_URL);
     expect(screen.getByRole("button", { name: "Opening Google sign-in…" })).toBeDisabled();
@@ -228,7 +229,7 @@ describe("Connect / Reconnect", () => {
     await waitFor(() => expect(navigateToAuthorization).toHaveBeenCalledOnce());
     expect(mockAction(BEGIN)).toHaveBeenCalledWith({
       provider: "google_ads",
-      returnUrl: `${window.location.origin}/connections`,
+      returnUrl: `${window.location.origin}/connections?connect=google_ads`,
       reconnectConnectionId: C1,
     });
   });
@@ -317,7 +318,7 @@ describe("Disconnect", () => {
     await waitFor(() => expect(navigateToAuthorization).toHaveBeenCalledOnce());
     expect(mockAction(BEGIN)).toHaveBeenCalledExactlyOnceWith({
       provider: "google_ads",
-      returnUrl: `${window.location.origin}/connections`,
+      returnUrl: `${window.location.origin}/connections?connect=google_ads`,
     });
   });
 
@@ -385,9 +386,365 @@ describe("Disconnect", () => {
   });
 });
 
+describe("Meta Ads card", () => {
+  const M1 = "jd7metaconnection1";
+  const M2 = "jd7metaconnection2";
+  const DISCONNECT = "v1/connections:disconnect";
+  const EDITOR: Org = { ...ORG, role: "editor" };
+  const AT = "2026-09-01T10:00:00.000Z";
+  const metaConnection = (overrides: Partial<Connection> = {}) =>
+    connection({ id: M1, provider: "meta", grantedScopes: ["ads_read"], ...overrides });
+  const metaAsset = (overrides: Partial<DiscoveredAsset>): DiscoveredAsset =>
+    asset({
+      platform: "meta",
+      externalId: "1001",
+      name: "Acme Retail US",
+      currency: "USD",
+      timezone: "America/New_York",
+      status: "active",
+      isManager: false,
+      managerStatus: "client",
+      testAccountStatus: "unknown",
+      parentExternalId: "5550001",
+      linked: false,
+      ...overrides,
+    });
+  const META_ASSETS: DiscoveredAsset[] = [
+    metaAsset({}),
+    metaAsset({
+      externalId: "1002",
+      name: "Acme Indonesia",
+      currency: "IDR",
+      timezone: "Asia/Jakarta",
+      parentExternalId: undefined,
+    }),
+    metaAsset({ externalId: "1003", name: "Empty sandbox", status: "disabled", linked: true }),
+  ];
+  const meta = () => screen.getByRole("region", { name: "Meta Ads" });
+  const google = () => screen.getByRole("region", { name: "Google Ads" });
+  /** Discovery per connection: Meta assets for the Meta connections, Google ones otherwise. */
+  function setupMeta({
+    connections = [metaConnection()],
+    metaAssets = META_ASSETS,
+    accounts = [] as AdAccount[],
+  } = {}) {
+    setup({ connections, accounts });
+    queryResults.set("v1/connections:listDiscoveredAssets", (args: Record<string, unknown>) =>
+      args.connectionId === M1 || args.connectionId === M2 ? metaAssets : ASSETS,
+    );
+  }
+  const expectNoGoogleWording = () =>
+    expect(meta().textContent).not.toMatch(/Google|Manager account|customer/i);
+
+  it("has its own section; Connect Meta Ads starts the Meta flow once and never shows the URL", async () => {
+    setupMeta({ connections: [] });
+    mockAction(BEGIN).mockResolvedValue({ authorizeUrl: AUTHORIZE_URL, expiresAt: "x" });
+    renderWithOrg(<ConnectionsView />);
+    expect(within(meta()).getByText("Meta Ads is not connected.")).toBeInTheDocument();
+    const button = within(meta()).getByRole("button", { name: "Connect Meta Ads" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await waitFor(() => expect(navigateToAuthorization).toHaveBeenCalledOnce());
+    expect(mockAction(BEGIN)).toHaveBeenCalledExactlyOnceWith({
+      provider: "meta",
+      returnUrl: `${window.location.origin}/connections?connect=meta`,
+    });
+    expect(within(meta()).getByRole("button", { name: "Opening Meta sign-in…" })).toBeDisabled();
+    // Google Ads is untouched.
+    expect(within(google()).getByRole("button", { name: "Connect Google Ads" })).toBeEnabled();
+    expect(document.body.innerHTML).not.toContain("SECRET_STATE");
+    expectNoGoogleWording();
+  });
+
+  it("explains in Meta words when Meta Ads is not available on this service", async () => {
+    setupMeta({ connections: [] });
+    mockAction(BEGIN).mockRejectedValue(
+      apiError("INVALID_ARGUMENT", "This platform cannot be connected yet.", { field: "provider" }),
+    );
+    renderWithOrg(<ConnectionsView />);
+    fireEvent.click(within(meta()).getByRole("button", { name: "Connect Meta Ads" }));
+    const notice = await within(meta()).findByLabelText("Meta Ads is not available");
+    expect(notice).toHaveTextContent("Meta Ads cannot be connected on this service yet.");
+    expect(within(meta()).getByRole("button", { name: "Connect Meta Ads" })).toBeEnabled();
+    expect(navigateToAuthorization).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toContain("This platform cannot be connected yet.");
+  });
+
+  it("lists discovered Meta ad accounts without Google-only columns and links exactly one", async () => {
+    setupMeta();
+    mockMutation(LINK).mockResolvedValue([]);
+    renderWithOrg(<ConnectionsView />);
+    expect(within(meta()).getByLabelText("Connected")).toHaveTextContent("Meta Ads is connected.");
+    const table = within(meta()).getByRole("table", { name: "Discovered Meta Ads accounts" });
+    const headers = within(table)
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent);
+    expect(headers).toEqual([
+      "Select",
+      "Account",
+      "Currency / time zone",
+      "Status",
+      "Business",
+      "Availability",
+    ]);
+    const row = (id: string) => within(table).getByText(id).closest("tr") as HTMLElement;
+    expect(row("1001")).toHaveTextContent("USD · America/New_York");
+    expect(row("1001")).toHaveTextContent("5550001");
+    expect(row("1002")).toHaveTextContent("—");
+    expect(row("1003")).toHaveTextContent("Disabled");
+    expect(within(meta()).getByRole("radio", { name: /Empty sandbox/ })).toBeDisabled();
+
+    fireEvent.click(within(meta()).getByRole("radio", { name: /Acme Retail US/ }));
+    fireEvent.click(within(meta()).getByRole("button", { name: "Link selected account" }));
+    expect(await within(meta()).findByLabelText("Account linked")).toHaveTextContent(
+      "Acme Retail US (1001) is linked. Its first sync starts automatically.",
+    );
+    expect(mockMutation(LINK)).toHaveBeenCalledExactlyOnceWith({
+      connectionId: M1,
+      externalIds: ["1001"],
+    });
+    expectNoGoogleWording();
+  });
+
+  it("shows an empty Meta discovery in Meta words, with Retry discovery", async () => {
+    setupMeta({ metaAssets: [] });
+    mockMutation(REFRESH).mockResolvedValue(null);
+    renderWithOrg(<ConnectionsView />);
+    expect(within(meta()).getByText("No Meta ad accounts found")).toBeInTheDocument();
+    expect(meta()).toHaveTextContent("This Facebook account cannot access any Meta ad account.");
+    fireEvent.click(within(meta()).getByRole("button", { name: "Retry discovery" }));
+    await waitFor(() =>
+      expect(mockMutation(REFRESH)).toHaveBeenCalledExactlyOnceWith({ connectionId: M1 }),
+    );
+    expectNoGoogleWording();
+  });
+
+  it.each([
+    [
+      { kind: "auth", reason: "reauth_required" as const },
+      "Meta needs you to sign in again. Reconnect Meta Ads.",
+    ],
+    [
+      { kind: "permission", reason: "permission_denied" as const },
+      "The connected Facebook account has no permission to read this Meta ad account.",
+    ],
+    [{ kind: "rate_limited" }, "Meta Ads did not respond. Retry discovery in a few minutes."],
+  ])(
+    "explains a Meta discovery failure (%#) in Meta words, never the server message",
+    (err, text) => {
+      setupMeta({
+        connections: [
+          metaConnection({
+            lastError: { message: "Meta request failed (secret detail)", at: AT, ...err },
+          }),
+        ],
+        metaAssets: [],
+      });
+      renderWithOrg(<ConnectionsView />);
+      const notice = within(meta()).getByLabelText("Your Meta ad accounts could not be loaded");
+      expect(notice).toHaveTextContent(text);
+      expect(document.body.textContent).not.toContain("secret detail");
+      expect(within(meta()).queryByText("No Meta ad accounts found")).not.toBeInTheDocument();
+      expectNoGoogleWording();
+    },
+  );
+
+  it("a Meta connection needing reconnection explains it and Reconnect passes its id", async () => {
+    setupMeta({ connections: [metaConnection({ status: "needs_reauth" })] });
+    mockAction(BEGIN).mockResolvedValue({ authorizeUrl: AUTHORIZE_URL, expiresAt: "x" });
+    renderWithOrg(<ConnectionsView />);
+    expect(within(meta()).getByLabelText("Reconnect required")).toHaveTextContent(
+      "Meta access expired or was revoked. Reconnect with the same Facebook account, or disconnect Meta Ads to use a different one.",
+    );
+    expect(within(meta()).getByRole("radio", { name: /Acme Retail US/ })).toBeDisabled();
+    fireEvent.click(within(meta()).getByRole("button", { name: "Reconnect Meta Ads" }));
+    await waitFor(() => expect(navigateToAuthorization).toHaveBeenCalledOnce());
+    expect(mockAction(BEGIN)).toHaveBeenCalledWith({
+      provider: "meta",
+      returnUrl: `${window.location.origin}/connections?connect=meta`,
+      reconnectConnectionId: M1,
+    });
+    expectNoGoogleWording();
+  });
+
+  it("warns before Meta access expires (Meta tokens last about 60 days)", () => {
+    setupMeta({ connections: [metaConnection({ expiresSoon: true })] });
+    renderWithOrg(<ConnectionsView />);
+    expect(within(meta()).getByLabelText("Access expires soon")).toHaveTextContent(
+      "Reconnect Meta Ads soon to keep syncing.",
+    );
+  });
+
+  it("disconnects Meta Ads only; the Google Ads connection stays", async () => {
+    const list = [connection(), metaConnection()];
+    setupMeta({ connections: list });
+    mockMutation(DISCONNECT).mockImplementation(async () => {
+      queryResults.set("v1/connections:list", [connection()]);
+      return metaConnection({ status: "revoked" });
+    });
+    renderWithOrg(<ConnectionsView />);
+    fireEvent.click(within(meta()).getByRole("button", { name: "Disconnect Meta Ads" }));
+    const group = within(meta()).getByRole("group", { name: "Disconnect Meta Ads?" });
+    expect(group).toHaveTextContent("The stored Meta access is deleted.");
+    expect(group).toHaveTextContent("connect again to sign in with any Facebook account");
+    fireEvent.click(within(group).getByRole("button", { name: "Disconnect" }));
+    expect(await within(meta()).findByLabelText("Meta Ads disconnected")).toHaveTextContent(
+      "Connect Meta Ads to sign in with any Facebook account.",
+    );
+    expect(mockMutation(DISCONNECT)).toHaveBeenCalledExactlyOnceWith({ connectionId: M1 });
+    expect(within(meta()).getByText("Meta Ads is not connected.")).toBeInTheDocument();
+    expect(within(google()).getByLabelText("Connected")).toHaveTextContent(
+      "Google Ads is connected.",
+    );
+    expect(within(google()).getByRole("button", { name: "Disconnect Google Ads" })).toBeEnabled();
+    expectNoGoogleWording();
+  });
+
+  it("shows linked Meta accounts with Meta sync wording and raw ad account ids", () => {
+    const metaAccount = (overrides: Partial<AdAccount>) =>
+      adAccount({
+        platform: "meta",
+        connectionId: M1,
+        ...overrides,
+      });
+    setupMeta({
+      accounts: [
+        metaAccount({
+          id: "ma1",
+          externalId: "1001",
+          name: "Acme Retail US",
+          sync: {
+            syncState: "idle",
+            consecutiveFailures: 2,
+            lastRunStatus: "failed",
+            lastError: { kind: "permission", message: "x", reason: "permission_denied", at: AT },
+          },
+        }),
+        metaAccount({
+          id: "ma2",
+          externalId: "1002",
+          name: "Acme Indonesia",
+          sync: { syncState: "blocked", consecutiveFailures: 1 },
+        }),
+        metaAccount({
+          id: "ma3",
+          externalId: "1004",
+          name: "Up to date",
+          sync: {
+            syncState: "idle",
+            consecutiveFailures: 0,
+            lastRunStatus: "succeeded",
+            lastSuccessAt: "2026-09-21T08:30:00.000Z",
+            coveredThrough: "2026-09-20",
+          },
+        }),
+      ],
+    });
+    renderWithOrg(<ConnectionsView />);
+    const table = within(meta()).getByRole("table", { name: /Linked Meta Ads accounts/ });
+    const row = (id: string) => table.querySelector(`[data-account-id="${id}"]`) as HTMLElement;
+    expect(row("ma1")).toHaveTextContent("1001");
+    expect(row("ma1")).toHaveTextContent("Last sync failed (2 failures in a row)");
+    expect(row("ma1")).toHaveTextContent(
+      "The connected Facebook account has no permission to read this Meta ad account.",
+    );
+    expect(row("ma2")).toHaveTextContent("Sync blocked");
+    expect(row("ma2")).toHaveTextContent(
+      "Meta denied access to this account or it no longer exists.",
+    );
+    expect(row("ma3")).toHaveTextContent("Up to date");
+    expect(
+      within(row("ma3")).getByRole("link", { name: "View analytics for Up to date" }),
+    ).toHaveAttribute("href", "/?accounts=ma3");
+    // Not in the Google Ads card.
+    expect(within(google()).queryByText("Acme Retail US")).not.toBeInTheDocument();
+    expectNoGoogleWording();
+  });
+
+  it.each([
+    ["viewer", VIEWER],
+    ["editor", EDITOR],
+  ])("a %s sees the Meta status and linked accounts but no Meta actions", (_role, org) => {
+    setupMeta({ connections: [metaConnection({ status: "needs_reauth" })] });
+    renderWithOrg(<ConnectionsView />, org);
+    expect(within(meta()).getByLabelText("Reconnect required")).toBeInTheDocument();
+    expect(within(meta()).queryByRole("button")).not.toBeInTheDocument();
+    expect(meta()).toHaveTextContent(
+      "Only organization admins can connect Meta Ads or choose the account to sync.",
+    );
+    // listDiscoveredAssets is admin-only on the server: never asked for.
+    expect(lastArgs(DISCOVERED)).toBeUndefined();
+  });
+
+  it("never shows Instagram connections on either ad platform card", () => {
+    setupMeta({
+      connections: [connection({ id: "ig1", provider: "instagram", displayName: "mock_1" })],
+    });
+    renderWithOrg(<ConnectionsView />);
+    expect(within(meta()).getByText("Meta Ads is not connected.")).toBeInTheDocument();
+    expect(within(google()).getByText("Google Ads is not connected.")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/Instagram|mock_1/);
+    expect(screen.queryByRole("region", { name: /Instagram/ })).not.toBeInTheDocument();
+    expect(lastArgs(DISCOVERED)).toBeUndefined();
+  });
+
+  it("lets an admin switch between several Meta connections", () => {
+    setupMeta({
+      connections: [
+        metaConnection({ id: M1, connectedAt: "2026-09-01T10:00:00.000Z" }),
+        metaConnection({ id: M2, connectedAt: "2026-09-02T10:00:00.000Z" }),
+      ],
+    });
+    renderWithOrg(<ConnectionsView />);
+    const select = within(meta()).getByRole("combobox", { name: "Meta connection" });
+    expect(select).toHaveValue(M2);
+    fireEvent.change(select, { target: { value: M1 } });
+    expect(lastArgs(DISCOVERED)).toEqual({ connectionId: M1 });
+  });
+
+  it.each([
+    ["identity_mismatch", "A different Facebook account was used"],
+    ["exchange_failed", "Meta sign-in could not be completed"],
+    ["access_denied", "Meta Ads access was not granted"],
+  ])("a callback error=%s after a Meta sign-in is worded for Meta", (code, title) => {
+    setUrl("/connections", `status=error&error=${code}&connect=meta`);
+    setupMeta({ connections: [] });
+    renderWithOrg(<ConnectionsView />);
+    const notice = screen.getByLabelText(title);
+    expect(notice.textContent).not.toContain("Google");
+    expect(routerReplace).toHaveBeenCalledExactlyOnceWith("/connections", { scroll: false });
+  });
+
+  it("confirms a Meta connection and shows that connection on the Meta card", () => {
+    setUrl("/connections", `status=connected&connection=${M1}&connect=meta`);
+    setupMeta({
+      connections: [
+        metaConnection({ id: M1, connectedAt: "2026-09-01T10:00:00.000Z" }),
+        metaConnection({ id: M2, connectedAt: "2026-09-02T10:00:00.000Z" }),
+      ],
+    });
+    renderWithOrg(<ConnectionsView />);
+    expect(screen.getByLabelText("Meta Ads connected")).toHaveTextContent(
+      "Choose the account to link below.",
+    );
+    expect(within(meta()).getByRole("combobox", { name: "Meta connection" })).toHaveValue(M1);
+  });
+
+  it("without a provider hint, a callback error is worded neutrally", () => {
+    setUrl("/connections", "status=error&error=identity_mismatch");
+    setupMeta({ connections: [] });
+    renderWithOrg(<ConnectionsView />);
+    const notice = screen.getByLabelText("A different account was used");
+    expect(notice.textContent).not.toMatch(/Google|Meta|Facebook/);
+  });
+});
+
 describe("OAuth callback result", () => {
   it("confirms a connection, shows that connection, and removes the parameters (filters stay)", () => {
-    setUrl("/connections", `preset=last_7_days&status=connected&connection=${C1}`);
+    setUrl(
+      "/connections",
+      `preset=last_7_days&status=connected&connection=${C1}&connect=google_ads`,
+    );
     setup({
       connections: [
         connection({ id: C1, connectedAt: "2026-09-01T10:00:00.000Z" }),
@@ -406,7 +763,10 @@ describe("OAuth callback result", () => {
   });
 
   it("warns when discovery failed during the callback", () => {
-    setUrl("/connections", `status=connected&connection=${C1}&warning=discovery_failed`);
+    setUrl(
+      "/connections",
+      `status=connected&connection=${C1}&warning=discovery_failed&connect=google_ads`,
+    );
     setup();
     renderWithOrg(<ConnectionsView />);
     expect(
@@ -422,7 +782,7 @@ describe("OAuth callback result", () => {
     ["exchange_failed", "Google sign-in could not be completed"],
     ["something_new", "The connection could not be completed"],
   ])("shows a fixed notice for error=%s", (code, title) => {
-    setUrl("/connections", `status=error&error=${code}`);
+    setUrl("/connections", `status=error&error=${code}&connect=google_ads`);
     setup({ connections: [] });
     renderWithOrg(<ConnectionsView />);
     expect(screen.getByLabelText(title)).toBeInTheDocument();
@@ -568,11 +928,14 @@ describe("linked accounts and sync status", () => {
     ...overrides,
   });
 
-  it("says when no Google Ads account is linked (other platforms are not listed)", () => {
+  it("says when no Google Ads account is linked (a Meta account is listed only under Meta Ads)", () => {
     setup({ accounts: [adAccount({ id: "m1", platform: "meta", name: "Meta EU" })] });
     renderWithOrg(<ConnectionsView />);
-    expect(screen.getByText("No Google Ads account linked yet")).toBeInTheDocument();
-    expect(screen.queryByText("Meta EU")).not.toBeInTheDocument();
+    const google = screen.getByRole("region", { name: "Google Ads" });
+    expect(within(google).getByText("No Google Ads account linked yet")).toBeInTheDocument();
+    expect(within(google).queryByText("Meta EU")).not.toBeInTheDocument();
+    const meta = screen.getByRole("region", { name: "Meta Ads" });
+    expect(within(meta).getByText("Meta EU")).toBeInTheDocument();
   });
 
   it("shows status, coverage, last and next sync, and a View analytics link", () => {

@@ -1,0 +1,56 @@
+import { formatCustomerId } from "./customer-id";
+
+/**
+ * The ad platforms the Connections page manages (ADR 0008, D17 amendment). Instagram organic
+ * connections stay out of the dashboard. Each provider's wording and display rules live here
+ * so the shared card never shows one platform's wording for another.
+ */
+export const AD_CONNECTION_PROVIDERS = ["google_ads", "meta"] as const;
+export type AdConnectionProvider = (typeof AD_CONNECTION_PROVIDERS)[number];
+
+export function isAdConnectionProvider(value: unknown): value is AdConnectionProvider {
+  return (AD_CONNECTION_PROVIDERS as readonly unknown[]).includes(value);
+}
+
+export type ProviderInfo = {
+  /** Product name: "Google Ads", "Meta Ads". */
+  name: string;
+  /** The company whose sign-in page the user sees: "Google", "Meta". */
+  platform: string;
+  /** The account the user signs in with: "Google account", "Facebook account". */
+  identity: string;
+  /** What one ad account is called in sentences: "Google Ads account", "Meta ad account". */
+  accountNoun: string;
+  /** Display form of an ad account id (display only; never parsed back). */
+  formatAccountId(id: string): string;
+  /** Whether discovery reports the account type and test status (Google does; Meta does not). */
+  reportsAccountType: boolean;
+  /** Column for the account a discovered account was found through. */
+  parentLabel: string;
+  /** Shown when an account has no such parent. */
+  noParent: string;
+};
+
+export const PROVIDERS: Readonly<Record<AdConnectionProvider, ProviderInfo>> = {
+  google_ads: {
+    name: "Google Ads",
+    platform: "Google",
+    identity: "Google account",
+    accountNoun: "Google Ads account",
+    formatAccountId: formatCustomerId,
+    reportsAccountType: true,
+    parentLabel: "Manager",
+    noParent: "Direct access",
+  },
+  meta: {
+    name: "Meta Ads",
+    platform: "Meta",
+    identity: "Facebook account",
+    accountNoun: "Meta ad account",
+    // Meta ad account ids are shown as Meta shows them (digits, without "act_").
+    formatAccountId: (id) => id,
+    reportsAccountType: false,
+    parentLabel: "Business",
+    noParent: "—",
+  },
+};

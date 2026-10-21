@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { Connection } from "@/lib/analytics/types";
 import {
   accountAnalyticsHref,
+  adConnections,
   connectReturnUrl,
-  googleAdsConnections,
   navigateToAuthorization,
   pickConnection,
 } from "./navigation";
@@ -23,18 +23,21 @@ function connection(overrides: Partial<Connection>): Connection {
 }
 
 describe("connectReturnUrl", () => {
-  it("returns to /connections on the same origin", () => {
-    expect(connectReturnUrl("http://localhost:3000", new URLSearchParams())).toBe(
-      "http://localhost:3000/connections",
+  it("returns to /connections on the same origin with the provider hint", () => {
+    expect(connectReturnUrl("http://localhost:3000", new URLSearchParams(), "google_ads")).toBe(
+      "http://localhost:3000/connections?connect=google_ads",
+    );
+    expect(connectReturnUrl("http://localhost:3000", new URLSearchParams(), "meta")).toBe(
+      "http://localhost:3000/connections?connect=meta",
     );
   });
 
-  it("carries only the global filters (never page or callback parameters)", () => {
+  it("carries only the global filters and one hint (never page, callback or old hint parameters)", () => {
     const current = new URLSearchParams(
-      "preset=last_7_days&accounts=a1&status=connected&connection=c9&error=x&code=4%2Fc&state=s&tab=t",
+      "preset=last_7_days&accounts=a1&status=connected&connection=c9&error=x&code=4%2Fc&state=s&tab=t&connect=google_ads",
     );
-    expect(connectReturnUrl("https://app.example.test", current)).toBe(
-      "https://app.example.test/connections?preset=last_7_days&accounts=a1",
+    expect(connectReturnUrl("https://app.example.test", current, "meta")).toBe(
+      "https://app.example.test/connections?preset=last_7_days&accounts=a1&connect=meta",
     );
   });
 });
@@ -88,7 +91,7 @@ describe("navigateToAuthorization", () => {
   });
 });
 
-describe("Google Ads connection choice", () => {
+describe("connection choice per provider", () => {
   const meta = connection({ id: "m1", provider: "meta" });
   const old = connection({ id: "g1", connectedAt: "2026-01-01T00:00:00.000Z" });
   const recent = connection({ id: "g2", connectedAt: "2026-03-01T00:00:00.000Z" });
@@ -103,24 +106,28 @@ describe("Google Ads connection choice", () => {
     connectedAt: "2026-05-01T00:00:00.000Z",
   });
 
-  it("keeps usable Google Ads connections only, newest first", () => {
-    expect(googleAdsConnections([old, meta, revoked, broken, recent]).map((c) => c.id)).toEqual([
-      "g3",
-      "g2",
-      "g1",
-    ]);
+  it("keeps the provider's usable connections only, newest first", () => {
+    const all = [old, meta, revoked, broken, recent];
+    expect(adConnections(all, "google_ads").map((c) => c.id)).toEqual(["g3", "g2", "g1"]);
+    expect(adConnections(all, "meta").map((c) => c.id)).toEqual(["m1"]);
+    // Instagram (organic) connections never appear on either ad platform card.
+    const instagram = connection({ id: "i1", provider: "instagram" });
+    expect(adConnections([instagram], "google_ads")).toEqual([]);
+    expect(adConnections([instagram], "meta")).toEqual([]);
   });
 
   it("prefers the requested connection, else the newest active, else the newest", () => {
-    const usable = googleAdsConnections([old, broken, recent]);
+    const usable = adConnections([old, broken, recent], "google_ads");
     expect(pickConnection(usable, "g1")?.id).toBe("g1");
     expect(pickConnection(usable, undefined)?.id).toBe("g2");
     expect(pickConnection(usable, "unknown-id")?.id).toBe("g2");
-    expect(pickConnection(googleAdsConnections([broken]), undefined)?.id).toBe("g3");
+    expect(pickConnection(adConnections([broken], "google_ads"), undefined)?.id).toBe("g3");
     expect(pickConnection([], "g1")).toBeUndefined();
   });
 
   it("never picks another provider's or a revoked connection", () => {
-    expect(pickConnection(googleAdsConnections([meta, revoked]), "g4")).toBeUndefined();
+    expect(pickConnection(adConnections([meta, revoked], "google_ads"), "g4")).toBeUndefined();
+    expect(pickConnection(adConnections([meta, revoked], "meta"), "g4")?.id).toBe("m1");
+    expect(pickConnection(adConnections([old, recent], "meta"), "g2")).toBeUndefined();
   });
 });

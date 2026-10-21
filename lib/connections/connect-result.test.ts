@@ -15,6 +15,29 @@ describe("parseConnectResult", () => {
   it("is none without result parameters (filters only)", () => {
     expect(parse("")).toEqual({ kind: "none" });
     expect(parse("from=2026-03-01&to=2026-03-07&accounts=a1")).toEqual({ kind: "none" });
+    // A provider hint alone is not a result.
+    expect(parse("connect=meta")).toEqual({ kind: "none" });
+  });
+
+  it("reads exactly one known provider hint, and ignores any other", () => {
+    expect(parse(`status=connected&connection=${ID}&connect=meta`)).toEqual({
+      kind: "connected",
+      connectionId: ID,
+      discoveryFailed: false,
+      provider: "meta",
+    });
+    expect(parse("status=error&error=identity_mismatch&connect=google_ads")).toEqual({
+      kind: "error",
+      error: "identity_mismatch",
+      provider: "google_ads",
+    });
+    for (const hint of ["instagram", "META", "", "meta&connect=meta", "google_ads&connect=meta"]) {
+      expect(parse(`status=error&error=internal&connect=${hint}`)).toEqual({
+        kind: "error",
+        error: "internal",
+      });
+    }
+    expect(parse("status=nope&connect=meta")).toEqual({ kind: "malformed", provider: "meta" });
   });
 
   it("reads a successful connection", () => {
@@ -94,9 +117,9 @@ describe("withoutConnectResult", () => {
     for (const name of CONNECT_RESULT_PARAMS) expect(next.has(name)).toBe(false);
   });
 
-  it("removes repeated result parameters and any stray OAuth code / state", () => {
+  it("removes repeated result parameters, the provider hint and any stray OAuth code / state", () => {
     const next = withoutConnectResult(
-      new URLSearchParams("status=a&status=b&code=4%2Fabc&state=s3cr3t&tab=x"),
+      new URLSearchParams("status=a&status=b&code=4%2Fabc&state=s3cr3t&tab=x&connect=meta"),
     );
     expect(next.toString()).toBe("tab=x");
   });
@@ -113,33 +136,84 @@ describe("connectResultNotice", () => {
     expect(connectResultNotice({ kind: "none" })).toBeNull();
   });
 
-  it("confirms a connection, or warns when discovery failed", () => {
-    expect(
-      connectResultNotice({ kind: "connected", connectionId: ID, discoveryFailed: false }),
-    ).toMatchObject({ tone: "success", title: "Google Ads connected" });
-    expect(
-      connectResultNotice({ kind: "connected", connectionId: ID, discoveryFailed: true }),
-    ).toMatchObject({ tone: "warning" });
+  it("confirms a connection, or warns when discovery failed, in the hinted provider's words", () => {
+    const connected = (provider?: "google_ads" | "meta", discoveryFailed = false) =>
+      connectResultNotice({
+        kind: "connected",
+        connectionId: ID,
+        discoveryFailed,
+        ...(provider ? { provider } : {}),
+      });
+    expect(connected("google_ads")).toMatchObject({
+      tone: "success",
+      title: "Google Ads connected",
+    });
+    expect(connected("meta")).toMatchObject({ tone: "success", title: "Meta Ads connected" });
+    expect(connected()).toMatchObject({ tone: "success", title: "Connected" });
+    expect(connected("google_ads", true)).toMatchObject({
+      tone: "warning",
+      title: "Google Ads connected, but your accounts could not be loaded",
+    });
+    expect(connected("meta", true)).toMatchObject({
+      tone: "warning",
+      title: "Meta Ads connected, but your accounts could not be loaded",
+    });
   });
 
-  it("has fixed text for every callback error and for unknown codes", () => {
-    const seen = new Set<string>();
-    for (const error of [...CALLBACK_ERRORS, "unknown" as const]) {
-      const notice = connectResultNotice({ kind: "error", error })!;
-      expect(notice.title.length).toBeGreaterThan(0);
-      expect(notice.message.length).toBeGreaterThan(0);
-      expect(["warning", "error"]).toContain(notice.tone);
-      // The raw code is never part of the text.
-      expect(`${notice.title} ${notice.message}`).not.toContain(error);
-      seen.add(notice.title);
-    }
-    expect(seen.size).toBe(CALLBACK_ERRORS.length + 1);
+  it.each([["google_ads"], ["meta"], [undefined]] as const)(
+    "has fixed text for every callback error and for unknown codes (provider %s)",
+    (provider) => {
+      const seen = new Set<string>();
+      for (const error of [...CALLBACK_ERRORS, "unknown" as const]) {
+        const notice = connectResultNotice({
+          kind: "error",
+          error,
+          ...(provider ? { provider } : {}),
+        })!;
+        expect(notice.title.length).toBeGreaterThan(0);
+        expect(notice.message.length).toBeGreaterThan(0);
+        expect(["warning", "error"]).toContain(notice.tone);
+        // The raw code is never part of the text.
+        expect(`${notice.title} ${notice.message}`).not.toContain(error);
+        // Never another provider's wording.
+        const text = `${notice.title} ${notice.message}`;
+        if (provider !== "google_ads") expect(text).not.toContain("Google");
+        if (provider !== "meta") expect(text).not.toMatch(/Meta|Facebook/);
+        seen.add(notice.title);
+      }
+      expect(seen.size).toBe(CALLBACK_ERRORS.length + 1);
+    },
+  );
+
+  it("identity_mismatch explains how to switch accounts, per provider", () => {
+    const notice = (provider?: "google_ads" | "meta") =>
+      connectResultNotice({
+        kind: "error",
+        error: "identity_mismatch",
+        ...(provider ? { provider } : {}),
+      })!;
+    expect(notice("google_ads").title).toBe("A different Google account was used");
+    expect(notice("google_ads").message).toMatch(/disconnect Google Ads first, then connect again/);
+    expect(notice("meta").title).toBe("A different Facebook account was used");
+    expect(notice("meta").message).toBe(
+      "Reconnect only accepts the Facebook account that created this connection. To use another Facebook account, an admin must disconnect Meta Ads first, then connect again.",
+    );
+    expect(notice().title).toBe("A different account was used");
   });
 
-  it("identity_mismatch explains how to switch to another Google account", () => {
-    const notice = connectResultNotice({ kind: "error", error: "identity_mismatch" })!;
-    expect(notice.title).toBe("A different Google account was used");
-    expect(notice.message).toMatch(/disconnect Google Ads first, then connect again/);
+  it("exchange_failed names the account the user must sign in with", () => {
+    const notice = (provider: "google_ads" | "meta") =>
+      connectResultNotice({ kind: "error", error: "exchange_failed", provider })!;
+    expect(notice("google_ads")).toMatchObject({
+      title: "Google sign-in could not be completed",
+      message:
+        "Make sure the Google account you sign in with has access to a Google Ads account, then try again.",
+    });
+    expect(notice("meta")).toMatchObject({
+      title: "Meta sign-in could not be completed",
+      message:
+        "Make sure the Facebook account you sign in with has access to a Meta ad account, then try again.",
+    });
   });
 
   it("access_denied is a warning (the user's choice), not a failure", () => {
