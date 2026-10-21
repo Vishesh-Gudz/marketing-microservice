@@ -172,12 +172,21 @@ export async function handleOAuthCallback(ctx: ActionCtx, request: Request): Pro
   const code = url.searchParams.get("code");
   if (url.searchParams.get("error") !== null || !code) return await fail("access_denied");
 
+  // The same redirect URI as the authorization request (same provider, from the stored state).
+  // If it cannot be built (an invalid override), nothing is sent to the platform.
+  let redirectUri: string;
+  try {
+    redirectUri = oauthRedirectUri(consumed.provider);
+  } catch {
+    return await fail("internal");
+  }
+
   const spec = providerRegistry().oauth(consumed.provider);
   let grant;
   try {
     grant = await spec.exchangeCode({
       code,
-      redirectUri: oauthRedirectUri(),
+      redirectUri,
       ...(consumed.codeVerifier !== undefined ? { codeVerifier: consumed.codeVerifier } : {}),
       config: oauthClientConfig(consumed.provider),
       now: Date.now(),

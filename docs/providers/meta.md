@@ -65,7 +65,15 @@ portfolio. Its name and id are recorded in the deployment setup, **never in this
 2. Create an FLfB **configuration**: user access token, ad-account assets, permission `ads_read`
    only. Its id is `META_LOGIN_CONFIG_ID`.
 3. Facebook Login settings: strict mode, **exact** redirect URI
-   `https://<deployment>.convex.site/oauth/callback`; enable **Require App Secret**.
+   `https://<deployment>.convex.site/oauth/callback`; enable **Require App Secret**. Local
+   deployment (app in development mode only): Meta refuses `http://127.0.0.1:3211/oauth/callback`,
+   so set `META_OAUTH_REDIRECT_ORIGIN=http://localhost:3211` on it; Meta then uses
+   `http://localhost:3211/oauth/callback`, which it allows automatically in development mode and
+   which is **not** added to Valid OAuth Redirect URIs. That is the only value the setting
+   accepts (any `https` origin is refused); cloud deployments leave it unset. Publishing the app
+   requires an HTTPS redirect URI, a cloud deployment's
+   `https://<deployment>.convex.site/oauth/callback`; see
+   [connections.md](../connections.md#configuration).
 4. App settings: privacy-policy URL and data-deletion **instructions** URL (no callback until
    Phase 11; see [Data deletion](#data-deletion)).
 5. App roles: add the engineers who run the G1 spike and dev syncs.
@@ -78,7 +86,8 @@ portfolio. Its name and id are recorded in the deployment setup, **never in this
    npx convex env set META_LOGIN_CONFIG_ID <configuration id>
    ```
 
-   Optional: `META_GRAPH_API_VERSION` (validated `vNN.0`; default `v26.0`). The existing
+   Optional: `META_GRAPH_API_VERSION` (validated `vNN.0`; default `v26.0`), and on a **local**
+   deployment only `META_OAUTH_REDIRECT_ORIGIN=http://localhost:3211` (step 3). The existing
    `TOKEN_ENCRYPTION_KEYS` is required as for every connection.
 
 7. **Every cloud deployment must set `PROVIDER_MODE`** (`mock` or `live`) before its first deploy,

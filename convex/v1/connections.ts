@@ -73,7 +73,8 @@ export const beginConnect = orgAdminAction({
     const spec = registry.oauth(args.provider);
     const nonce = randomToken();
     const codeVerifier = spec.usesPkce ? randomToken() : undefined;
-    const redirectUri = oauthRedirectUri();
+    // Before any OAuth state exists: an invalid redirect override refuses here.
+    const redirectUri = oauthRedirectUri(args.provider);
 
     const { expiresAt }: { expiresAt: number } = await ctx.runMutation(
       internal.connections.oauthState.create,

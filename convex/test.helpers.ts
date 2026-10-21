@@ -488,8 +488,10 @@ export async function connectMetaFake(
     provider: "meta",
     returnUrl: RETURN_URL,
   });
-  const state = new URL(authorizeUrl).searchParams.get("state")!;
-  const code = graph.issueCode(user);
+  const params = new URL(authorizeUrl).searchParams;
+  const state = params.get("state")!;
+  // Bound to the authorization request's redirect_uri: the exchange must send the same one.
+  const code = graph.issueCode(user, params.get("redirect_uri") ?? undefined);
   return redirectParams(
     await t.fetch(
       `/oauth/callback?state=${encodeURIComponent(state)}&code=${encodeURIComponent(code)}`,

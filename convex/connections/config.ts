@@ -20,11 +20,75 @@ export function providerRegistry(): ProviderRegistry {
   return createDefaultRegistry();
 }
 
-/** Redirect URI registered with every platform: <CONVEX_SITE_URL>/oauth/callback. */
-export function oauthRedirectUri(): string {
+/**
+ * Optional per-provider override of the callback ORIGIN (Convex env var name). Meta only:
+ * Facebook Login for Business requires HTTPS redirect URIs except `http://localhost` while the
+ * app is in development mode, and a local deployment's CONVEX_SITE_URL is
+ * `http://127.0.0.1:<port>`. Every other provider always uses CONVEX_SITE_URL.
+ */
+export const REDIRECT_ORIGIN_ENV: Partial<Record<ConnectionProvider, string>> = {
+  meta: "META_OAUTH_REDIRECT_ORIGIN",
+};
+
+const LOOPBACK_SITE_HOSTS: ReadonlySet<string> = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+/**
+ * Validates a redirect-origin override against the deployment's CONVEX_SITE_URL. The ONLY
+ * accepted value is `http://localhost:<CONVEX_SITE_URL's port>` on a LOCAL deployment (a plain
+ * http CONVEX_SITE_URL on a loopback host): the same backend under the host name Meta allows in
+ * development mode. Everything else is refused, including every https origin: a cloud deployment
+ * leaves the override unset and uses its https CONVEX_SITE_URL, so authorization codes can only
+ * be redirected to this deployment. Returns the origin, or why it is refused (never the value).
+ */
+export function validateRedirectOrigin(
+  value: string,
+  site: string,
+): { ok: true; origin: string } | { ok: false; reason: string } {
+  let url: URL;
+  let siteUrl: URL;
+  try {
+    url = new URL(value);
+    siteUrl = new URL(site);
+  } catch {
+    return { ok: false, reason: "it is not an absolute URL" };
+  }
+  if (url.pathname !== "/" || url.search !== "" || url.hash !== "") {
+    return { ok: false, reason: "it must be an origin without a path, query or fragment" };
+  }
+  if (url.username !== "" || url.password !== "") {
+    return { ok: false, reason: "it must not contain credentials" };
+  }
+  if (url.protocol !== "http:" || url.hostname !== "localhost") {
+    return { ok: false, reason: "only http://localhost is allowed" };
+  }
+  if (siteUrl.protocol !== "http:" || !LOOPBACK_SITE_HOSTS.has(siteUrl.hostname)) {
+    return { ok: false, reason: "it is only allowed on a local deployment" };
+  }
+  // Both are http here; an omitted port is 80.
+  if ((url.port || "80") !== (siteUrl.port || "80")) {
+    return { ok: false, reason: "its port must match CONVEX_SITE_URL" };
+  }
+  return { ok: true, origin: url.origin };
+}
+
+/**
+ * Redirect URI of `provider`'s OAuth flow: <origin>/oauth/callback, where origin is
+ * CONVEX_SITE_URL unless the provider has a valid override (REDIRECT_ORIGIN_ENV; unset or
+ * empty = none). beginConnect (authorization URL) and the callback (code exchange) both call
+ * this with the same provider, so every stage uses the same URI. An invalid override fails
+ * closed with INTERNAL naming the variable, never its value.
+ */
+export function oauthRedirectUri(provider: ConnectionProvider): string {
   const site = process.env.CONVEX_SITE_URL;
   if (!site) throw apiError("INTERNAL", "OAuth redirect URI is not available");
-  return new URL(OAUTH_CALLBACK_PATH, site).toString();
+  const envName = REDIRECT_ORIGIN_ENV[provider];
+  const override = envName === undefined ? undefined : process.env[envName];
+  if (envName === undefined || override === undefined || override === "") {
+    return new URL(OAUTH_CALLBACK_PATH, site).toString();
+  }
+  const checked = validateRedirectOrigin(override, site);
+  if (!checked.ok) throw apiError("INTERNAL", `${envName} is invalid: ${checked.reason}.`);
+  return new URL(OAUTH_CALLBACK_PATH, checked.origin).toString();
 }
 
 /** Platform app credentials (Convex env vars). Mock specs need none. */
