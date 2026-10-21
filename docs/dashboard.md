@@ -386,14 +386,19 @@ E2E_CONNECTIONS_JOURNEY=1 npm run test:e2e:connections
   server bound to `127.0.0.1` only (`reuseExistingServer: false`), traces, screenshots and videos
   off. Stop your own dashboard dev server first.
 - **Fail-closed guards** (before any server starts): opt-in flag, never in CI, loopback backend
-  and callback URLs, the Convex CLI targets the local deployment with `PROVIDER_MODE` unset or
-  `mock`, the dashboard's `NEXT_PUBLIC_CONVEX_URL` is that same deployment (its public
-  `/instance_name` equals the CLI's deployment name), port 3000 free. In the browser every
-  non-loopback request and WebSocket is blocked (Google included).
+  and callback URLs, the Convex CLI targets a local deployment (the project's local deployment or
+  an anonymous local one; never a cloud deployment) with `PROVIDER_MODE` unset or `mock`, the
+  dashboard's `NEXT_PUBLIC_CONVEX_URL` is that same deployment (its public `/instance_name`
+  equals the CLI's deployment name), port 3000 free. In the browser every non-loopback request
+  and WebSocket is blocked (Google included).
+- **Isolated run (when the local deployment is in live mode):** the guards read the checkout's own
+  `.env.local`, so run the journeys from a separate checkout with its own anonymous mock
+  deployment; the live deployment is never touched (see "Isolated run" below).
 - **Identity:** the dashboard server keeps the developer's dev token; the spec swaps it, in memory,
   for a token of the throwaway org `e2e-google-ads` on the Convex WebSocket, and clicks nothing
   until the org badge shows "E2E Google Ads". Tokens are minted in memory and never printed or
-  written. `dev-org` is only read: its connections and ad accounts are compared before and after.
+  written. `dev-org` is only read: its connections, ad accounts and Instagram accounts are
+  compared before and after.
 - **Sync:** only `sync/admin:requestSync` for the one linked test account; never the planner.
 - **Cleanup:** setup disconnects any leftover connection of the throwaway org; teardown always
   disconnects (connection revoked, credential deleted, discovered accounts deleted, account
@@ -404,6 +409,23 @@ E2E_CONNECTIONS_JOURNEY=1 npm run test:e2e:connections
   consumed OAuth state (swept hourly), one sync run with its tasks and about seven audit entries.
   No purge function exists; only resetting the local deployment removes them.
 
+**Isolated run.** From the repository root, with port 3000 free (copy any uncommitted changes
+into the new checkout first). The anonymous deployment keeps its data inside that checkout
+(`.convex/local/default`) and has nothing in common with the project's local deployment:
+
+```bash
+git worktree add --detach ../marketing-microservice-e2e-mock
+cd ../marketing-microservice-e2e-mock && npm ci
+# keep this running in its own terminal:
+CONVEX_AGENT_MODE=anonymous npx convex dev --local-cloud-port 3310 --local-site-port 3311
+npx convex env set PROVIDER_MODE mock
+npm run dev:auth setup && npm run dev:seed
+E2E_CONNECTIONS_JOURNEY=1 npm run test:e2e:connections
+```
+
+Afterwards stop that `convex dev` and remove the checkout with
+`git worktree remove --force ../marketing-microservice-e2e-mock`.
+
 **Recovery after a hard kill** (Ctrl+C or a crash skips teardown, so the test account may stay
 linked and keep syncing mock data hourly):
 
@@ -412,5 +434,37 @@ npm run test:e2e:connections:cleanup
 ```
 
 It runs the same guards and disconnects every non-revoked Google Ads connection of
-`e2e-google-ads` (idempotent; it prints only a count). The next journey run also does this first.
+`e2e-google-ads` and every non-revoked connection of `e2e-meta-ads` (idempotent; it prints only
+counts). The next journey run also does this first.
 If port 3000 stays busy, stop the leftover `next dev` process before running again.
+
+### Meta Ads Connections journey (local, opt-in)
+
+`tests/e2e/meta-ads-journey.spec.mts` drives the Meta Ads section of `/connections` with the same
+config, guards, browser lockdown (Facebook included) and in-memory identity swap as the Google
+Ads journey, as the throwaway org **`e2e-meta-ads`** ("E2E Meta Ads"): Connect Meta Ads →
+(mock consent =) OAuth callback → discovery (Meta columns: no account type or test status, the
+business, raw ad account ids, no Google wording) → link one ad account → a sync of that one
+account (successful run, coverage set, "Data through …") → "View analytics" (the Overview
+filtered to the account shows only Meta in "Spend by platform"; unfiltered it also shows Google
+Ads) → **Disconnect Meta Ads** (Cancel first, then confirm): connection revoked, account
+unlinked, discovery cleared, further syncs refused.
+
+```bash
+E2E_CONNECTIONS_JOURNEY=1 npm run test:e2e:connections -- meta-ads-journey
+```
+
+- **Fixtures (same throwaway org, through the API, mock consent only):** a Google Ads connection
+  with one linked and synced client account, and an Instagram connection with its linked account.
+  The journey proves the Meta disconnect leaves both untouched, and that Instagram never appears
+  on `/connections`.
+- **Sync wait (by run state):** `sync/admin:requestSync` answers with the run that covers the
+  request: a new one, an active one, or one of the same kind and window that already ran in the
+  current 15-minute planner slot (a rerun within minutes). The journey waits for that run through
+  the read-only `sync/admin:runStatus`; it must succeed, the account must report a successful last
+  run whose coverage reaches the run's window, and a new run must finish after the request.
+- **dev-org** is only read: its connections, ad accounts and Instagram accounts are compared before
+  and after.
+- **Cleanup:** setup and teardown disconnect every non-revoked connection of `e2e-meta-ads` (Meta
+  and both fixtures). Residue is like the Google journey's: the org, revoked connections, unlinked
+  accounts with their mock data and sync state, consumed OAuth states and audit entries.
