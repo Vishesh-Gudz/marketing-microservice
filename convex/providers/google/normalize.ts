@@ -80,13 +80,28 @@ function accountRecord(fields: CustomerFields, parentExternalId: string | undefi
     timezone: fields.timeZone,
     status: (fields.status !== undefined ? CUSTOMER_STATUS[fields.status] : undefined) ?? "unknown",
     ...(fields.status !== undefined ? { rawStatus: fields.status } : {}),
-    // proto3 JSON omits `false`: absent means not a manager / not a test account.
+    // `manager` and `test_account` are `optional bool` in the v25 protos (explicit presence):
+    // a reported `false` is serialized, so an ABSENT field means "not reported" (unknown),
+    // never false. `isManager` is true only for an explicit `true`; the three-way status
+    // keeps the uncertainty for discovery and linking.
     isManager: fields.manager === true,
+    managerStatus: triState(fields.manager, "manager", "client"),
+    testAccountStatus: triState(fields.testAccount, "test", "not_test"),
     ...(parentExternalId !== undefined
       ? { parentExternalId: normalizeGoogleCustomerId(parentExternalId) }
       : {}),
     ...(fields.testAccount === true ? { attributes: { testAccount: "true" } } : {}),
   } satisfies ProviderAdAccount;
+}
+
+function triState<T extends string, F extends string>(
+  value: boolean | undefined,
+  whenTrue: T,
+  whenFalse: F,
+): T | F | "unknown" {
+  if (value === true) return whenTrue;
+  if (value === false) return whenFalse;
+  return "unknown";
 }
 
 /** A directly accessible customer (`FROM customer`): no routing manager. */

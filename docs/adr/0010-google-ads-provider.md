@@ -1,6 +1,7 @@
 # ADR 0010 — Google Ads provider
 
-- Status: accepted (Stage A: infrastructure; Stage B: mappings — real-account validation pending)
+- Status: accepted (Stage A: infrastructure; Stage B: mappings — real-account validation pending);
+  amended 2026-10-20 (Google Cloud project access, see "Amendment")
 - Date: 2026-09-28
 
 ## Context
@@ -36,7 +37,8 @@ provisionally in Stage B and listed for validation (docs/providers/google-ads.md
 7. **G-D6** No platform revoke on disconnect (revoking can end the same Google user's grant used by
    another org); manual revocation is documented.
 8. **G-D7** `GOOGLE_ADS_DEVELOPER_TOKEN` is a Convex env secret; developer-token and configuration
-   errors are ProviderError `unknown` (never reauth, never an account block).
+   errors are ProviderError `unknown` (never reauth, never an account block). **Superseded by the
+   Amendment** (no developer token; configuration errors keep this classification).
 9. **G-D8** Read-only client: an endpoint allowlist (token, userinfo, `listAccessibleCustomers`,
    `googleAds:search`) is enforced before any network call; every other path — `:mutate`,
    `:searchStream`, other hosts — is refused.
@@ -59,7 +61,8 @@ provisionally in Stage B and listed for validation (docs/providers/google-ads.md
     unavailable stub **when Google is configured** (any of `GOOGLE_CLIENT_ID`,
     `GOOGLE_CLIENT_SECRET`, `GOOGLE_ADS_DEVELOPER_TOKEN` set; incomplete or invalid values then fail
     closed with `google_config_invalid`). A live deployment without any Google configuration keeps
-    the Phase 8 D8-A stub, so Meta-only live deployments behave exactly as in Phase 8.
+    the Phase 8 D8-A stub, so Meta-only live deployments behave exactly as in Phase 8. (Amendment:
+    "configured" is now `GOOGLE_CLIENT_ID` or `GOOGLE_CLIENT_SECRET`.)
 
 ## Stage A
 
@@ -126,7 +129,37 @@ enums) before implementation; nothing is verified against a real account.
 - Every provider call that reaches Google costs one OAuth token request (not an Ads operation) plus
   one search call; sliced pages re-retrieve the same Google page (documented, measured); carry flush
   pages make no call.
-- The developer token's operation quota is shared by all tenants; action requests add one
-  conversion-action lookup per request (measured in the e2e quota table).
+- The Google Cloud project's operation quota (originally: the developer token's) is shared by all
+  tenants; action requests add one conversion-action lookup per request (measured in the e2e quota
+  table).
 - Ad-group-level placement analytics exclude Performance Max asset groups (visible, never
   mislabeled).
+
+## Amendment (2026-10-20): Google Cloud project access, no developer token
+
+Context: Google sunset developer tokens on 2026-09-09. The `developer-token` header is optional and
+ignored, and will be rejected in a future major version; API access levels (Test, Explorer, Basic,
+Standard) now belong to the Google Cloud project that owns the OAuth client
+([Developer token](https://developers.google.com/google-ads/api/docs/api-policy/developer-token),
+[Access levels](https://developers.google.com/google-ads/api/docs/api-policy/access-levels)).
+A Cloud project created after the sunset cannot obtain a token, so requiring one blocked every
+connection before the consent screen.
+
+Decisions:
+
+1. `GOOGLE_ADS_DEVELOPER_TOKEN` is removed from the provider and OAuth configuration, the
+   registry's "configured" check and every request; no `developer-token` header is ever sent
+   (tests assert it on every logged request). A leftover env value is ignored.
+2. `AuthorizationError.CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION` (a Test-access project calling a
+   production account, v25+) is configuration (`unknown`), like `google_config_invalid`: never a
+   `permission` failure, so discovery fails visibly instead of skipping the customer, and sync
+   neither requests reauth nor blocks the account (the run fails and is retried with the
+   standard failure backoff).
+3. The legacy developer-token error enums stay classified as configuration (harmless; pre-sunset
+   bodies) and stay in the D28b allowlist next to the new code.
+4. Unchanged: OAuth (PKCE S256, offline access, `prompt=consent`, refresh-token requirement,
+   OpenID `sub` identity), encrypted credentials, the read-only allowlist, discovery, routing,
+   paging, sync, analytics, tenant isolation, mock mode, Meta and Instagram.
+
+Consequence: OAuth works with only `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`; real accounts need
+the project's Explorer (or higher) access level, and all tenants share that project's quota.

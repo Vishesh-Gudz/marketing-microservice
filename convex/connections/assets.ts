@@ -7,8 +7,10 @@ import { getOwned, type Tenant } from "../lib/tenancy";
 import { orgScopeFromTenant } from "../mapping/scope";
 import type { ProviderAdAccount } from "../providers/types";
 import { RECORD_VALIDATORS } from "../providers/validate";
+import { syncErrorReason } from "../sync/publicStatus";
 import { ensureSyncAccount } from "../sync/state";
 import { upsertLinkedAdAccount } from "../sync/upsert";
+import { effectiveManagerStatus } from "./assetStatus";
 import { MAX_LINK_BATCH } from "./config";
 
 /**
@@ -67,6 +69,10 @@ export const storeDiscoveredAssets = internalMutation({
         status: record.status,
         ...(record.rawStatus !== undefined ? { rawStatus: record.rawStatus } : {}),
         isManager: record.isManager,
+        ...(record.managerStatus !== undefined ? { managerStatus: record.managerStatus } : {}),
+        ...(record.testAccountStatus !== undefined
+          ? { testAccountStatus: record.testAccountStatus }
+          : {}),
         ...(record.parentExternalId !== undefined
           ? { parentExternalId: record.parentExternalId }
           : {}),
@@ -89,15 +95,28 @@ export const storeDiscoveredAssets = internalMutation({
   },
 });
 
-/** Records a sanitized connection error (kind + generic message only). */
+/**
+ * Records a sanitized connection error (kind + generic message). For Google Ads, the
+ * platform code is translated into an allowlisted public `reason` (sync/publicStatus.ts);
+ * the code itself is never stored, and other providers record no reason.
+ */
 export const recordConnectionError = internalMutation({
-  args: { connectionId: v.id("connections"), kind: v.string(), message: v.string() },
+  args: {
+    connectionId: v.id("connections"),
+    kind: v.string(),
+    message: v.string(),
+    providerCode: v.optional(v.string()),
+  },
   returns: v.null(),
-  handler: async (ctx, { connectionId, kind, message }) => {
+  handler: async (ctx, { connectionId, kind, message, providerCode }) => {
     const connection = await ctx.db.get(connectionId);
     if (connection === null) return null;
     const now = Date.now();
-    await ctx.db.patch(connectionId, { lastError: { kind, message, at: now }, updatedAt: now });
+    const reason = connection.provider === "google_ads" ? syncErrorReason(providerCode) : undefined;
+    await ctx.db.patch(connectionId, {
+      lastError: { kind, message, ...(reason !== undefined ? { reason } : {}), at: now },
+      updatedAt: now,
+    });
     return null;
   },
 });
@@ -156,6 +175,15 @@ export async function linkAdAccounts(
     }
     if (asset.isManager) {
       throw apiError("INVALID_ARGUMENT", "Manager accounts cannot be linked.", { externalId });
+    }
+    // Only an account the platform confirmed as a client is linkable: an "unknown" manager
+    // status is never treated as a client (refresh discovery to re-check).
+    if (effectiveManagerStatus(asset) !== "client") {
+      throw apiError(
+        "INVALID_ARGUMENT",
+        "The platform did not confirm that this is a client account; refresh discovery.",
+        { externalId, reason: "manager_status_unknown" },
+      );
     }
 
     // The single canonical write path (convex/sync/upsert.ts), by natural key.

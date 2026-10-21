@@ -91,7 +91,13 @@ export function mapAdAccount(
   now: number,
 ): CanonicalInsert<"adAccounts"> {
   ensureValid("adAccount", record);
-  return compact({ ...record, orgId: scope.orgId, ...lifecycle(now) });
+  // Discovery facts stay with the discovered assets; they are not adAccounts fields.
+  const {
+    managerStatus: _managerStatus,
+    testAccountStatus: _testAccountStatus,
+    ...fields
+  } = record;
+  return compact({ ...fields, orgId: scope.orgId, ...lifecycle(now) });
 }
 
 export function mapCampaign(

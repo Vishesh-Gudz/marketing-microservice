@@ -7,6 +7,7 @@ import {
   parseGoogleAdExternalId,
 } from "../domain/identity";
 import type { AdPlatform } from "../domain/types";
+import { managerStatusValidator, testAccountStatusValidator } from "../domain/validators";
 import { compareDateKeys, isDateKey } from "../lib/dates";
 import { isValidCurrency, isValidTimezone } from "../lib/validation";
 import { adTables } from "../tables/ads";
@@ -44,11 +45,11 @@ const externalRef = v.string();
 const optionalExternalRef = v.optional(v.string());
 
 export const RECORD_VALIDATORS = {
-  adAccount: recordValidator(
-    adTables.adAccounts.validator.fields,
-    ["connectionId", "linkedAt"],
-    {},
-  ),
+  adAccount: recordValidator(adTables.adAccounts.validator.fields, ["connectionId", "linkedAt"], {
+    // Discovery facts (never stored on adAccounts; see ProviderAdAccount).
+    managerStatus: v.optional(managerStatusValidator),
+    testAccountStatus: v.optional(testAccountStatusValidator),
+  }),
   campaign: recordValidator(adTables.campaigns.validator.fields, ["adAccountId"], {
     accountExternalId: externalRef,
   }),

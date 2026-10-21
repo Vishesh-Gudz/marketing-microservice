@@ -1,21 +1,23 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDefaultRegistry } from "..";
 import {
-  FAKE_DEVELOPER_TOKEN,
+  createFakeGoogleAds,
   FAKE_GOOGLE_CLIENT_ID,
   FAKE_GOOGLE_CLIENT_SECRET,
+  installFakeGoogleAds,
 } from "./fakeGoogleAds.fixtures";
 
 // Phase 9 Stage A: the Phase 8 D8 matrix with Google. Live mode registers the real Google
 // provider + OAuth only when Google is configured; otherwise the Phase 8 D8-A stub stays.
-// Mock and misconfigured are unchanged whatever the Google env says.
+// Mock and misconfigured are unchanged whatever the Google env says. "Configured" means the
+// OAuth client (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET): there is no developer token any more
+// (sunset 2026-09-09; access belongs to the OAuth client's Google Cloud project).
 
 const CLOUD = "https://happy-otter-123.convex.cloud";
 const META_ENV = { META_APP_ID: "1234567890", META_APP_SECRET: "test-app-secret" };
 const GOOGLE_ENV = {
   GOOGLE_CLIENT_ID: FAKE_GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET: FAKE_GOOGLE_CLIENT_SECRET,
-  GOOGLE_ADS_DEVELOPER_TOKEN: FAKE_DEVELOPER_TOKEN,
 };
 const LIVE = { PROVIDER_MODE: "live", CONVEX_CLOUD_URL: CLOUD, ...META_ENV };
 const CTX = {
@@ -60,10 +62,9 @@ describe("live mode", () => {
 
   it.each([
     ["no Google env", {}],
-    [
-      "empty Google env",
-      { GOOGLE_CLIENT_ID: "", GOOGLE_CLIENT_SECRET: "", GOOGLE_ADS_DEVELOPER_TOKEN: "" },
-    ],
+    ["empty Google env", { GOOGLE_CLIENT_ID: "", GOOGLE_CLIENT_SECRET: "" }],
+    // A leftover value of the obsolete variable no longer configures anything.
+    ["only an obsolete GOOGLE_ADS_DEVELOPER_TOKEN", { GOOGLE_ADS_DEVELOPER_TOKEN: "legacy-value" }],
   ])(
     "keeps the Phase 8 stub with %s (auth / provider_unavailable, no OAuth)",
     async (_label, env: Record<string, string>) => {
@@ -81,8 +82,8 @@ describe("live mode", () => {
   );
 
   it.each([
-    ["only a developer token", { GOOGLE_ADS_DEVELOPER_TOKEN: FAKE_DEVELOPER_TOKEN }],
-    ["no developer token", { ...GOOGLE_ENV, GOOGLE_ADS_DEVELOPER_TOKEN: "" }],
+    ["only a client id", { GOOGLE_CLIENT_ID: FAKE_GOOGLE_CLIENT_ID }],
+    ["only a client secret", { GOOGLE_CLIENT_SECRET: FAKE_GOOGLE_CLIENT_SECRET }],
     ["a malformed client id", { ...GOOGLE_ENV, GOOGLE_CLIENT_ID: "not-a-client" }],
     ["an invalid version override", { ...GOOGLE_ENV, GOOGLE_ADS_API_VERSION: "latest" }],
   ])(
@@ -119,6 +120,31 @@ describe("live mode", () => {
       expect(fetch).not.toHaveBeenCalled();
     },
   );
+
+  it("needs no developer token, ignores a leftover GOOGLE_ADS_DEVELOPER_TOKEN and never sends one", async () => {
+    const fake = installFakeGoogleAds(createFakeGoogleAds());
+    const registry = createDefaultRegistry({
+      ...LIVE,
+      ...GOOGLE_ENV,
+      GOOGLE_ADS_DEVELOPER_TOKEN: "legacy-value",
+    });
+    expect(() =>
+      registry.oauth("google_ads").buildAuthorizationUrl({
+        state: "s",
+        redirectUri: "https://x.convex.site/oauth/callback",
+        codeChallenge: "c",
+        config: { clientId: FAKE_GOOGLE_CLIENT_ID, clientSecret: FAKE_GOOGLE_CLIENT_SECRET },
+      }),
+    ).not.toThrow();
+    const ctx = {
+      ...CTX,
+      credential: { ...CTX.credential, refreshToken: fake.grantRefreshToken("u1") },
+    };
+    await registry.ads("google_ads").getAccount(ctx, { accountExternalId: "7770000001" });
+    expect(fake.log.length).toBeGreaterThan(0);
+    expect(fake.log.some((e) => e.developerTokenHeader)).toBe(false);
+    expect(JSON.stringify(fake.log)).not.toContain("legacy-value");
+  });
 });
 
 describe("mock and misconfigured modes ignore Google env", () => {

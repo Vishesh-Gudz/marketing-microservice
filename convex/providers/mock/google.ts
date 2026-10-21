@@ -450,6 +450,8 @@ function normalizeCustomer(raw: GoogleRawCustomer): ProviderAdAccount {
     status: CUSTOMER_STATUS[raw.status] ?? "unknown",
     rawStatus: raw.status,
     isManager: raw.manager,
+    // The mock always knows its account type (google_ads rows without a status are "unknown").
+    managerStatus: raw.manager ? "manager" : "client",
     parentExternalId: raw.managerCustomerId
       ? normalizeGoogleCustomerId(raw.managerCustomerId)
       : undefined,

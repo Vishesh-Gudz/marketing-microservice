@@ -68,9 +68,18 @@ function finish(returnUrl: string | undefined, outcome: Outcome): Response {
     : htmlPage("Connection failed", "The connection could not be completed. Please try again.");
 }
 
-/** Sanitized error for storage: provider error kind + generic message; never payloads. */
-function sanitize(error: unknown): { kind: string; message: string } {
-  if (isProviderError(error)) return { kind: error.kind, message: "The platform request failed" };
+/**
+ * Sanitized error for storage: provider error kind + generic message; never payloads. The
+ * platform code goes only to recordConnectionError, which keeps an allowlisted reason.
+ */
+function sanitize(error: unknown): { kind: string; message: string; providerCode?: string } {
+  if (isProviderError(error)) {
+    return {
+      kind: error.kind,
+      message: "The platform request failed",
+      ...(error.providerCode !== undefined ? { providerCode: error.providerCode } : {}),
+    };
+  }
   return { kind: "internal", message: "Unexpected error" };
 }
 

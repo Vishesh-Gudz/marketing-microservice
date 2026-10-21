@@ -4,7 +4,6 @@ import {
   AUTHORIZE_URL,
   GOOGLE_CONFIG_INVALID,
   googleProviderId,
-  isValidDeveloperToken,
   isValidGoogleClientId,
   isValidGoogleClientSecret,
   OAUTH_TIMEOUT_MS,
@@ -19,7 +18,8 @@ import { parseRaw, rawAccessibleCustomers, rawTokenResponse, rawUserinfo } from 
  * S256, `access_type=offline` + `prompt=consent` (a refresh token is always issued), scopes
  * `adwords` + `openid` only. The identity is the OpenID `sub`; no email or profile is
  * requested or stored. No `refresh` (G-D5a: the provider mints access tokens itself) and no
- * `revoke` (G-D6).
+ * `revoke` (G-D6). No developer token (sunset 2026-09-09): API access is the access level of
+ * the Google Cloud project that owns the OAuth client.
  *
  * Every failure is a ProviderError with providerCode "<stage>:<code>" for the sanitized
  * OAuth diagnostics (D28b): config, token_exchange, identity, api_access.
@@ -31,12 +31,12 @@ export const GOOGLE_SCOPES = [GOOGLE_ADS_SCOPE, "openid"] as const;
 export const GOOGLE_OAUTH_STAGES = ["config", "token_exchange", "identity", "api_access"] as const;
 export type GoogleOAuthStage = (typeof GOOGLE_OAUTH_STAGES)[number];
 
-type Config = { clientId: string; clientSecret: string; developerToken: string };
+type Config = { clientId: string; clientSecret: string };
 
 const SUB = /^[A-Za-z0-9_-]{1,255}$/;
 
 export function createGoogleOAuthSpec(
-  options: { version?: string; developerToken?: string; timeoutMs?: number } = {},
+  options: { version?: string; timeoutMs?: number } = {},
 ): OAuthSpec<GoogleCredential> {
   const version = resolveGoogleVersion(options.version);
   const client = createGoogleAdsClient({
@@ -56,16 +56,11 @@ export function createGoogleOAuthSpec(
     if (
       !version.valid ||
       !isValidGoogleClientId(config.clientId) ||
-      !isValidGoogleClientSecret(config.clientSecret) ||
-      !isValidDeveloperToken(options.developerToken)
+      !isValidGoogleClientSecret(config.clientSecret)
     ) {
       throw configError();
     }
-    return {
-      clientId: config.clientId,
-      clientSecret: config.clientSecret,
-      developerToken: options.developerToken,
-    };
+    return { clientId: config.clientId, clientSecret: config.clientSecret };
   }
 
   const stageError = (stage: GoogleOAuthStage, failure: GoogleFailure) =>
@@ -143,11 +138,8 @@ export function createGoogleOAuthSpec(
         throw googleError("data", "oauthExchange", "identity:schema", "Unexpected OpenID subject");
       }
 
-      // 3. API access: the user and the developer token can reach the Google Ads API.
-      const access = await client.listAccessibleCustomers({
-        accessToken: token.access_token,
-        developerToken: cfg.developerToken,
-      });
+      // 3. API access: the user can reach the Google Ads API through our Cloud project.
+      const access = await client.listAccessibleCustomers({ accessToken: token.access_token });
       if (!access.ok) throw stageError("api_access", access.failure);
       parseRaw(rawAccessibleCustomers, access.body, "oauthExchange", "customers", "api_access");
 

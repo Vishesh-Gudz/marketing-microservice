@@ -3,7 +3,6 @@ import { createGoogleAdsClient } from "./client";
 import {
   adsError,
   createFakeGoogleAds,
-  FAKE_DEVELOPER_TOKEN,
   FAKE_GOOGLE_CLIENT_ID,
   FAKE_GOOGLE_CLIENT_SECRET,
   installFakeGoogleAds,
@@ -37,7 +36,7 @@ async function session(fake: FakeGoogleAds, user = "u1"): Promise<Session> {
   if (!exchanged.ok) throw new Error("setup failed");
   const accessToken = (exchanged.body as { access_token: string }).access_token;
   fake.log.length = 0;
-  return { client, auth: { accessToken, developerToken: FAKE_DEVELOPER_TOKEN } };
+  return { client, auth: { accessToken } };
 }
 
 describe("resolveRoute", () => {

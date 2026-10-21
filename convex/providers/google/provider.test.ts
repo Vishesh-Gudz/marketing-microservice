@@ -12,10 +12,10 @@ import { createGoogleAdsProvider, GOOGLE_CAPABILITIES, type GoogleCredential } f
 import {
   adsError,
   createFakeGoogleAds,
-  FAKE_DEVELOPER_TOKEN,
   FAKE_GOOGLE_CLIENT_ID,
   FAKE_GOOGLE_CLIENT_SECRET,
   FAKE_GOOGLE_RANGE,
+  FAKE_GOOGLE_USERS,
   fakeGoogleCredential,
   fakeGoogleDataset,
   installFakeGoogleAds,
@@ -35,7 +35,6 @@ afterEach(() => {
 const OPTIONS = {
   clientId: FAKE_GOOGLE_CLIENT_ID,
   clientSecret: FAKE_GOOGLE_CLIENT_SECRET,
-  developerToken: FAKE_DEVELOPER_TOKEN,
 };
 const provider = (overrides: Record<string, string | undefined> = {}) =>
   createGoogleAdsProvider({ ...OPTIONS, ...overrides });
@@ -70,8 +69,7 @@ async function listAll(
   return { items, pages };
 }
 
-const LEAK =
-  /test-(access|refresh)|test-google-client-secret|test-developer-token|Fake|fakeRequestId|https?:/;
+const LEAK = /test-(access|refresh)|test-google-client-secret|Fake|fakeRequestId|https?:/;
 
 function expectNoLeak(fake: FakeGoogleAds, error: unknown) {
   expect(`${(error as Error).message} ${JSON.stringify(error)}`).not.toMatch(LEAK);
@@ -115,8 +113,6 @@ const DISCOVERED = [
 
 describe("configuration and credential (no network)", () => {
   it.each([
-    ["no developer token", { developerToken: undefined }],
-    ["a malformed developer token", { developerToken: "bad token!" }],
     ["no client id", { clientId: undefined }],
     ["a malformed client id", { clientId: "123.apps.example.com" }],
     ["no client secret", { clientSecret: undefined }],
@@ -196,12 +192,13 @@ describe("access tokens and transport", () => {
         expect(entry.formFields.sort()).toEqual(
           ["client_id", "client_secret", "grant_type", "refresh_token"].sort(),
         );
-        expect(entry).toMatchObject({ hasBearer: false, developerToken: false });
+        expect(entry).toMatchObject({ hasBearer: false, developerTokenHeader: false });
       } else {
+        // Developer tokens were sunset on 2026-09-09: never sent.
         expect(entry).toMatchObject({
           method: expect.any(String),
           hasBearer: true,
-          developerToken: true,
+          developerTokenHeader: false,
         });
       }
     }
@@ -311,7 +308,21 @@ describe("discovery (listAccounts)", () => {
       { kind: "transient", providerCode: "INTERNAL_ERROR", retryable: true },
     ],
     [
-      "a developer token without access",
+      "a Google Cloud project without production access",
+      adsError(
+        403,
+        "PERMISSION_DENIED",
+        "authorizationError",
+        "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION",
+      ),
+      {
+        kind: "unknown",
+        providerCode: "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION",
+        retryable: false,
+      },
+    ],
+    [
+      "a legacy developer-token error body",
       adsError(403, "PERMISSION_DENIED", "authorizationError", "DEVELOPER_TOKEN_NOT_APPROVED"),
       { kind: "unknown", providerCode: "DEVELOPER_TOKEN_NOT_APPROVED", retryable: false },
     ],
@@ -328,12 +339,35 @@ describe("discovery (listAccounts)", () => {
     expectNoLeak(fake, caught);
   });
 
-  it("a test developer token cannot read production accounts → configuration error", async () => {
-    const { ctx } = setup({ developerTokenLevel: "test" });
-    await expect(provider().listAccounts(ctx, {})).rejects.toMatchObject({
+  it("a Test-level Cloud project cannot read production accounts → configuration error, never a skipped account", async () => {
+    const { fake, ctx } = setup({ accessLevel: "test" });
+    const notApproved = {
       kind: "unknown",
-      providerCode: "DEVELOPER_TOKEN_NOT_APPROVED",
-    });
+      providerCode: "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION",
+      retryable: false,
+    };
+    // Discovery fails closed instead of listing fewer accounts.
+    await expect(provider().listAccounts(ctx, {})).rejects.toMatchObject(notApproved);
+    // Sync lookups (direct and manager-routed): configuration, not permission / not_found
+    // (which would block the account).
+    await expect(
+      provider().getAccount(ctx, { accountExternalId: "7770000001" }),
+    ).rejects.toMatchObject(notApproved);
+    await expect(
+      provider().getAccount(ctx, { accountExternalId: "2220000001" }),
+    ).rejects.toMatchObject(notApproved);
+    expect(fake.log.some((e) => e.developerTokenHeader)).toBe(false);
+  });
+
+  it("a Test-level Cloud project still reads test accounts", async () => {
+    const users = {
+      ...FAKE_GOOGLE_USERS,
+      tester: { sub: "100000000000000000077", accessible: ["2220000002"] },
+    };
+    const { ctx } = setup({ accessLevel: "test", users }, "tester");
+    await expect(
+      provider().getAccount(ctx, { accountExternalId: "2220000002" }),
+    ).resolves.toMatchObject({ externalId: "2220000002" });
   });
 
   it("an account without customers lists nothing", async () => {

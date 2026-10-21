@@ -11,6 +11,7 @@ const PAGES = [
   { path: "/conversions", link: "Conversions" },
   { path: "/accounts", link: "Accounts" },
   { path: "/social", link: "Organic" },
+  { path: "/connections", link: "Connections" },
 ];
 
 test("navigates between dashboard pages and keeps the global filters", async ({ page }) => {

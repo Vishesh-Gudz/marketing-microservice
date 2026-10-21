@@ -8,7 +8,14 @@ It has no server-side data fetching, no route handlers and no backend of its own
 
 - **Data (D1, D2):** every value comes from `useQuery(api.v1.*)` (`convex/react`) in the browser,
   authenticated with the parent-issued JWT. Convex `useQuery` is the only cache (reactive, deduplicated);
-  there is no TanStack Query, Redux or Zustand.
+  there is no TanStack Query, Redux or Zustand. The only writes are on `/connections` (Google Ads:
+  `useAction(beginConnect)`, `useMutation(linkAdAccounts | refreshAssets)`) and the org gate's
+  `ensure`.
+- **Identity (today: local development only):** the token comes from a token source
+  (`lib/auth/token-source.ts`). The only implemented source is the dev token
+  (`NEXT_PUBLIC_DEV_AUTH_TOKEN`, minted by `npm run dev:auth setup` for org `dev-org`, role
+  `admin`); production builds drop it, so a hosted dashboard shows "Not signed in". The parent
+  token handoff is Phase 15. There is no application login of its own.
 - **Routes (D4, D22):** thin Server Components in `app/(dashboard)/` read `params` and render a
   client view from `components/dashboard/views/`.
 - **Org gate (D16):** the shell calls `v1/orgs:ensure` once per session, then subscribes to
@@ -30,10 +37,15 @@ app/(dashboard)/layout.tsx        Suspense + AppShell (OrgGate, nav, header)
   breakdowns/ conversions/ accounts/
   social/page.tsx                 Organic Instagram (Phase 10 Stage B)
   social/posts/[postId]/page.tsx  One Instagram post
+  connections/page.tsx            Google Ads connection management (ADR 0008 amendment)
   loading.tsx error.tsx not-found.tsx
 components/dashboard/             shell, filters, KPI cards, charts, tables, notices, views/
 components/dashboard/organic/     organic-only KPI grid, series chart, posts table, account
                                   picker, coverage notes, Instagram link
+components/dashboard/connections/ Google Ads connection status, Connect/Reconnect, discovered
+                                  accounts + link, linked accounts' sync status
+lib/connections/                  pure, React-free connection helpers: callback result, link
+                                  rules, labels, messages, customer ids, return URL / navigation
 lib/analytics/                    pure logic: types, format, filters, deltas, states, values,
                                   errors, chart-data, labels; hooks: use-analytics-query,
                                   use-dashboard-filters; org-context
@@ -54,10 +66,14 @@ lib/analytics/                    pure logic: types, format, filters, deltas, st
 | `/accounts`                                     | Accounts with KPIs, currency, time zone, link/connection health, coverage, last sync     | `breakdown(account)`, `adAccounts:list`, `connections:list`                                                      |
 | `/social` (nav "Organic")                       | One Instagram account: 6 headline + 7 detail KPIs, UTC series, posts (lifetime totals)   | `socialAccounts:list`/`get`, `organicAnalytics:overview`/`accountSeries`, `socialPosts:list`, `connections:list` |
 | `/social/posts/[postId]`                        | One post: caption, latest lifetime totals, lifetime totals at each capture               | `socialPosts:get`                                                                                                |
+| `/connections`                                  | Google Ads: connection status, Connect/Reconnect, discovered accounts, link, sync status | `connections:list`/`listDiscoveredAssets`/`beginConnect`/`linkAdAccounts`/`refreshAssets`, `adAccounts:list`     |
 
 There is no org-wide ads page: the API requires a campaign or ad-group parent for ads (read budget).
-Connection management (connect, link, disconnect) stays out of the dashboard (D17); the
-"reconnect required" banner on Overview, Accounts and Organic is read-only.
+Connection management is on `/connections` for **Google Ads only** (ADR 0008, D17 amendment).
+Meta Ads and Instagram connections stay out of the dashboard, and nothing can be disconnected or
+unlinked here. The "reconnect required" banner (Overview, Accounts, Organic) links to
+`/connections` only for a Google Ads connection; for Meta and Instagram it stays read-only. On
+`/accounts`, unlinked or reconnect-required Google Ads accounts link to "Manage in Connections".
 
 A foreign, unknown or malformed entity id (API `NOT_FOUND`), or an ad group opened under the wrong
 campaign, renders `app/(dashboard)/not-found.tsx` inside the shell. Unmatched URLs use
@@ -81,6 +97,8 @@ parameters. Invalid values fall back to defaults (`lib/analytics/filters.ts`, un
 | `primaryOnly`, `window`, `actionType` | conversion filters                                                       |
 | `account`                             | `/social`: the selected Instagram account id (default: the first listed) |
 | `pdir`                                | `/social`: post order by publish time, `asc` (default: newest first)     |
+| `status`, `warning`, `error`          | `/connections`: the OAuth callback result; read once, then removed       |
+| `connection`                          | `/connections`: the callback's connection id; read once, then removed    |
 
 Page size, pagination position and the chart metric are UI state (D2). Presets resolve against the
 **org time zone's today** (`todayIn(org.timezone)`, re-checked every minute) with the shared pure
@@ -163,6 +181,81 @@ granularity for any valid range.
 - **Post page:** lifetime totals at each capture day (UTC), charted and tabled as cumulative
   values, never differenced into daily performance.
 
+## Connections (Google Ads)
+
+`/connections` (ADR 0008, D17 amendment) is the only dashboard page that changes data. It uses
+the existing public v1 functions only ([connections.md](connections.md)); the **server** decides
+who may act and which accounts may be linked. The UI mirrors those rules
+(`lib/connections/linkability.ts`) only to decide what to offer.
+
+| Part                                           | Admin | Editor, viewer                                                   |
+| ---------------------------------------------- | ----- | ---------------------------------------------------------------- |
+| Connection status                              | yes   | yes                                                              |
+| Connect / Reconnect                            | yes   | no ("Only organization admins can …")                            |
+| Discovered accounts, Link, Retry discovery     | yes   | no (`listDiscoveredAssets` is admin-only and is not even called) |
+| Linked accounts, sync status, "View analytics" | yes   | yes                                                              |
+
+1. **Status.** The page shows one Google Ads connection: the one the callback just reported, else
+   the newest active one, else the newest (revoked connections are hidden; several connections
+   get a "Google connection" selector). States: connected, Google Ads access missing (a required
+   scope was not granted), access expires soon, reconnect required. For an active connection a
+   discovery failure is explained from its allowlisted `reason`, never the server message.
+2. **Connect / Reconnect.** `beginConnect` with `provider: "google_ads"`, a `returnUrl` and, for
+   Reconnect, `reconnectConnectionId`. The return URL is `<origin>/connections` plus the global
+   filters only; the server accepts it only if the app's allowlist covers that origin and path (local
+   development: `http://localhost:3000/` and `http://127.0.0.1:3000/`). Reconnect passes the
+   shown connection's id, so a different Google account is refused (`identity_mismatch`). The
+   returned authorization URL is followed in the same tab (http(s) only) and is **never rendered,
+   logged or stored**: it carries the single-use state and the PKCE challenge. In mock mode it is
+   the callback URL itself (instant consent).
+3. **Callback result.** Parsed once (`lib/connections/connect-result.ts`): connected (with the
+   `discovery_failed` warning), a known error code, an unknown code, or malformed (repeated
+   parameters, an invalid connection id). Each has fixed text; parameter values are never shown.
+   The result parameters (and any stray `code` / `state`) are then removed with
+   `router.replace`, keeping the global filters, so a reload never replays the notice.
+4. **Discovered accounts.** Customer id (`123-456-7890`), name, type (manager, client, "not
+   reported"), test-account status (test, not a test account, "not reported"), currency, time
+   zone, account status, the manager it was discovered through (or "Direct access"), and whether
+   it can be linked.
+5. **Select and link.** One radio choice: only an unlinked account the platform **confirmed** as a
+   client, on an active connection, can be selected. Managers, unreported account types, linked
+   accounts and inactive connections are disabled with the reason as the control's description.
+   The test-account status is informational and never blocks (the server does not check it;
+   Google's access level decides whether a non-test account can be read). "Link selected
+   account" sends exactly one id; the server's refusals (e.g. `manager_status_unknown`) appear as
+   fixed text.
+6. **Retry discovery.** `refreshAssets` (active connections only) runs discovery in the
+   background; "Refreshing the account list…" shows until the connection changes again (success
+   or a recorded error), without polling. Use it after a discovery failure, or when Google did
+   not report an account's type (accounts discovered before the type was recorded read "not
+   reported" until discovery runs again).
+7. **Linked accounts** (every linked Google Ads account of the org): sync status from the
+   read-only `sync` block (first sync scheduled, syncing, up to date, partly completed, failed
+   with the failure streak, blocked, cancelled, not syncing), data coverage, last successful sync,
+   next sync, and the allowlisted reason's explanation.
+8. **View analytics** opens the Overview filtered to the account (`/?accounts=<id>`), keeping the
+   period and clearing a platform filter.
+
+Errors of these calls map to fixed text (`lib/connections/messages.ts`): return URL not allowed,
+Google Ads not configured, account type not confirmed, not found, connection not active, too many
+attempts, admins only, integration disabled, provider failure; sign-in and org errors as in D15.
+Unexpected errors never show their message.
+
+**Limitations (today):**
+
+- **Local development only.** The only identity is the local dev token (above). Hosted users
+  cannot sign in or connect real accounts until the Phase 15 parent-token handoff.
+- **Mock mode only.** Verified against the local backend (`PROVIDER_MODE` unset on loopback =
+  mock: instant consent, mock accounts and data). No real Google account has been connected from
+  the dashboard; real-account testing needs a separate live-mode validation deployment
+  ([providers/google-ads.md](providers/google-ads.md#dashboard-connection-flow)).
+- **Not safe for public access.** The OAuth callback ownership gap
+  ([security/credentials.md](security/credentials.md#known-gap-oauth-callback-ownership)) must be
+  fixed before any public or multi-tenant launch.
+- A Google account with no Google Ads access fails during the OAuth exchange
+  (`exchange_failed`), not during discovery; the notice can only suggest the cause.
+- Embedded (iframe) use needs a top-level or popup consent page; to be decided in Phase 15.
+
 ## Import guard (D23)
 
 The frontend consumes application data only through the generated public API with
@@ -217,16 +310,74 @@ until each account's first sync has finished. It uses only the mock social provi
 `PROVIDER_MODE=mock`; no production code path is special-cased. The mock user's consent code is
 mirrored in the script and kept equal to the mock by `tests/unit/dev-seed.test.ts`.
 
+`/connections` works the same way locally: with the admin dev token, "Connect Google Ads" goes
+through the mock consent (the authorization URL is the local callback) and returns to
+`http://localhost:3000/connections`. Run "Retry discovery" once for Google accounts discovered
+before the account type was recorded; until then they read "Account type not reported" and
+cannot be linked.
+
 If a dynamic route unexpectedly returns 404 in `next dev` after pulling new routes, delete
 `.next/dev` (a stale Turbopack dev cache) and restart.
 
 ## Tests
 
-- Unit (Vitest + jsdom): pure logic in `lib/analytics/*.test.ts`; components with mocked
-  `convex/react` and `next/navigation` (`tests/unit/dashboard-harness.tsx`).
+- Unit (Vitest + jsdom): pure logic in `lib/analytics/*.test.ts` and `lib/connections/*.test.ts`;
+  components with mocked `convex/react` and `next/navigation` (`tests/unit/dashboard-harness.tsx`:
+  query results, plus per-function `mockMutation(name)` / `mockAction(name)`; unregistered
+  mutations fall back to the org gate's `ensureMock`). The Connections journey is covered in
+  `components/dashboard/views/connections-view.test.tsx`; `tests/unit/connections-parity.test.ts`
+  pins the dashboard's copies of the callback error codes and error reasons to the server's.
 - Lint guards: `tests/lint/frontend-imports.test.ts`, `tests/lint/organic-dashboard-boundary.test.ts`.
 - Playwright: `dashboard.spec.ts`, `social.spec.ts` and `smoke.spec.ts` are CI-safe (shell,
-  navigation, gate, mobile menu, not-found, axe). `dashboard-data.spec.ts`, `social-data.spec.ts`
-  and `org-status.spec.ts` are local-only: `E2E_DASHBOARD_DATA=1 npx playwright test` after
-  `dev:auth setup` and `dev:seed`. The organic data is mock data; no real Instagram account has
-  been used.
+  navigation, gate, mobile menu, not-found, axe on every page including `/connections`).
+  `dashboard-data.spec.ts`, `social-data.spec.ts` and `org-status.spec.ts` are local-only:
+  `E2E_DASHBOARD_DATA=1 npx playwright test` after `dev:auth setup` and `dev:seed`. The organic
+  data is mock data; no real Instagram account has been used.
+
+### Google Ads Connections journey (local, opt-in)
+
+`tests/e2e/connections-journey.spec.mts` drives the real dashboard through the whole Google Ads
+flow against the **local** backend in **mock** provider mode: Connect → (mock consent =) OAuth
+callback → discovery → select one client account → link → a sync of that one account →
+"View analytics". It also replays the callback (refused, no second connection), checks that the
+result notice never replays, that viewers and editors are refused every connection change
+(`FORBIDDEN`), that another org sees and touches nothing (`NOT_FOUND`), axe on the populated page,
+and that disconnecting cleans up.
+
+```bash
+E2E_CONNECTIONS_JOURNEY=1 npm run test:e2e:connections
+```
+
+- **Own config** (`playwright.connections.config.mts`; the default config ignores this spec): one
+  worker, serial, port **3000** (the allowlisted dev return origin) with its **own** Next dev
+  server bound to `127.0.0.1` only (`reuseExistingServer: false`), traces, screenshots and videos
+  off. Stop your own dashboard dev server first.
+- **Fail-closed guards** (before any server starts): opt-in flag, never in CI, loopback backend
+  and callback URLs, the Convex CLI targets the local deployment with `PROVIDER_MODE` unset or
+  `mock`, the dashboard's `NEXT_PUBLIC_CONVEX_URL` is that same deployment (its public
+  `/instance_name` equals the CLI's deployment name), port 3000 free. In the browser every
+  non-loopback request and WebSocket is blocked (Google included).
+- **Identity:** the dashboard server keeps the developer's dev token; the spec swaps it, in memory,
+  for a token of the throwaway org `e2e-google-ads` on the Convex WebSocket, and clicks nothing
+  until the org badge shows "E2E Google Ads". Tokens are minted in memory and never printed or
+  written. `dev-org` is only read: its connections and ad accounts are compared before and after.
+- **Sync:** only `sync/admin:requestSync` for the one linked test account; never the planner.
+- **Cleanup:** setup disconnects any leftover connection of the throwaway org; teardown always
+  disconnects (connection revoked, credential deleted, discovered accounts deleted, account
+  unlinked; further syncs are refused and the planner parks the sync state).
+- **Residue (accepted, local only, throwaway orgs `e2e-google-ads` and `e2e-google-ads-other`):**
+  the orgs, one revoked connection (reused by later runs), one unlinked ad account and its sync
+  state, the synced mock structure and metrics (upserted, so they do not grow), and per run one
+  consumed OAuth state (swept hourly), one sync run with its tasks and about seven audit entries.
+  No purge function exists; only resetting the local deployment removes them.
+
+**Recovery after a hard kill** (Ctrl+C or a crash skips teardown, so the test account may stay
+linked and keep syncing mock data hourly):
+
+```bash
+npm run test:e2e:connections:cleanup
+```
+
+It runs the same guards and disconnects every non-revoked Google Ads connection of
+`e2e-google-ads` (idempotent; it prints only a count). The next journey run also does this first.
+If port 3000 stays busy, stop the leftover `next dev` process before running again.

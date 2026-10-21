@@ -5,7 +5,6 @@ import { createGoogleAdsProvider } from ".";
 import type { GoogleCredential } from "./credential";
 import {
   createFakeGoogleAds,
-  FAKE_DEVELOPER_TOKEN,
   FAKE_GOOGLE_CLIENT_ID,
   FAKE_GOOGLE_CLIENT_SECRET,
   FAKE_GOOGLE_CONFIG,
@@ -44,7 +43,7 @@ beforeAll(async () => {
   let binary = "";
   for (const byte of new Uint8Array(digest)) binary += String.fromCharCode(byte);
   const challenge = btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  await createGoogleOAuthSpec({ developerToken: FAKE_DEVELOPER_TOKEN }).exchangeCode({
+  await createGoogleOAuthSpec().exchangeCode({
     code: fake.issueCode("u1", challenge),
     redirectUri: "https://marketing-tests.convex.site/oauth/callback",
     codeVerifier: verifier,
@@ -59,7 +58,6 @@ runAdsProviderContract({
     createGoogleAdsProvider({
       clientId: FAKE_GOOGLE_CLIENT_ID,
       clientSecret: FAKE_GOOGLE_CLIENT_SECRET,
-      developerToken: FAKE_DEVELOPER_TOKEN,
     }),
   credential,
   range: FAKE_GOOGLE_RANGE,
@@ -67,7 +65,7 @@ runAdsProviderContract({
 
 runOAuthSpecContract({
   name: "google OAuth (fake API)",
-  create: () => createGoogleOAuthSpec({ developerToken: FAKE_DEVELOPER_TOKEN }),
+  create: () => createGoogleOAuthSpec(),
   config: FAKE_GOOGLE_CONFIG,
   validCode: (_url, challenge) => fake.issueCode("u1", challenge!),
   invalidCode: "test-gcode-invalid",

@@ -165,20 +165,23 @@ export async function sendChecked(
 
 export type AdsAuth = {
   accessToken: string;
-  developerToken: string;
   /** Manager customer id (10 digits) when the account is reached through a manager. */
   loginCustomerId?: string;
 };
 
 const CUSTOMER_ID = /^\d{10}$/;
 
+/**
+ * Google Ads API headers. No `developer-token`: developer tokens were sunset on 2026-09-09,
+ * API access belongs to the Google Cloud project that owns the OAuth client, and Google will
+ * reject the header in a future major version (docs/providers/google-ads.md "API access").
+ */
 function adsHeaders(auth: AdsAuth): Record<string, string> {
   if (auth.loginCustomerId !== undefined && !CUSTOMER_ID.test(auth.loginCustomerId)) {
     throw new ForbiddenEndpointError();
   }
   return {
     Authorization: `Bearer ${auth.accessToken}`,
-    "developer-token": auth.developerToken,
     Accept: "application/json",
     ...(auth.loginCustomerId !== undefined ? { "login-customer-id": auth.loginCustomerId } : {}),
   };

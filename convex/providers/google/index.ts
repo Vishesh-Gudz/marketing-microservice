@@ -23,7 +23,6 @@ import { createGoogleAdsClient, type GoogleAdsClient } from "./client";
 import {
   GOOGLE_CONFIG_INVALID,
   googleProviderId,
-  isValidDeveloperToken,
   isValidGoogleClientId,
   isValidGoogleClientSecret,
   MAX_DISCOVERY_CALLS_PER_PAGE,
@@ -70,8 +69,6 @@ export type GoogleProviderOptions = {
   /** GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET: the OAuth client that minted the refresh token. */
   clientId?: string;
   clientSecret?: string;
-  /** GOOGLE_ADS_DEVELOPER_TOKEN. */
-  developerToken?: string;
   timeoutMs?: number;
   /** Discovery (listAccounts) runs inside the OAuth callback: shorter timeout. */
   discoveryTimeoutMs?: number;
@@ -177,8 +174,7 @@ export function createGoogleAdsProvider(
     if (
       !version.valid ||
       !isValidGoogleClientId(options.clientId) ||
-      !isValidGoogleClientSecret(options.clientSecret) ||
-      !isValidDeveloperToken(options.developerToken)
+      !isValidGoogleClientSecret(options.clientSecret)
     ) {
       throw googleError(
         "unknown",
@@ -212,10 +208,7 @@ export function createGoogleAdsProvider(
     });
     if (!result.ok) throw googleProviderError(classifyGoogleFailure(result.failure), operation);
     const token = parseRaw(rawTokenResponse, result.body, operation, "token");
-    return {
-      client,
-      auth: { accessToken: token.access_token, developerToken: options.developerToken },
-    };
+    return { client, auth: { accessToken: token.access_token } };
   }
 
   function normalizeOne<K extends ProviderRecordKind>(

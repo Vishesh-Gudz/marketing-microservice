@@ -1,5 +1,5 @@
 import type { Doc, TableNames } from "../_generated/dataModel";
-import type { AdPlatform, EntityLevel } from "../domain/types";
+import type { AdPlatform, EntityLevel, ManagerStatus, TestAccountStatus } from "../domain/types";
 import type { DateKey } from "../lib/dates";
 import type { AdsProviderCapabilities } from "./capabilities";
 
@@ -88,8 +88,17 @@ type Canonical<T extends TableNames, Drop extends string = never> = Omit<
 
 type MetricRefs = "adAccountId" | "entityId" | "campaignId" | "adGroupId" | "adId" | "syncedAt";
 
-/** Connection linkage (Phase 4) is internal state, never part of a provider record. */
-export type ProviderAdAccount = Canonical<"adAccounts", "connectionId" | "linkedAt">;
+/**
+ * Connection linkage (Phase 4) is internal state, never part of a provider record.
+ * `managerStatus` / `testAccountStatus` are discovery facts kept with the discovered assets
+ * (never written to adAccounts): absent when a provider always knows the answer (derived
+ * from `isManager`), "unknown" when the platform did not report it. "unknown" never means
+ * "client" / "not_test".
+ */
+export type ProviderAdAccount = Canonical<"adAccounts", "connectionId" | "linkedAt"> & {
+  managerStatus?: ManagerStatus;
+  testAccountStatus?: TestAccountStatus;
+};
 
 export type ProviderCampaign = Canonical<"campaigns", "adAccountId"> & {
   accountExternalId: string;

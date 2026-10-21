@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   adsError,
   createFakeGoogleAds,
-  FAKE_DEVELOPER_TOKEN,
   FAKE_GOOGLE_CLIENT_ID,
   FAKE_GOOGLE_CONFIG,
   installFakeGoogleAds,
@@ -27,8 +26,7 @@ async function challengeOf(verifier: string) {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-const spec = (developerToken: string = FAKE_DEVELOPER_TOKEN) =>
-  createGoogleOAuthSpec({ developerToken });
+const spec = () => createGoogleOAuthSpec();
 
 async function exchange(fake: FakeGoogleAds, user = "u1", options: { verifier?: string } = {}) {
   const code = fake.issueCode(user, await challengeOf(VERIFIER), REDIRECT);
@@ -42,7 +40,7 @@ async function exchange(fake: FakeGoogleAds, user = "u1", options: { verifier?: 
 }
 
 describe("authorization URL", () => {
-  it("uses PKCE S256, offline access with consent, and ONLY the adwords + openid scopes", async () => {
+  it("uses PKCE S256, offline access with consent, and ONLY the adwords + openid scopes; needs no developer token", async () => {
     const challenge = await challengeOf(VERIFIER);
     const url = new URL(
       spec().buildAuthorizationUrl({
@@ -92,7 +90,7 @@ describe("authorization URL", () => {
       ).toThrow(expect.objectContaining({ providerCode: "config:google_config_invalid" }));
     }
     expect(() =>
-      spec("bad token!").buildAuthorizationUrl({
+      createGoogleOAuthSpec({ version: "bad" }).buildAuthorizationUrl({
         state: "s",
         redirectUri: REDIRECT,
         codeChallenge: "c",
@@ -134,7 +132,9 @@ describe("exchangeCode", () => {
     expect(fake.log[0]!.formFields.sort()).toEqual(
       ["client_id", "client_secret", "code", "code_verifier", "grant_type", "redirect_uri"].sort(),
     );
-    expect(fake.log[2]).toMatchObject({ developerToken: true, hasBearer: true });
+    expect(fake.log[2]).toMatchObject({ hasBearer: true, developerTokenHeader: false });
+    // Developer tokens were sunset on 2026-09-09: none is ever sent.
+    expect(fake.log.every((e) => !e.developerTokenHeader)).toBe(true);
   });
 
   it.each([
@@ -201,7 +201,7 @@ describe("exchangeCode", () => {
       "identity:http_503",
     ],
     [
-      "a developer token that is not approved",
+      "a Google Cloud project without production access",
       (fake: FakeGoogleAds) => {
         fake.inject({
           match: (e) => e.kind === "accessible",
@@ -209,13 +209,13 @@ describe("exchangeCode", () => {
             403,
             "PERMISSION_DENIED",
             "authorizationError",
-            "DEVELOPER_TOKEN_NOT_APPROVED",
+            "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION",
           ),
         });
         return exchange(fake);
       },
       "unknown",
-      "api_access:DEVELOPER_TOKEN_NOT_APPROVED",
+      "api_access:CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION",
     ],
     [
       "a network failure",
@@ -237,7 +237,7 @@ describe("exchangeCode", () => {
     expect(caught).toMatchObject({ kind, providerCode });
     const text = `${(caught as Error).message} ${JSON.stringify(caught)}`;
     expect(text).not.toMatch(
-      /test-(access|refresh|gcode)|test-google-client-secret|test-developer-token|Fake|fakeRequestId|https?:/,
+      /test-(access|refresh|gcode)|test-google-client-secret|Fake|fakeRequestId|https?:/,
     );
   });
 
@@ -260,7 +260,7 @@ describe("exchangeCode", () => {
       }),
     ).rejects.toMatchObject({ kind: "unknown", providerCode: "config:google_config_invalid" });
     await expect(
-      createGoogleOAuthSpec({ developerToken: "x" }).exchangeCode({
+      createGoogleOAuthSpec({ version: "bad" }).exchangeCode({
         code: "x",
         redirectUri: REDIRECT,
         codeVerifier: VERIFIER,
@@ -273,7 +273,7 @@ describe("exchangeCode", () => {
 
   it("uses the version override for the API-access call", async () => {
     const fake = installFakeGoogleAds(createFakeGoogleAds());
-    const s = createGoogleOAuthSpec({ developerToken: FAKE_DEVELOPER_TOKEN, version: "v26" });
+    const s = createGoogleOAuthSpec({ version: "v26" });
     expect(s.providerId).toBe("google-ads-api/v26");
     await s.exchangeCode({
       code: fake.issueCode("u1", await challengeOf(VERIFIER), REDIRECT),

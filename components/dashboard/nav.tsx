@@ -6,6 +6,7 @@ import {
   Layers,
   LayoutDashboard,
   Megaphone,
+  Plug,
   Target,
   Wallet,
 } from "lucide-react";
@@ -22,6 +23,8 @@ export const NAV_ITEMS = [
   { href: "/accounts", label: "Accounts", icon: Wallet },
   // Phase 10: organic Instagram, separate from the paid pages above.
   { href: "/social", label: "Organic", icon: Camera },
+  // Google Ads connection management (connect, choose the account, follow its sync).
+  { href: "/connections", label: "Connections", icon: Plug },
 ] as const;
 
 export function isActive(pathname: string, href: string): boolean {

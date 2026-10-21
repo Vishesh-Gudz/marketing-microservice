@@ -7,12 +7,7 @@ import {
   parseErrorBody,
   sendChecked,
 } from "./client";
-import {
-  adsError,
-  createFakeGoogleAds,
-  FAKE_DEVELOPER_TOKEN,
-  installFakeGoogleAds,
-} from "./fakeGoogleAds.fixtures";
+import { adsError, createFakeGoogleAds, installFakeGoogleAds } from "./fakeGoogleAds.fixtures";
 
 // Phase 9 G-D8 / G-D16: the read-only transport. Every request is checked against the
 // endpoint allowlist BEFORE fetch; tokens travel in headers or form bodies only.
@@ -22,7 +17,7 @@ afterEach(() => {
 });
 
 const client = () => createGoogleAdsClient({ version: "v25", timeoutMs: 1_000 });
-const auth = { accessToken: "test-access-x", developerToken: FAKE_DEVELOPER_TOKEN };
+const auth = { accessToken: "test-access-x" };
 
 describe("read-only endpoint allowlist", () => {
   it.each([
@@ -72,7 +67,7 @@ describe("read-only endpoint allowlist", () => {
 });
 
 describe("transport", () => {
-  it("sends the access token and developer token as headers only; login-customer-id when routed", async () => {
+  it("sends the access token as a header only; login-customer-id when routed; never a developer token", async () => {
     const fake = installFakeGoogleAds(createFakeGoogleAds());
     await client().search(
       { ...auth, loginCustomerId: "1110000001" },
@@ -85,12 +80,39 @@ describe("transport", () => {
       method: "POST",
       kind: "search",
       hasBearer: true,
+      developerTokenHeader: false,
       loginCustomerId: "1110000001",
       customerId: "2220000001",
       secretInUrl: false,
     });
-    expect(accessible).toMatchObject({ method: "GET", kind: "accessible", secretInUrl: false });
+    expect(accessible).toMatchObject({
+      method: "GET",
+      kind: "accessible",
+      developerTokenHeader: false,
+      secretInUrl: false,
+    });
     expect(accessible).not.toHaveProperty("loginCustomerId");
+  });
+
+  it("sends exactly the documented Google Ads headers (developer tokens were sunset 2026-09-09)", async () => {
+    const fetch = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+    await client().search(
+      { ...auth, loginCustomerId: "1110000001" },
+      "2220000001",
+      "SELECT customer.id FROM customer",
+    );
+    await client().listAccessibleCustomers(auth);
+    const sent = fetch.mock.calls.map((call) => {
+      const init = (call as unknown as [string, RequestInit])[1];
+      const names: string[] = [];
+      new Headers(init.headers).forEach((_value, name) => names.push(name));
+      return names.sort();
+    });
+    expect(sent).toEqual([
+      ["accept", "authorization", "content-type", "login-customer-id"],
+      ["accept", "authorization"],
+    ]);
   });
 
   it("posts OAuth secrets in a form body, never in the URL", async () => {

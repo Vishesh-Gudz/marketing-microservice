@@ -6,7 +6,6 @@ import { GOOGLE_CAPABILITIES } from "../providers/google/capabilities";
 import {
   adsError,
   createFakeGoogleAds,
-  FAKE_DEVELOPER_TOKEN,
   FAKE_GOOGLE_CLIENT_SECRET,
   FAKE_GOOGLE_RANGE,
   fakeGoogleDataset,
@@ -278,6 +277,8 @@ describe("Google Ads end to end (fake API → provider → sync → canonical ta
       true,
     );
     expect(fake.log.every((e) => !e.secretInUrl && e.kind !== "other")).toBe(true);
+    // A complete sync without any developer token (sunset 2026-09-09): none is ever sent.
+    expect(fake.log.every((e) => !e.developerTokenHeader)).toBe(true);
   });
 
   it("serves the synced data through the v1 analytics the dashboard uses", async () => {
@@ -695,7 +696,6 @@ describe("tenant isolation and secrets", () => {
       "test-access-",
       "test-gcode-",
       FAKE_GOOGLE_CLIENT_SECRET,
-      FAKE_DEVELOPER_TOKEN,
       "googleads.googleapis.com",
       "oauth2.googleapis.com",
       "fakeRequestId",

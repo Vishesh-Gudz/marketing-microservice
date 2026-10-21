@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -108,6 +109,15 @@ function AccountsTable({ args }: { args: BreakdownArgs }) {
                       ) : conn?.status === "needs_reauth" ? (
                         <Badge variant="destructive">Reconnect required</Badge>
                       ) : null}
+                      {account.platform === "google_ads" &&
+                        (!account.linked || conn?.status === "needs_reauth") && (
+                          <Link
+                            href="/connections"
+                            className="text-xs font-medium underline underline-offset-4"
+                          >
+                            Manage in Connections
+                          </Link>
+                        )}
                     </div>
                   </TableCell>
                   <TableCell>

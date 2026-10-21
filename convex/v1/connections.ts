@@ -147,7 +147,7 @@ export const linkAdAccounts = orgAdminMutation({
   args: { connectionId: v.string(), externalIds: v.array(v.string()) },
   returns: v.array(adAccountDto),
   handler: async (ctx, { connectionId, externalIds }) =>
-    (await linkAccounts(ctx, connectionId, externalIds)).map(toAdAccountDto),
+    (await linkAccounts(ctx, connectionId, externalIds)).map((account) => toAdAccountDto(account)),
 });
 
 /** Admin only: unlink an ad account (row and metrics are kept). */

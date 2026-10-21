@@ -8,6 +8,8 @@ const baseURL = `http://127.0.0.1:${PORT}`;
 // data flows (dashboard-data.spec.ts) are local-only (see docs/dashboard.md).
 export default defineConfig({
   testDir: "./tests/e2e",
+  // The Google Ads Connections journey has its own config (playwright.connections.config.mts).
+  testIgnore: ["**/connections-journey.spec.mts"],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
