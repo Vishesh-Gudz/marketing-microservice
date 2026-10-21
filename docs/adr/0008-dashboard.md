@@ -81,13 +81,16 @@ a second Google integration.
 **Decision.** D17 is revised **for Google Ads only**:
 
 - The dashboard gets a `/connections` page ([dashboard.md](../dashboard.md#connections-google-ads)).
-  Admins can connect or reconnect Google Ads (`v1/connections:beginConnect`), see the discovered
-  customer accounts (`listDiscoveredAssets`), link exactly one confirmed client account
-  (`linkAdAccounts`) and retry discovery (`refreshAssets`). Every role sees the connection status,
+  Admins can connect, reconnect or disconnect Google Ads (`v1/connections:beginConnect`;
+  `disconnect` after an explicit confirmation), see the discovered customer accounts
+  (`listDiscoveredAssets`), link exactly one confirmed client account (`linkAdAccounts`) and
+  retry discovery (`refreshAssets`). Every role sees the connection status,
   the linked accounts' read-only sync status and a link to their analytics.
 - **Meta Ads and Instagram connection management stay out of the dashboard** (D17 unchanged for
   them): their reconnect banner stays read-only and the parent app drives their connections.
-- No disconnect or unlink UI.
+- No per-account unlink UI. Disconnecting the whole Google Ads connection was added on
+  2026-10-21: Reconnect refuses a different Google account (`identity_mismatch`), so without it
+  an org could never switch Google accounts from the dashboard.
 - D1 and D23 still hold: only public v1 functions through `convex/react` (the dashboard's first
   `useAction` is `beginConnect`), no route handlers, no new import exceptions. The OAuth callback
   stays the Convex HTTP route; the dashboard only reads its fixed result parameters.

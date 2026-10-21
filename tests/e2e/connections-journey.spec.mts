@@ -321,11 +321,28 @@ test("another org can neither see nor touch the test connection, account or disc
   expect(await devOrgSnapshot(urls.backendUrl)).toEqual(devOrgBefore);
 });
 
-test("disconnecting cleans up: revoked, unlinked, discovery cleared, sync refused", async () => {
-  const revoked: Connection = await admin.mutation(api.v1.connections.disconnect, {
-    connectionId,
-  });
-  expect(revoked.status).toBe("revoked");
+test("disconnecting from the page cleans up, and a fresh Connect discovers again", async () => {
+  await page.goto("/connections");
+  const badge = page.getByTestId("org-badge");
+  await expect(badge).toContainText(E2E_ORG_NAME, { timeout: 30_000 });
+  await expect(badge).toContainText("admin");
+
+  // Cancel first: nothing changes.
+  const disconnectButton = page.getByRole("button", { name: "Disconnect Google Ads" });
+  const confirmation = page.getByRole("group", { name: "Disconnect Google Ads?" });
+  await disconnectButton.click();
+  await expect(confirmation.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await confirmation.getByRole("button", { name: "Cancel" }).click();
+  await expect(confirmation).toHaveCount(0);
+  expect((await googleConnections(admin)).map((c) => c.id)).toEqual([connectionId]);
+
+  // Confirm: the server revokes the connection.
+  await disconnectButton.click();
+  await confirmation.getByRole("button", { name: "Disconnect", exact: true }).click();
+  await expect(page.getByLabel("Google Ads disconnected")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("Google Ads is not connected.")).toBeVisible();
+  await expect(page.getByText("No Google Ads account linked yet")).toBeVisible();
+
   const stored: Connection = await admin.query(api.v1.connections.get, { connectionId });
   expect(stored.status).toBe("revoked");
   const unlinked = await account(admin, adAccountId);
@@ -338,8 +355,13 @@ test("disconnecting cleans up: revoked, unlinked, discovery cleared, sync refuse
   });
   expect(await googleConnections(admin)).toEqual([]);
 
-  await page.goto("/connections");
-  await expect(page.getByTestId("org-badge")).toContainText(E2E_ORG_NAME, { timeout: 30_000 });
-  await expect(page.getByText("Google Ads is not connected.")).toBeVisible();
-  await expect(page.getByText("No Google Ads account linked yet")).toBeVisible();
+  // A fresh Connect (no reconnect id) goes through the callback and discovers again.
+  await page.getByRole("button", { name: "Connect Google Ads", exact: true }).click();
+  await expect(page.getByLabel("Google Ads connected")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("radio", { name: /Acme MCC/ })).toBeVisible({ timeout: 30_000 });
+  // Same mock identity: its revoked row is reactivated, never duplicated.
+  expect((await googleConnections(admin)).map((c) => [c.id, c.status])).toEqual([
+    [connectionId, "active"],
+  ]);
+  // afterAll disconnects it again.
 });

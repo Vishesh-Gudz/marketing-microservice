@@ -59,7 +59,8 @@ export function connectionStatusNotice(connection: {
       return {
         tone: "warning",
         title: "Reconnect required",
-        message: "Google access expired or was revoked. Reconnect with the same Google account.",
+        message:
+          "Google access expired or was revoked. Reconnect with the same Google account, or disconnect Google Ads to use a different one.",
       };
     case "active":
       if (connection.missingScopes.length > 0) {
@@ -264,4 +265,39 @@ export function connectionActionNotice(error: unknown): Notice {
     title: "Something went wrong",
     message: "The request failed. Try again.",
   };
+}
+
+/** Shown after an admin disconnected Google Ads. */
+export const DISCONNECTED_NOTICE: Notice = {
+  tone: "success",
+  title: "Google Ads disconnected",
+  message:
+    "Linked accounts stopped syncing; their data and history are kept. Connect Google Ads to sign in with any Google account.",
+};
+
+/** Errors of disconnect: fixed text, never the server message. */
+export function disconnectActionNotice(error: unknown): Notice {
+  if (!isMarketingError(error)) {
+    return {
+      tone: "error",
+      title: "Something went wrong",
+      message: "Google Ads was not disconnected. Try again.",
+    };
+  }
+  switch (error.data.code) {
+    case "FORBIDDEN":
+      return {
+        tone: "error",
+        title: "Admins only",
+        message: "Only organization admins can disconnect Google Ads.",
+      };
+    case "NOT_FOUND":
+      return {
+        tone: "error",
+        title: "Connection not found",
+        message: "This Google Ads connection no longer exists. Reload the page.",
+      };
+    default:
+      return connectionActionNotice(error);
+  }
 }

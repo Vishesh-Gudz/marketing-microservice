@@ -136,6 +136,12 @@ describe("connectResultNotice", () => {
     expect(seen.size).toBe(CALLBACK_ERRORS.length + 1);
   });
 
+  it("identity_mismatch explains how to switch to another Google account", () => {
+    const notice = connectResultNotice({ kind: "error", error: "identity_mismatch" })!;
+    expect(notice.title).toBe("A different Google account was used");
+    expect(notice.message).toMatch(/disconnect Google Ads first, then connect again/);
+  });
+
   it("access_denied is a warning (the user's choice), not a failure", () => {
     expect(connectResultNotice({ kind: "error", error: "access_denied" })!.tone).toBe("warning");
   });

@@ -115,7 +115,9 @@ active | needs_reauth ─disconnect─► revoked   (credential deleted; ad acco
 
 - **Reconnect** with the same identity updates the same connection: new credential,
   `credentialVersion + 1`. An explicit reconnect (`reconnectConnectionId`) by a **different**
-  identity fails with `identity_mismatch`.
+  identity fails with `identity_mismatch`. To switch accounts, disconnect first, then connect
+  without `reconnectConnectionId` (in the dashboard: **Disconnect Google Ads**, then **Connect
+  Google Ads**).
 - **Relinking** an ad account to another connection of the same org is allowed and audited
   (`adAccount.relinked`).
 - **Linking starts syncing (Phase 5).** The link writes the account through the canonical write

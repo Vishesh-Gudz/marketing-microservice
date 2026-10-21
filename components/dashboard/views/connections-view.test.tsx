@@ -255,6 +255,136 @@ describe("Connect / Reconnect", () => {
   );
 });
 
+describe("Disconnect", () => {
+  const DISCONNECT = "v1/connections:disconnect";
+  const META = connection({ id: "m1", provider: "meta" });
+  const confirmation = () => screen.queryByRole("group", { name: "Disconnect Google Ads?" });
+  const openConfirmation = () =>
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect Google Ads" }));
+
+  it("keeps Reconnect available next to Disconnect for a valid connection", () => {
+    setup();
+    renderWithOrg(<ConnectionsView />);
+    expect(screen.getByRole("button", { name: "Reconnect Google Ads" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Disconnect Google Ads" })).toBeEnabled();
+  });
+
+  it("asks for confirmation first and focuses Cancel; nothing is disconnected yet", () => {
+    setup({ connections: [connection({ status: "needs_reauth" })] });
+    renderWithOrg(<ConnectionsView />);
+    openConfirmation();
+    const group = confirmation()!;
+    expect(group).toHaveTextContent("Their data and history are kept");
+    expect(group).toHaveTextContent("sign in with any Google account");
+    expect(within(group).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    expect(mockMutation(DISCONNECT)).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Reconnect Google Ads" })).toBeEnabled();
+  });
+
+  it.each([
+    ["Cancel", () => fireEvent.click(screen.getByRole("button", { name: "Cancel" }))],
+    ["Escape", () => fireEvent.keyDown(confirmation()!, { key: "Escape" })],
+  ])("%s closes the confirmation without disconnecting", (_label, close) => {
+    setup();
+    renderWithOrg(<ConnectionsView />);
+    openConfirmation();
+    close();
+    expect(confirmation()).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Disconnect Google Ads" })).toHaveFocus();
+    expect(mockMutation(DISCONNECT)).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Connected")).toBeInTheDocument();
+  });
+
+  it("disconnects only the shown Google connection, then offers a fresh Connect", async () => {
+    setup({ connections: [META, connection({ status: "needs_reauth" })] });
+    mockMutation(DISCONNECT).mockImplementation(async () => {
+      // The live query drops the revoked connection; Meta is untouched.
+      queryResults.set("v1/connections:list", [META]);
+      return connection({ status: "revoked" });
+    });
+    mockAction(BEGIN).mockResolvedValue({ authorizeUrl: AUTHORIZE_URL, expiresAt: "x" });
+    renderWithOrg(<ConnectionsView />);
+
+    openConfirmation();
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+    expect(await screen.findByLabelText("Google Ads disconnected")).toBeInTheDocument();
+    expect(mockMutation(DISCONNECT)).toHaveBeenCalledExactlyOnceWith({ connectionId: C1 });
+    expect(screen.getByText("Google Ads is not connected.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Disconnect Google Ads" })).not.toBeInTheDocument();
+
+    // A fresh connection: no reconnect id, so any Google account can sign in.
+    fireEvent.click(screen.getByRole("button", { name: "Connect Google Ads" }));
+    await waitFor(() => expect(navigateToAuthorization).toHaveBeenCalledOnce());
+    expect(mockAction(BEGIN)).toHaveBeenCalledExactlyOnceWith({
+      provider: "google_ads",
+      returnUrl: `${window.location.origin}/connections`,
+    });
+  });
+
+  it("disconnects the connection chosen among several Google connections", async () => {
+    setup({
+      connections: [
+        connection({ id: C1, connectedAt: "2026-09-01T10:00:00.000Z" }),
+        connection({ id: C2, connectedAt: "2026-09-02T10:00:00.000Z" }),
+      ],
+    });
+    mockMutation(DISCONNECT).mockResolvedValue(connection({ id: C1, status: "revoked" }));
+    renderWithOrg(<ConnectionsView />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Google connection" }), {
+      target: { value: C1 },
+    });
+    openConfirmation();
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+    await waitFor(() =>
+      expect(mockMutation(DISCONNECT)).toHaveBeenCalledExactlyOnceWith({ connectionId: C1 }),
+    );
+  });
+
+  it.each([
+    [apiError("FORBIDDEN", "role check failed"), "Admins only", "role check failed"],
+    [apiError("NOT_FOUND", "no such connection"), "Connection not found", "no such connection"],
+    [new Error("socket closed ya29.token"), "Something went wrong", "ya29"],
+  ])(
+    "shows a fixed notice when disconnect fails (%#) and keeps the connection",
+    async (error, title, raw) => {
+      setup();
+      mockMutation(DISCONNECT).mockRejectedValue(error);
+      renderWithOrg(<ConnectionsView />);
+      openConfirmation();
+      fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+      expect(await screen.findByLabelText(title)).toBeInTheDocument();
+      expect(confirmation()).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Disconnect Google Ads" })).toBeEnabled();
+      expect(screen.getByLabelText("Connected")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Google Ads disconnected")).not.toBeInTheDocument();
+      expect(document.body.textContent).not.toContain(raw);
+    },
+  );
+
+  it("keeps the confirmation buttons disabled while disconnecting", async () => {
+    setup();
+    mockMutation(DISCONNECT).mockReturnValue(new Promise(() => {}));
+    renderWithOrg(<ConnectionsView />);
+    openConfirmation();
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+    expect(await screen.findByRole("button", { name: "Disconnecting…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(mockMutation(DISCONNECT)).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["viewer", VIEWER],
+    ["editor", { ...ORG, role: "editor" } as Org],
+  ])("is not offered to a %s", (_role, org) => {
+    setup({ connections: [connection({ status: "needs_reauth" })] });
+    renderWithOrg(<ConnectionsView />, org);
+    expect(screen.getByLabelText("Reconnect required")).toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getByText(/Only organization admins can connect Google Ads/)).toBeInTheDocument();
+    expect(mockMutation(DISCONNECT)).not.toHaveBeenCalled();
+  });
+});
+
 describe("OAuth callback result", () => {
   it("confirms a connection, shows that connection, and removes the parameters (filters stay)", () => {
     setUrl("/connections", `preset=last_7_days&status=connected&connection=${C1}`);

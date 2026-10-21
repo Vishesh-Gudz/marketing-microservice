@@ -5,17 +5,23 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
 import { useOrg } from "@/lib/analytics/org-context";
 import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
-import { connectionStatusNotice, discoveryErrorNotice } from "@/lib/connections/messages";
+import {
+  connectionStatusNotice,
+  DISCONNECTED_NOTICE,
+  discoveryErrorNotice,
+} from "@/lib/connections/messages";
 import { googleAdsConnections, pickConnection } from "@/lib/connections/navigation";
+import type { Notice } from "@/lib/connections/types";
 import { formatInstant } from "../freshness-note";
 import { ConnectButton } from "./connect-button";
 import { ConnectionNotice } from "./connection-notice";
+import { DisconnectButton } from "./disconnect-button";
 import { DiscoveredAccounts } from "./discovered-accounts";
 import { LinkedAccounts } from "./linked-accounts";
 
 /**
- * The Google Ads connection: status (every role), Connect / Reconnect and account choice
- * (admins; the server enforces the role), and the linked accounts' sync status (every role).
+ * The Google Ads connection: status (every role), Connect / Reconnect / Disconnect and account
+ * choice (admins; the server enforces the role), and the linked accounts' sync status (every role).
  */
 export function GoogleAdsConnection({
   preferredConnectionId,
@@ -27,6 +33,7 @@ export function GoogleAdsConnection({
   const isAdmin = org.role === "admin";
   const { data: connections } = useAnalyticsQuery(api.v1.connections.list, {});
   const [chosenId, setChosenId] = useState<string | undefined>(undefined);
+  const [disconnected, setDisconnected] = useState<Notice | null>(null);
 
   if (connections === undefined) {
     return <Skeleton className="h-24 w-full" aria-label="Loading the Google Ads connection" />;
@@ -39,6 +46,7 @@ export function GoogleAdsConnection({
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3 rounded-lg border p-4">
+        {disconnected && <ConnectionNotice notice={disconnected} />}
         {connection === undefined ? (
           <p className="text-sm">Google Ads is not connected.</p>
         ) : (
@@ -69,7 +77,19 @@ export function GoogleAdsConnection({
           </>
         )}
         {isAdmin ? (
-          <ConnectButton connection={connection} />
+          <div className="flex flex-wrap items-start gap-2">
+            <ConnectButton connection={connection} />
+            {connection !== undefined && (
+              <DisconnectButton
+                key={connection.id}
+                connection={connection}
+                onDisconnected={() => {
+                  setChosenId(undefined);
+                  setDisconnected(DISCONNECTED_NOTICE);
+                }}
+              />
+            )}
+          </div>
         ) : (
           <p className="text-sm text-muted-foreground">
             Only organization admins can connect Google Ads or choose the account to sync.

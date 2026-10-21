@@ -42,8 +42,8 @@ app/(dashboard)/layout.tsx        Suspense + AppShell (OrgGate, nav, header)
 components/dashboard/             shell, filters, KPI cards, charts, tables, notices, views/
 components/dashboard/organic/     organic-only KPI grid, series chart, posts table, account
                                   picker, coverage notes, Instagram link
-components/dashboard/connections/ Google Ads connection status, Connect/Reconnect, discovered
-                                  accounts + link, linked accounts' sync status
+components/dashboard/connections/ Google Ads connection status, Connect/Reconnect/Disconnect,
+                                  discovered accounts + link, linked accounts' sync status
 lib/connections/                  pure, React-free connection helpers: callback result, link
                                   rules, labels, messages, customer ids, return URL / navigation
 lib/analytics/                    pure logic: types, format, filters, deltas, states, values,
@@ -55,23 +55,23 @@ lib/analytics/                    pure logic: types, format, filters, deltas, st
 
 ## Routes
 
-| Route                                           | Content                                                                                  | Public functions                                                                                                 |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `/` Overview                                    | 10 KPI cards with comparison, freshness, trend chart, spend by platform, top 5 campaigns | `overview`, `timeSeries`, `breakdown(platform)`, `performance(campaign, 5)`, `connections:list`                  |
-| `/campaigns`                                    | Campaign table: server sort, cursor pages of 25/50/100, spend/conversion deltas          | `performance(campaign)`                                                                                          |
-| `/campaigns/[campaignId]`                       | Entity header + KPIs, chart, tabs: ad groups, ads, conversions                           | `overview(entity)` (D5), `timeSeries(entity)`, `performance(ad_group\|ad, parent)`, `actions(entity)`            |
-| `/campaigns/[campaignId]/ad-groups/[adGroupId]` | Same for one ad group; tabs: ads, conversions                                            | as above; the ad group's `campaignId` must match the URL                                                         |
-| `/breakdowns`                                   | Tabs by platform, account, placement (with level); spend-share bars + table              | `breakdown`, `adAccounts:list`                                                                                   |
-| `/conversions`                                  | Action groups by action type, one row per attribution window; level account/campaign     | `actions`                                                                                                        |
-| `/accounts`                                     | Accounts with KPIs, currency, time zone, link/connection health, coverage, last sync     | `breakdown(account)`, `adAccounts:list`, `connections:list`                                                      |
-| `/social` (nav "Organic")                       | One Instagram account: 6 headline + 7 detail KPIs, UTC series, posts (lifetime totals)   | `socialAccounts:list`/`get`, `organicAnalytics:overview`/`accountSeries`, `socialPosts:list`, `connections:list` |
-| `/social/posts/[postId]`                        | One post: caption, latest lifetime totals, lifetime totals at each capture               | `socialPosts:get`                                                                                                |
-| `/connections`                                  | Google Ads: connection status, Connect/Reconnect, discovered accounts, link, sync status | `connections:list`/`listDiscoveredAssets`/`beginConnect`/`linkAdAccounts`/`refreshAssets`, `adAccounts:list`     |
+| Route                                           | Content                                                                                  | Public functions                                                                                                          |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `/` Overview                                    | 10 KPI cards with comparison, freshness, trend chart, spend by platform, top 5 campaigns | `overview`, `timeSeries`, `breakdown(platform)`, `performance(campaign, 5)`, `connections:list`                           |
+| `/campaigns`                                    | Campaign table: server sort, cursor pages of 25/50/100, spend/conversion deltas          | `performance(campaign)`                                                                                                   |
+| `/campaigns/[campaignId]`                       | Entity header + KPIs, chart, tabs: ad groups, ads, conversions                           | `overview(entity)` (D5), `timeSeries(entity)`, `performance(ad_group\|ad, parent)`, `actions(entity)`                     |
+| `/campaigns/[campaignId]/ad-groups/[adGroupId]` | Same for one ad group; tabs: ads, conversions                                            | as above; the ad group's `campaignId` must match the URL                                                                  |
+| `/breakdowns`                                   | Tabs by platform, account, placement (with level); spend-share bars + table              | `breakdown`, `adAccounts:list`                                                                                            |
+| `/conversions`                                  | Action groups by action type, one row per attribution window; level account/campaign     | `actions`                                                                                                                 |
+| `/accounts`                                     | Accounts with KPIs, currency, time zone, link/connection health, coverage, last sync     | `breakdown(account)`, `adAccounts:list`, `connections:list`                                                               |
+| `/social` (nav "Organic")                       | One Instagram account: 6 headline + 7 detail KPIs, UTC series, posts (lifetime totals)   | `socialAccounts:list`/`get`, `organicAnalytics:overview`/`accountSeries`, `socialPosts:list`, `connections:list`          |
+| `/social/posts/[postId]`                        | One post: caption, latest lifetime totals, lifetime totals at each capture               | `socialPosts:get`                                                                                                         |
+| `/connections`                                  | Google Ads: status, Connect/Reconnect/Disconnect, discovered accounts, link, sync status | `connections:list`/`listDiscoveredAssets`/`beginConnect`/`linkAdAccounts`/`refreshAssets`/`disconnect`, `adAccounts:list` |
 
 There is no org-wide ads page: the API requires a campaign or ad-group parent for ads (read budget).
 Connection management is on `/connections` for **Google Ads only** (ADR 0008, D17 amendment).
-Meta Ads and Instagram connections stay out of the dashboard, and nothing can be disconnected or
-unlinked here. The "reconnect required" banner (Overview, Accounts, Organic) links to
+Meta Ads and Instagram connections stay out of the dashboard. An admin can disconnect the Google
+Ads connection (after a confirmation); single accounts cannot be unlinked here. The "reconnect required" banner (Overview, Accounts, Organic) links to
 `/connections` only for a Google Ads connection; for Meta and Instagram it stays read-only. On
 `/accounts`, unlinked or reconnect-required Google Ads accounts link to "Manage in Connections".
 
@@ -191,7 +191,7 @@ who may act and which accounts may be linked. The UI mirrors those rules
 | Part                                           | Admin | Editor, viewer                                                   |
 | ---------------------------------------------- | ----- | ---------------------------------------------------------------- |
 | Connection status                              | yes   | yes                                                              |
-| Connect / Reconnect                            | yes   | no ("Only organization admins can …")                            |
+| Connect / Reconnect / Disconnect               | yes   | no ("Only organization admins can …")                            |
 | Discovered accounts, Link, Retry discovery     | yes   | no (`listDiscoveredAssets` is admin-only and is not even called) |
 | Linked accounts, sync status, "View analytics" | yes   | yes                                                              |
 
@@ -208,38 +208,47 @@ who may act and which accounts may be linked. The UI mirrors those rules
    returned authorization URL is followed in the same tab (http(s) only) and is **never rendered,
    logged or stored**: it carries the single-use state and the PKCE challenge. In mock mode it is
    the callback URL itself (instant consent).
-3. **Callback result.** Parsed once (`lib/connections/connect-result.ts`): connected (with the
+3. **Disconnect.** Admins see **Disconnect Google Ads** next to Reconnect; it first asks for
+   confirmation (Cancel has focus; Escape cancels). Confirming calls `disconnect` for the shown
+   connection: the server revokes it, unlinks its accounts (rows and synced data are kept), drops
+   its discovered accounts and deletes the credential (no call to Google, G-D6). Meta Ads and
+   Instagram connections are not touched. The page then shows "Google Ads disconnected" and
+   **Connect Google Ads** starts a fresh connection, which may use any Google account. This is the
+   way out of `identity_mismatch`: Reconnect only accepts the Google account that created the
+   connection.
+4. **Callback result.** Parsed once (`lib/connections/connect-result.ts`): connected (with the
    `discovery_failed` warning), a known error code, an unknown code, or malformed (repeated
    parameters, an invalid connection id). Each has fixed text; parameter values are never shown.
    The result parameters (and any stray `code` / `state`) are then removed with
    `router.replace`, keeping the global filters, so a reload never replays the notice.
-4. **Discovered accounts.** Customer id (`123-456-7890`), name, type (manager, client, "not
+5. **Discovered accounts.** Customer id (`123-456-7890`), name, type (manager, client, "not
    reported"), test-account status (test, not a test account, "not reported"), currency, time
    zone, account status, the manager it was discovered through (or "Direct access"), and whether
    it can be linked.
-5. **Select and link.** One radio choice: only an unlinked account the platform **confirmed** as a
+6. **Select and link.** One radio choice: only an unlinked account the platform **confirmed** as a
    client, on an active connection, can be selected. Managers, unreported account types, linked
    accounts and inactive connections are disabled with the reason as the control's description.
    The test-account status is informational and never blocks (the server does not check it;
    Google's access level decides whether a non-test account can be read). "Link selected
    account" sends exactly one id; the server's refusals (e.g. `manager_status_unknown`) appear as
    fixed text.
-6. **Retry discovery.** `refreshAssets` (active connections only) runs discovery in the
+7. **Retry discovery.** `refreshAssets` (active connections only) runs discovery in the
    background; "Refreshing the account list…" shows until the connection changes again (success
    or a recorded error), without polling. Use it after a discovery failure, or when Google did
    not report an account's type (accounts discovered before the type was recorded read "not
    reported" until discovery runs again).
-7. **Linked accounts** (every linked Google Ads account of the org): sync status from the
+8. **Linked accounts** (every linked Google Ads account of the org): sync status from the
    read-only `sync` block (first sync scheduled, syncing, up to date, partly completed, failed
    with the failure streak, blocked, cancelled, not syncing), data coverage, last successful sync,
    next sync, and the allowlisted reason's explanation.
-8. **View analytics** opens the Overview filtered to the account (`/?accounts=<id>`), keeping the
+9. **View analytics** opens the Overview filtered to the account (`/?accounts=<id>`), keeping the
    period and clearing a platform filter.
 
 Errors of these calls map to fixed text (`lib/connections/messages.ts`): return URL not allowed,
 Google Ads not configured, account type not confirmed, not found, connection not active, too many
 attempts, admins only, integration disabled, provider failure; sign-in and org errors as in D15.
-Unexpected errors never show their message.
+Disconnect failures (admins only, connection not found, not disconnected) have their own fixed
+text. Unexpected errors never show their message.
 
 **Limitations (today):**
 
