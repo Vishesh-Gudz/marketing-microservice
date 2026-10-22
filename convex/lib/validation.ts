@@ -15,6 +15,26 @@ export function isRole(value: unknown): value is Role {
   return typeof value === "string" && (ROLES as readonly string[]).includes(value);
 }
 
+/**
+ * Clerk names organization roles with an `org:` prefix. Exactly these three map to a role;
+ * Clerk's default `org:member`, custom roles and any other spelling do not (D2).
+ */
+const PREFIXED_ROLES: ReadonlyMap<string, Role> = new Map([
+  ["org:viewer", "viewer"],
+  ["org:editor", "editor"],
+  ["org:admin", "admin"],
+]);
+
+/**
+ * The role a verified `org_role` claim grants: `viewer`/`editor`/`admin`, or the same role with
+ * Clerk's `org:` prefix. Anything else returns null and is refused; no unknown role ever maps
+ * to a permission.
+ */
+export function normalizeRoleClaim(value: unknown): Role | null {
+  if (isRole(value)) return value;
+  return typeof value === "string" ? (PREFIXED_ROLES.get(value) ?? null) : null;
+}
+
 /** True when `role` is at least `minRole` in the viewer < editor < admin hierarchy. */
 export function hasRole(role: Role, minRole: Role): boolean {
   return ROLE_RANK[role] >= ROLE_RANK[minRole];

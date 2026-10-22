@@ -1,13 +1,18 @@
 "use client";
 
+import { useAction } from "convex/react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { api } from "@/convex/_generated/api";
 import {
+  claimErrorNotice,
   CONNECT_PROVIDER_PARAM,
   connectResultNotice,
   parseConnectResult,
   withoutConnectResult,
+  type ConnectResult,
 } from "@/lib/connections/connect-result";
+import type { Notice } from "@/lib/connections/types";
 import { AD_CONNECTION_PROVIDERS, PROVIDERS } from "@/lib/connections/providers";
 import { AdConnection } from "../connections/ad-connection";
 import { ConnectionNotice } from "../connections/connection-notice";
@@ -16,8 +21,9 @@ import { QueryBoundary } from "../query-boundary";
 
 /**
  * The OAuth callback's result, read once on arrival (lib/connections/connect-result); the
- * result parameters, the provider hint and any stray code / state are then removed from the
- * URL, keeping the dashboard filters, so a reload or a shared link never replays the notice.
+ * result parameters (including a claim code), the provider hint and any stray code / state
+ * are then removed from the URL, keeping the dashboard filters, so a reload or a shared link
+ * never replays the notice or the claim.
  */
 function useConnectResult() {
   const searchParams = useSearchParams();
@@ -39,6 +45,39 @@ function useConnectResult() {
   return result;
 }
 
+type Outcome = { result: ConnectResult; notice: Notice | null };
+
+/**
+ * S2: a `pending` result carries a one-time claim code. It is claimed exactly once, as the
+ * signed-in user of the current org (this view renders only behind the org gate); the server
+ * accepts it only from the user and org that started the connection. Until it answers, the
+ * notice says the connection is being finished.
+ */
+function useClaimedResult(result: ConnectResult): Outcome {
+  const completeConnect = useAction(api.v1.connections.completeConnect);
+  const [claimed, setClaimed] = useState<Outcome | null>(null);
+  const started = useRef(false);
+  useEffect(() => {
+    if (result.kind !== "pending" || started.current) return;
+    started.current = true;
+    const hint = result.provider !== undefined ? { provider: result.provider } : {};
+    completeConnect({ claim: result.claim }).then(
+      ({ connectionId, discoveryFailed }) => {
+        const connected: ConnectResult = {
+          kind: "connected",
+          connectionId,
+          discoveryFailed,
+          ...hint,
+        };
+        setClaimed({ result: connected, notice: connectResultNotice(connected) });
+      },
+      (error: unknown) =>
+        setClaimed({ result: { kind: "none" }, notice: claimErrorNotice(error, result.provider) }),
+    );
+  }, [result, completeConnect]);
+  return claimed ?? { result, notice: connectResultNotice(result) };
+}
+
 /**
  * Connections for the ad platforms (Google Ads and Meta Ads; Instagram organic stays out):
  * connect an account, choose the ad account to sync and follow its status. Every step goes
@@ -46,8 +85,7 @@ function useConnectResult() {
  * linked.
  */
 export function ConnectionsView() {
-  const result = useConnectResult();
-  const notice = connectResultNotice(result);
+  const { result, notice } = useClaimedResult(useConnectResult());
   return (
     <div className="flex flex-col gap-6">
       <PageHeader

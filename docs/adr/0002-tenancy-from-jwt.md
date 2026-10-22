@@ -2,6 +2,8 @@
 
 - Status: accepted
 - Date: 2026-09-24
+- Amended by [ADR 0012](0012-standalone-saas-clerk.md): the dashboard's JWT issuer is Clerk
+  (standalone SaaS); the tenant model below is unchanged.
 
 ## Context
 

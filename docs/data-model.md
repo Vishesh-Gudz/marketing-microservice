@@ -28,7 +28,7 @@ Paid advertising and organic social are **separate trees**. There is no generic 
 
 Tables for later phases are added by the phase that writes them:
 
-- connections, credentials, OAuth state, discovered assets: Phase 4 (see [connections.md](connections.md))
+- connections, credentials, OAuth state, discovered assets: Phase 4; pending OAuth grants (`oauthGrants`): S2 (see [connections.md](connections.md))
 - sync state, runs and tasks: Phase 5 (see [sync.md](sync.md))
 - FX rates (`fxRates`, global reference data): Phase 6 (see [analytics.md](analytics.md)); rollups
   are deferred (Phase 6 aggregates at query time)

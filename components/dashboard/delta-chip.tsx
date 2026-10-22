@@ -2,6 +2,7 @@ import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
 import { deltaView } from "@/lib/analytics/deltas";
 import type { MoneyDelta, NumberDelta } from "@/lib/analytics/types";
 import { cn } from "@/lib/utils";
+import { PartialMarker } from "./partial-marker";
 
 const TONE_CLASS = {
   positive: "text-emerald-700 dark:text-emerald-400",
@@ -28,7 +29,7 @@ export function DeltaChip({
     return (
       <span className={cn("text-xs text-muted-foreground", className)} data-slot="delta">
         {view.text}
-        {view.partial && <span aria-label="(partial data)">*</span>}
+        {view.partial && <PartialMarker />}
       </span>
     );
   }
@@ -49,11 +50,7 @@ export function DeltaChip({
       <span className="sr-only">{word} </span>
       {view.absoluteText && <span className="tabular-nums">{view.absoluteText}</span>}
       <span className="tabular-nums">{view.absoluteText ? `(${view.text})` : view.text}</span>
-      {view.partial && (
-        <span aria-label="(partial data)" className="text-amber-600 dark:text-amber-400">
-          *
-        </span>
-      )}
+      {view.partial && <PartialMarker className="text-amber-600 dark:text-amber-400" />}
     </span>
   );
 }

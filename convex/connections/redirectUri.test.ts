@@ -6,6 +6,7 @@ import { createFakeInstagram } from "../providers/instagram/fakeInstagram.fixtur
 import { createFakeGraph, type FakeGraph } from "../providers/meta/fakeGraph.fixtures";
 import {
   as,
+  claimResult,
   connectGoogleFake,
   connectInstagramFake,
   newBackend,
@@ -186,14 +187,17 @@ async function beginMeta(t: Backend) {
   return new URL(authorizeUrl).searchParams;
 }
 
-/** The callback's redirect parameters, or null for the static error page (no redirect). */
+/**
+ * The callback's redirect parameters completed by the initiator's claim (S2), or null for the
+ * static error page (no redirect).
+ */
 async function callback(t: Backend, state: string, code: string) {
   const response = await t.fetch(
     `/oauth/callback?state=${encodeURIComponent(state)}&code=${encodeURIComponent(code)}`,
     { method: "GET", redirect: "manual" },
   );
   const location = response.headers.get("location");
-  return location === null ? null : new URL(location).searchParams;
+  return location === null ? null : await claimResult(t, new URL(location).searchParams);
 }
 
 async function stored(t: Backend) {

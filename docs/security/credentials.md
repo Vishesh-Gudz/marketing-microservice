@@ -9,7 +9,8 @@
    - AES-256-GCM with a random 96-bit IV per write.
    - **AAD = `orgId|provider|externalUserId|v1`**, so a ciphertext copied to another connection or
      org fails to decrypt.
-   - One encrypted bundle per connection (`credentials`), stored as `bytes`.
+   - One encrypted bundle per connection (`credentials`), stored as `bytes`. A consented but
+     unclaimed credential waits in `oauthGrants` (S2) under the same AAD.
 3. **Keys.**
    - `TOKEN_ENCRYPTION_KEYS` lives in the Convex env as a versioned JSON map. The highest version
      encrypts, and every listed version can decrypt, so keys can be rotated.
@@ -21,7 +22,7 @@
 5. **A single decryption path.** `withConnectionCredential(ctx, connectionId, handle)` in
    `convex/connections/credentialStore.ts`. It refuses inactive connections and never returns the
    credential. ESLint enforces two things:
-   - only `credentialStore.ts` may name the `credentials` table
+   - only `credentialStore.ts` may name the `credentials` and `oauthGrants` tables
    - only `credentialStore.ts` may import `decryptJson`
 6. **OAuth state.**
    - A 256-bit nonce, stored **only as its SHA-256 hash**.
@@ -33,7 +34,9 @@
      loopback).
    - Otherwise a static page with `Content-Security-Policy: default-src 'none'`.
    - Every callback response carries `Cache-Control: no-store` and `Referrer-Policy: no-referrer`.
-   - Redirect parameters are a fixed set of codes, never tokens, codes or messages.
+   - Redirect parameters are a fixed set of codes, never tokens, authorization codes or messages.
+     The one exception is the S2 claim code (`status=pending&claim=…`), a single-use capability
+     that is useless to anyone but the initiating user (below).
 8. **Exposure.**
    - DTOs have no secret fields. The contract test bans secret-like names in every v1 argument and
      return type.
@@ -46,35 +49,82 @@
    - Audit entries hold only IDs, statuses and counts.
    - `console` is banned in `convex/connections/`.
 9. **Deletion.** Disconnect schedules a best-effort platform revoke and then **always** deletes the
-   credential. The hourly sweep deletes any credential left on a revoked connection.
+   credential. The hourly sweep deletes any credential left on a revoked connection, and any
+   unclaimed grant (with its ciphertext) past its 10-minute expiry.
 
-## Known gap: OAuth callback ownership
+## OAuth callback ownership (S2)
 
-> **Required fix before any public or multi-tenant launch. The current connect flow is not safe
-> for public access.** It is acceptable only on local and validation deployments with known test
-> users.
+**The problem.** `beginConnect` binds the OAuth state to the org, app and user (`sub`) that called
+it, but the callback is unauthenticated: nothing ties the consent to the **person who completes
+it**. Before S2 the callback created the connection for the initiating org, so anyone who opened
+a valid authorization URL (single-use, 10 minutes) and consented attached **their** platform
+account to that org (for example, an admin forwards the link to someone else). Nonce, PKCE, the
+return-URL allowlist and encryption protect the exchange, not the ownership.
 
-**The gap.** `beginConnect` binds the pending OAuth state to the org, app and user (`sub`) that
-called it, and the callback stores the resulting connection for that org. Nothing binds the state
-to the **browser session or person that completes the platform consent**. Whoever opens a valid
-authorization URL (single-use, 10-minute TTL) and consents attaches **their** platform account to
-the **initiating** org. Example: an admin of org A starts a connection and gets someone else to open
-the link; that person's Google Ads account becomes a connection of org A, which can then link and
-sync its data. The state nonce, PKCE, the return-URL allowlist and credential encryption do not
-prevent this: they protect the exchange, not the ownership.
+**The fix (implemented).**
 
-**Today's mitigations (partial).** The dashboard follows the authorization URL in the same tab and
-never displays, logs or stores it; the tester CLI redacts it and serves it through a one-time
-loopback redirect. Neither stops an initiator who deliberately forwards the URL.
+1. **Consent connects nothing.** After the exchange, the callback encrypts the credential (same
+   AAD as the final credential) and stores it in `oauthGrants` with the initiating org, issuer and
+   `sub`, the platform identity, the scopes, a 10-minute expiry and the **SHA-256 hash** of a
+   256-bit one-time claim code (`crypto.getRandomValues`, in the action). It redirects to the
+   allowlisted return URL with `status=pending&claim=<code>`. `beginConnect` now requires a
+   return URL, and a state without one (created before S2) is refused before any exchange.
+2. **Only the initiator can claim.** `v1/connections:completeConnect` (admin; claimant from the
+   verified JWT, never from arguments) looks the grant up by hash and requires the **same issuer,
+   `sub` and org**, an unexpired grant and, for a reconnect, the same platform identity as the
+   target connection (also checked at the callback). Then, in one transaction, it creates or
+   reconnects the connection, moves the ciphertext unchanged into `credentials` and deletes the
+   grant; discovery follows.
+3. **Everything else is refused and cleaned up.**
+   - Unknown, replayed (already claimed) or invalidated codes: `invalid_claim`, indistinguishable.
+   - Another user, org or app presenting the code: `invalid_claim`, and the grant is **deleted**
+     (audited `connection.claim_rejected`, reason `owner_mismatch`, recorded in the initiator's
+     org as the initiator; the presenting party's identity is not copied into that audit log).
+   - Expired: `expired_claim`, grant deleted (`connection.grant_expired`).
+   - Reconnect identity mismatch at claim time: `identity_mismatch`, grant deleted.
+   - Viewers/editors: `FORBIDDEN` from the admin-only wrapper (the grant stays for the admin).
+   - The hourly sweep deletes expired grants with their ciphertext.
+   - Failures are returned (not thrown) from the claim mutation so the deletion and its audit
+     entry commit.
+4. **Why it closes the gap.** The claim code is sent only to the browser that completed the
+   consent. If that is someone other than the initiator, their session (another `sub` or org)
+   cannot claim it, and their dashboard's automatic claim attempt deletes the grant. The
+   initiator never receives the code. Tests: `convex/connections/ownership.test.ts` (cross-user,
+   cross-org, cross-issuer, replay, expiry, roles, malformed codes, reconnect identity, sweep,
+   leak scan) and the opt-in HTTP test in `tests/live/connections.live.test.ts`.
 
-**Required fix (design to be approved).** The callback must not activate a connection on its own.
-It stores the grant as a **pending** connection and returns a short-lived, single-use claim to the
-return URL; the connection becomes active only when the **same authenticated user** (same issuer,
-org and `sub` as the initiator), in the same app, confirms it through an authenticated v1 call
-within a short window. Unclaimed or mismatched grants are deleted. Binding the state to the
-initiating browser (a first-party cookie on the callback origin) is a complementary measure.
-Tests must show that a consent completed by someone else can never become another org's active
-connection.
+**Residual risks (accepted).**
+
+- **Return pages must not leak the query.** The initiator chooses the return URL within the app's
+  allowlist (origin + path prefix). A page under an allowlisted prefix with an open redirect, or
+  one that sends the full URL to a third party before removing the code, would hand the claim to
+  someone else (who still needs the initiator's session to use it). Allowlist only the
+  dashboard's connections page.
+- **The claim code is in the return URL** for one navigation: it can appear in that browser's
+  history and, if the return page loaded third-party resources before removing it, in a
+  `Referer` header (browsers default to `strict-origin-when-cross-origin`, which drops the
+  query). The dashboard removes it from the URL immediately; the code is single-use, expires in
+  10 minutes and is useless without the initiator's session.
+- **Session switch.** If the initiator switches org (or signs in as someone else) before the
+  dashboard claims, the claim is refused and the grant is deleted; they start again.
+
+**Browser binding (evaluated, not implemented).** A complementary defence would bind the state to
+the initiating browser: `beginConnect` returns a URL on the callback origin (`/oauth/start`) that
+sets a `__Host-` cookie (HttpOnly, Secure, SameSite=Lax) holding a second secret, then redirects
+to the platform; the callback refuses a state whose cookie is missing or different.
+
+- Benefit: a forwarded authorization link fails at the callback, before any token exchange, so
+  the platform account's token is never fetched for the wrong person.
+- Costs:
+  - another public HTTP route and redirect hop to secure;
+  - local development: the callback origin is `127.0.0.1:3211` but Meta requires
+    `http://localhost:3211`, two different cookie hosts;
+  - `Secure` cookies need https (local is http);
+  - third-party SDK clients would have to follow the extra hop;
+  - SameSite and ITP behaviour across platform redirects must be verified per browser.
+- Decision: the claim step already guarantees that only the initiator can obtain a connection, so
+  browser binding is deferred. Revisit if a platform's consent screen ever lets an attacker learn
+  anything from a forwarded link, or before third-party SDK clients ship.
 
 ## Global indexes (approved exceptions to "orgId first")
 
@@ -82,6 +132,8 @@ connection.
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `oauthStates.by_nonce_hash`     | The OAuth callback is unauthenticated                                                                               |
 | `oauthStates.by_expires`        | The system sweep expires states across orgs                                                                         |
+| `oauthGrants.by_claim_hash`     | S2: a claim may be presented from another org; it must be found to be refused **and** invalidated                   |
+| `oauthGrants.by_expires`        | S2: the system sweep deletes expired grants across orgs                                                             |
 | `connections.by_status_expires` | The system sweep flags expired tokens and cleans revoked credentials                                                |
 | `syncAccounts.by_next_plan`     | The sync planner (Phase 5) finds due accounts across orgs; every row it returns is re-verified for tenant ownership |
 

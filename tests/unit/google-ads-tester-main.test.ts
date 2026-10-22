@@ -70,11 +70,11 @@ vi.mock("convex/browser", () => ({
 }));
 
 vi.mock("../../scripts/dev-auth.mjs", () => ({
-  DEV_RETURN_URLS: ["http://localhost:3000/"],
   mintToken: mocks.mintToken,
 }));
 
 vi.mock("../../scripts/google-ads-tester/oauth.mjs", () => ({
+  loopbackReturnUrl: (port = 4455) => `http://127.0.0.1:${port}/return`,
   startOneTimeRedirect: mocks.startOneTimeRedirect,
 }));
 
@@ -231,6 +231,15 @@ describe("tester entry point: the deployment guard runs first", () => {
       expect(mocks.clientCreated.mock.calls).toEqual([[`https://${DEV}.convex.cloud`]]);
       expect(mocks.fetch).not.toHaveBeenCalled();
       if (command === "connect") {
+        // S2: the claim code returns to the tool's own loopback server, never the dashboard.
+        const begin = mocks.request.mock.calls.find(
+          ([kind, fn]) =>
+            kind === "action" && getFunctionName(fn as never) === "v1/connections:beginConnect",
+        );
+        expect(begin?.[2]).toEqual({
+          provider: "google_ads",
+          returnUrl: "http://127.0.0.1:4455/return",
+        });
         expect(mocks.startOneTimeRedirect).toHaveBeenCalledTimes(1);
         expect(mocks.startOneTimeRedirect.mock.invocationCallOrder[0]).toBeGreaterThan(lastProbe);
       } else {

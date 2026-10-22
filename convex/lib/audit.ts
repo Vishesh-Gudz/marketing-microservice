@@ -5,6 +5,8 @@ import type { AuditChanges } from "./validation";
 export const AUDIT_ACTIONS = {
   orgProvisioned: "org.provisioned",
   orgSettingsUpdated: "org.settings.updated",
+  // Standalone SaaS (Clerk): the name follows the verified org_name claim.
+  orgRenamed: "org.renamed",
   // Phase 4: connections. Entries carry ids/statuses/counts only, never secrets.
   connectionOAuthStarted: "connection.oauth_started",
   connectionOAuthFailed: "connection.oauth_failed",
@@ -14,6 +16,10 @@ export const AUDIT_ACTIONS = {
   connectionDisconnected: "connection.disconnected",
   connectionNeedsReauth: "connection.needs_reauth",
   credentialDeleted: "credential.deleted",
+  // S2: a consented grant waits for its initiator; a claim by anyone else invalidates it.
+  connectionOAuthGranted: "connection.oauth_granted",
+  connectionClaimRejected: "connection.claim_rejected",
+  connectionGrantExpired: "connection.grant_expired",
   adAccountLinked: "adAccount.linked",
   adAccountRelinked: "adAccount.relinked",
   adAccountUnlinked: "adAccount.unlinked",

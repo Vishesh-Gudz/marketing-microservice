@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { apiError } from "@/convex/lib/errors";
 import {
   CALLBACK_ERRORS,
+  claimErrorNotice,
   CONNECT_RESULT_PARAMS,
   connectResultNotice,
   parseConnectResult,
@@ -9,6 +11,7 @@ import {
 } from "./connect-result";
 
 const ID = "jd7c8a3r9x2m4k6p1q5s0t7v8w9y2z3b";
+const CLAIM = "Aa0_-".repeat(8) + "xyz"; // 43 base64url characters
 const parse = (query: string) => parseConnectResult(new URLSearchParams(query));
 
 describe("parseConnectResult", () => {
@@ -99,6 +102,29 @@ describe("parseConnectResult", () => {
     expect(parse(query)).toEqual({ kind: "malformed" });
   });
 
+  it("reads a pending consent with its one-time claim code (S2)", () => {
+    expect(parse(`status=pending&claim=${CLAIM}&connect=meta`)).toEqual({
+      kind: "pending",
+      claim: CLAIM,
+      provider: "meta",
+    });
+  });
+
+  it("treats a malformed or contradictory pending result as malformed", () => {
+    for (const query of [
+      "status=pending",
+      "status=pending&claim=short",
+      `status=pending&claim=${CLAIM}x`,
+      `status=pending&claim=${CLAIM.slice(0, 42)}%21`,
+      `status=pending&claim=${CLAIM}&claim=${CLAIM}`,
+      `status=pending&claim=${CLAIM}&connection=${ID}`,
+      `status=pending&claim=${CLAIM}&error=internal`,
+      `status=connected&connection=${ID}&claim=${CLAIM}`,
+    ]) {
+      expect(parse(query).kind, query).toBe("malformed");
+    }
+  });
+
   it("accepts a read-only params object (Next's useSearchParams)", () => {
     const params = new URLSearchParams(`status=connected&connection=${ID}`);
     const readOnly = { get: params.get.bind(params), getAll: params.getAll.bind(params) };
@@ -122,6 +148,13 @@ describe("withoutConnectResult", () => {
       new URLSearchParams("status=a&status=b&code=4%2Fabc&state=s3cr3t&tab=x&connect=meta"),
     );
     expect(next.toString()).toBe("tab=x");
+  });
+
+  it("removes the claim code (S2), so a reload or a shared link never replays it", () => {
+    const next = withoutConnectResult(
+      new URLSearchParams(`from=2026-03-01&status=pending&claim=${CLAIM}&connect=meta`),
+    );
+    expect(next.toString()).toBe("from=2026-03-01");
   });
 
   it("returns a copy", () => {
@@ -220,6 +253,12 @@ describe("connectResultNotice", () => {
     expect(connectResultNotice({ kind: "error", error: "access_denied" })!.tone).toBe("warning");
   });
 
+  it("a pending result says the connection is being finished, without the code", () => {
+    const notice = connectResultNotice({ kind: "pending", claim: CLAIM, provider: "meta" });
+    expect(notice).toMatchObject({ tone: "info", title: "Finishing the Meta Ads connection…" });
+    expect(JSON.stringify(notice)).not.toContain(CLAIM);
+  });
+
   it("a malformed result gets a neutral warning", () => {
     expect(connectResultNotice({ kind: "malformed" })).toMatchObject({ tone: "warning" });
   });
@@ -237,6 +276,45 @@ describe("connectResultNotice", () => {
       for (const fragment of ["script", "img", "ya29", "s3cr3t", "4/code", "<b>"]) {
         expect(text).not.toContain(fragment);
       }
+    }
+  });
+});
+
+describe("claimErrorNotice (S2)", () => {
+  it("explains each refused claim with fixed text", () => {
+    const invalid = claimErrorNotice(
+      apiError("NOT_FOUND", "server text", { reason: "invalid_claim" }),
+      "meta",
+    );
+    expect(invalid).toMatchObject({ tone: "error", title: "This connection request is not valid" });
+    expect(invalid.message).toContain("another user or organization");
+    expect(
+      claimErrorNotice(apiError("CONFLICT", "server text", { reason: "expired_claim" })).title,
+    ).toBe("The connection request expired");
+    expect(
+      claimErrorNotice(
+        apiError("CONFLICT", "server text", { reason: "identity_mismatch" }),
+        "google_ads",
+      ).title,
+    ).toBe("A different Google account was used");
+    expect(claimErrorNotice(apiError("FORBIDDEN", "server text")).title).toBe("Admins only");
+    expect(
+      claimErrorNotice(
+        apiError("INVALID_ARGUMENT", "server text", { reason: "connections_disabled" }),
+        "meta",
+      ).title,
+    ).toBe("Meta Ads is not available");
+  });
+
+  it("never shows server messages; unknown errors get a generic notice", () => {
+    for (const error of [
+      new Error("ya29.secret-token"),
+      apiError("INTERNAL", "ya29.secret-token"),
+      "ya29.secret-token",
+    ]) {
+      const notice = claimErrorNotice(error, "meta");
+      expect(notice.title).toBe("The connection could not be completed");
+      expect(JSON.stringify(notice)).not.toContain("ya29");
     }
   });
 });

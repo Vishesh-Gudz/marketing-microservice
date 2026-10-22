@@ -1,6 +1,7 @@
 import type { ConnectionProvider } from "../domain/types";
 import { apiError } from "../lib/errors";
 import { createDefaultRegistry, type ProviderRegistry } from "../providers";
+import { isLocalDeployment } from "../providers/mode";
 import type { OAuthClientConfig } from "../providers/oauth";
 
 /** Connection-layer constants (docs/connections.md). */
@@ -12,8 +13,30 @@ export const EXPIRES_SOON_MS = 10 * 24 * 60 * 60 * 1000;
 /** Consumed/failed states are kept this long for diagnostics, then swept. */
 export const STATE_RETENTION_MS = 60 * 60 * 1000;
 export const SWEEP_BATCH = 200;
+/**
+ * S2: how long a granted (consented, encrypted) credential waits for its initiator to claim it
+ * with `v1/connections:completeConnect`. Unclaimed grants are deleted by the sweep.
+ */
+export const OAUTH_GRANT_TTL_MS = 10 * 60 * 1000;
+/** Claim codes are randomToken() values (32 random bytes, base64url: 43 characters). */
+export const CLAIM_CODE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 export const OAUTH_CALLBACK_PATH = "/oauth/callback";
+
+/**
+ * D8: new platform connections stay closed on cloud deployments until the OAuth callback
+ * ownership fix (S2) is deployed and verified; an operator then sets
+ * OAUTH_CONNECTIONS_ENABLED=true (exactly). Local deployments and in-process tests are
+ * unaffected (loopback or absent CONVEX_CLOUD_URL).
+ */
+export function connectionsEnabled(
+  env: { OAUTH_CONNECTIONS_ENABLED?: string; CONVEX_CLOUD_URL?: string } = {
+    OAUTH_CONNECTIONS_ENABLED: process.env.OAUTH_CONNECTIONS_ENABLED,
+    CONVEX_CLOUD_URL: process.env.CONVEX_CLOUD_URL,
+  },
+): boolean {
+  return isLocalDeployment(env.CONVEX_CLOUD_URL) || env.OAUTH_CONNECTIONS_ENABLED === "true";
+}
 
 /** The single place the connection layer obtains providers and OAuth specs. */
 export function providerRegistry(): ProviderRegistry {

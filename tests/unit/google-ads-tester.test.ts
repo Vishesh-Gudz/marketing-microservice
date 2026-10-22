@@ -21,7 +21,7 @@ import {
   VALIDATION_ROLE,
   verifyDeployment,
 } from "../../scripts/google-ads-tester/guard.mjs";
-import { startOneTimeRedirect } from "../../scripts/google-ads-tester/oauth.mjs";
+import { loopbackReturnUrl, startOneTimeRedirect } from "../../scripts/google-ads-tester/oauth.mjs";
 import { createOutput, redact } from "../../scripts/google-ads-tester/redact.mjs";
 import {
   confirmationMatches,
@@ -396,13 +396,18 @@ describe("status and report formatting", () => {
 
 describe("one-time loopback redirect", () => {
   function get(port: number, path: string, host = `127.0.0.1:${port}`) {
-    return new Promise<{ status: number; location?: string }>((resolve, reject) => {
+    return new Promise<{ status: number; location?: string; body: string }>((resolve, reject) => {
       const req = request({ host: "127.0.0.1", port, path, headers: { Host: host } }, (res) => {
-        res.resume();
-        resolve({
-          status: res.statusCode ?? 0,
-          ...(res.headers.location ? { location: res.headers.location } : {}),
-        });
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk: string) => (body += chunk));
+        res.on("end", () =>
+          resolve({
+            status: res.statusCode ?? 0,
+            ...(res.headers.location ? { location: res.headers.location } : {}),
+            body,
+          }),
+        );
       });
       req.on("error", reject);
       req.end();
@@ -416,8 +421,34 @@ describe("one-time loopback redirect", () => {
     await redirect.listening;
     expect(redirect.startUrl).toBe(`http://127.0.0.1:${port}/start`);
     expect((await get(port, "/start", `evil.example:${port}`)).status).toBe(421);
-    expect(await get(port, "/start")).toEqual({ status: 302, location: target });
+    expect(await get(port, "/start")).toMatchObject({ status: 302, location: target });
     expect(redirect.served).toBe(true);
+    expect((await get(port, "/start")).status).toBe(410);
+    await redirect.close().catch(() => undefined);
+  });
+
+  it("accepts the OAuth return once, after /start only, without echoing it (S2)", async () => {
+    const port = 48_000 + Math.floor(Math.random() * 1_000);
+    expect(loopbackReturnUrl(port)).toBe(`http://127.0.0.1:${port}/return`);
+    const claim = "c".repeat(43);
+    const redirect = startOneTimeRedirect("https://accounts.google.com/o/oauth2/v2/auth", {
+      port,
+    });
+    await redirect.listening;
+    // Before the redirect was served, a return is refused.
+    expect((await get(port, `/return?status=pending&claim=${claim}`)).status).toBe(410);
+    await get(port, "/start");
+    expect(
+      (await get(port, `/return?status=pending&claim=${claim}`, `evil.example:${port}`)).status,
+    ).toBe(421);
+    const returned = await get(port, `/return?status=pending&claim=${claim}&extra=x`);
+    expect(returned.status).toBe(200);
+    expect(returned.body).not.toContain(claim);
+    await expect(redirect.result).resolves.toEqual({
+      status: "pending",
+      claim,
+      error: undefined,
+    });
     await redirect.close().catch(() => undefined);
   });
 });

@@ -183,7 +183,7 @@ export function ActionsPanel({
       </div>
 
       {isLoading || !data ? (
-        <Skeleton className="h-48 w-full" aria-label="Loading conversions" />
+        <Skeleton className="h-48 w-full" role="status" aria-label="Loading conversions" />
       ) : (
         <div
           className={cn("flex flex-col gap-3", isUpdating && "opacity-60")}

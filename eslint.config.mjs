@@ -3,9 +3,11 @@ import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 import prettier from "eslint-config-prettier/flat";
 
+// S2: oauthGrants holds encrypted credentials waiting to be claimed; same rule.
 const CREDENTIALS_LITERAL = {
-  selector: "Literal[value='credentials']",
-  message: "Only convex/connections/credentialStore.ts may access the credentials table.",
+  selector: "Literal[value=/^(credentials|oauthGrants)$/]",
+  message:
+    "Only convex/connections/credentialStore.ts may access the credentials and oauthGrants tables.",
 };
 
 const CANONICAL_TABLES =

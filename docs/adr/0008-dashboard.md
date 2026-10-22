@@ -2,6 +2,8 @@
 
 - Status: accepted
 - Date: 2026-09-25
+- Amended by [ADR 0012](0012-standalone-saas-clerk.md): users sign in with Clerk; the Phase 15
+  parent-app token handoff and embedding no longer apply.
 
 ## Context
 
@@ -107,8 +109,9 @@ a second Google integration.
 - **Mock mode.** The work is verified against the local backend in mock mode (instant mock
   consent, mock accounts). No real Google account has been connected from the dashboard.
 - **Security requirement before any public or multi-tenant launch:** the OAuth callback
-  ownership gap ([security/credentials.md](../security/credentials.md#known-gap-oauth-callback-ownership))
-  must be fixed first. The current flow is not safe for public access.
+  ownership gap had to be fixed first. Fixed by S2 (pending grant claimed by the initiator,
+  [security/credentials.md](../security/credentials.md#oauth-callback-ownership-s2)); cloud deployments stay
+  closed until `OAUTH_CONNECTIONS_ENABLED=true` is set after S2 is deployed and verified.
 
 **Consequences.**
 
@@ -138,6 +141,6 @@ linking and sync exist since Phase 8 (ADR 0009); only the dashboard UI was missi
 - The reconnect banner and "Manage in Connections" on `/accounts` cover Meta Ads.
 - **Instagram (organic) connection management stays out of the dashboard.**
 
-**Constraints.** As above: local development identity only, and the callback ownership gap must be
-fixed before any public or multi-tenant launch. No real Meta account has been connected; a live
+**Constraints.** As above: local development identity only (amended by ADR 0012), and the
+callback ownership gap had to be fixed before any public or multi-tenant launch (fixed by S2). No real Meta account has been connected; a live
 Meta connection needs the Meta app settings, and every Meta mapping stays provisional (R1–R20).

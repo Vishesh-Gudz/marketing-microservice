@@ -4,6 +4,8 @@ import { credentialAad, decryptJson, DecryptionError, loadKeyRing } from "../lib
 import { orgScopeFromOrganization } from "../mapping/scope";
 import {
   as,
+  claimCodeOf,
+  claimResult,
   expectMarketingError,
   followCallback,
   ISSUER_CRM,
@@ -33,7 +35,8 @@ async function connectAs(t: Backend, who: typeof ERP, provider: "meta" | "google
     returnUrl: RETURN_URL,
   });
   const response = await followCallback(t, authorizeUrl);
-  return { connectionId: redirectParams(response).get("connection")!, authorizeUrl, response };
+  const params = await claimResult(t, redirectParams(response), who);
+  return { connectionId: params.get("connection")!, authorizeUrl, response };
 }
 
 describe("cross-tenant isolation", () => {
@@ -70,6 +73,7 @@ describe("cross-tenant isolation", () => {
     await expectMarketingError(
       crm.action(api.v1.connections.beginConnect, {
         provider: "meta",
+        returnUrl: RETURN_URL,
         reconnectConnectionId: connectionId,
       }),
       "NOT_FOUND",
@@ -82,15 +86,24 @@ describe("cross-tenant isolation", () => {
     );
   });
 
-  it("a state always lands in the org that created it", async () => {
+  it("a grant can only become a connection in the org that created the state (S2)", async () => {
     const t = await setup();
     const { authorizeUrl } = await as(t, ERP).action(api.v1.connections.beginConnect, {
       provider: "meta",
       returnUrl: RETURN_URL,
     });
-    // Whoever completes the browser flow, the connection belongs to ERP.
-    await followCallback(t, authorizeUrl);
-    expect(await as(t, ERP).query(api.v1.connections.list, {})).toHaveLength(1);
+    // Whoever completes the browser flow, nothing is connected until the initiator claims;
+    // another tenant presenting the claim code is refused and the grant is invalidated.
+    const claim = claimCodeOf(await followCallback(t, authorizeUrl));
+    await expectMarketingError(
+      as(t, CRM).action(api.v1.connections.completeConnect, { claim }),
+      "NOT_FOUND",
+    );
+    await expectMarketingError(
+      as(t, ERP).action(api.v1.connections.completeConnect, { claim }),
+      "NOT_FOUND",
+    );
+    expect(await as(t, ERP).query(api.v1.connections.list, {})).toHaveLength(0);
     expect(await as(t, CRM).query(api.v1.connections.list, {})).toHaveLength(0);
   });
 

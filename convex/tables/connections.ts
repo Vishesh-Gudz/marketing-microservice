@@ -97,6 +97,40 @@ export const connectionTables = {
     .index("by_expires", ["expiresAt"])
     .index("by_org_created", ["orgId", "createdAt"]),
 
+  /**
+   * S2: a consented OAuth grant waiting for its initiator. The callback (unauthenticated)
+   * stores the encrypted credential here instead of creating the connection; only the SAME
+   * issuer + subject in the SAME org may claim it (v1/connections:completeConnect), once,
+   * before it expires. The claim code is stored only as a hash. Ciphertext uses the final
+   * credential's AAD (orgId|provider|externalUserId), so claiming moves it unchanged.
+   * INTERNAL-ONLY; read and written only by convex/connections/credentialStore.ts.
+   */
+  oauthGrants: defineTable({
+    orgId: orgIdField,
+    stateId: v.id("oauthStates"),
+    provider: connectionProviderValidator,
+    issuer: v.string(),
+    initiatedBySubject: v.string(),
+    reconnectConnectionId: v.optional(v.id("connections")),
+    externalUserId: v.string(),
+    displayName: v.optional(v.string()),
+    grantedScopes: v.array(v.string()),
+    tokenExpiresAt: v.optional(v.number()),
+    ciphertext: v.bytes(),
+    iv: v.bytes(),
+    keyVersion: v.number(),
+    algorithm: v.literal("AES-256-GCM"),
+    claimHash: v.string(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  })
+    // GLOBAL (approved exception): a claim code may be presented from another org; it must
+    // be found to be rejected AND invalidated.
+    .index("by_claim_hash", ["claimHash"])
+    // GLOBAL (approved exception): system sweep of expired grants.
+    .index("by_expires", ["expiresAt"])
+    .index("by_org_created", ["orgId", "createdAt"]),
+
   /** Accounts a connection can access; replaced on every discovery. */
   discoveredAssets: defineTable({
     orgId: orgIdField,

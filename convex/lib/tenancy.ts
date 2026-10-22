@@ -18,7 +18,7 @@ import {
 import { AUDIT_ACTIONS, writeAudit } from "./audit";
 import { requireClaims, type VerifiedClaims } from "./auth";
 import { apiError } from "./errors";
-import { hasRole, type Role } from "./validation";
+import { hasRole, normalizeDisplayName, type Role } from "./validation";
 
 /**
  * Tenant context injected into every `v1` function by the wrappers below.
@@ -89,6 +89,33 @@ async function findOrg(
 }
 
 /**
+ * D6: the identity provider (Clerk) owns the organization's name. When the verified token
+ * carries a valid `org_name` that differs from the stored one, the stored name follows it
+ * (audited). Without the claim, or with an invalid one, nothing changes.
+ */
+async function syncDisplayName(
+  ctx: MutationCtx,
+  org: Doc<"organizations">,
+  claims: VerifiedClaims,
+): Promise<Doc<"organizations">> {
+  const name = claims.orgName === undefined ? null : normalizeDisplayName(claims.orgName);
+  if (name === null || name === org.displayName) return org;
+  const now = Date.now();
+  await ctx.db.patch(org._id, { displayName: name, updatedAt: now });
+  await writeAudit(
+    ctx.db,
+    { orgId: org._id, issuer: claims.issuer, subject: claims.subject },
+    {
+      action: AUDIT_ACTIONS.orgRenamed,
+      targetType: "organization",
+      targetId: org._id,
+      changes: { displayName: { from: org.displayName, to: name } },
+    },
+  );
+  return { ...org, displayName: name, updatedAt: now };
+}
+
+/**
  * Idempotent provisioning. Convex mutations are serializable transactions, so
  * two concurrent first calls conflict on the index read and one retries; only
  * one organization row is ever created per (issuer, org_id).
@@ -99,14 +126,16 @@ async function ensureOrg(
   app: Doc<"integrationApps">,
 ): Promise<Doc<"organizations">> {
   const existing = await findOrg(ctx.db, claims);
-  if (existing !== null) return existing;
+  if (existing !== null) return await syncDisplayName(ctx, existing, claims);
 
   const now = Date.now();
   const orgId = await ctx.db.insert("organizations", {
     issuer: claims.issuer,
     externalOrgId: claims.externalOrgId,
     appId: app._id,
-    displayName: claims.orgName ?? claims.externalOrgId,
+    displayName:
+      (claims.orgName === undefined ? null : normalizeDisplayName(claims.orgName)) ??
+      claims.externalOrgId,
     reportingCurrency: ORG_DEFAULTS.reportingCurrency,
     timezone: ORG_DEFAULTS.timezone,
     createdAt: now,

@@ -377,6 +377,47 @@ export function redirectParams(response: Response): URLSearchParams {
   return new URL(location).searchParams;
 }
 
+/**
+ * S2: completes a callback redirect the way the dashboard does. `status=pending&claim=<code>`
+ * is claimed with v1/connections:completeConnect AS `identityInput` (by default the same
+ * identity the connect helpers start with). Returns one combined result in the callback's
+ * former shape so flow tests read naturally: `status=connected&connection=<id>`
+ * [`&warning=discovery_failed`], or `status=error&error=<code>` where a refused claim's
+ * reason (invalid_claim, expired_claim, identity_mismatch) is the code. Error redirects are
+ * returned unchanged.
+ */
+export async function claimResult(
+  t: Backend,
+  params: URLSearchParams,
+  identityInput: IdentityInput = {},
+): Promise<URLSearchParams> {
+  if (params.get("status") !== "pending") return params;
+  const claim = params.get("claim");
+  if (claim === null) throw new Error("pending callback result without a claim code");
+  try {
+    const { connectionId, discoveryFailed } = await as(t, identityInput).action(
+      api.v1.connections.completeConnect,
+      { claim },
+    );
+    return new URLSearchParams({
+      status: "connected",
+      connection: connectionId,
+      ...(discoveryFailed ? { warning: "discovery_failed" } : {}),
+    });
+  } catch (error) {
+    const reason = isMarketingError(error) ? error.data.details?.reason : undefined;
+    if (typeof reason !== "string") throw error;
+    return new URLSearchParams({ status: "error", error: reason });
+  }
+}
+
+/** The raw claim code of a pending callback redirect (fails the test otherwise). */
+export function claimCodeOf(response: Response): string {
+  const params = redirectParams(response);
+  expect(params.get("status"), params.get("error") ?? "").toBe("pending");
+  return params.get("claim")!;
+}
+
 // ---------------------------------------------------------------------------
 // Phase 5 sync helpers (mock providers end to end)
 // ---------------------------------------------------------------------------
@@ -398,8 +439,9 @@ export async function setupSyncOrg(t: Backend, identityInput: IdentityInput = {}
 
 /**
  * Connects a mock platform identity through the REAL connect flow (beginConnect
- * -> /oauth/callback -> encrypted credential). `user` selects the mock user and
- * optional scenario, e.g. "1", "1--rate_limited", "1--default--v1".
+ * -> /oauth/callback -> pending grant -> completeConnect by the same user -> encrypted
+ * credential). `user` selects the mock user and optional scenario, e.g. "1",
+ * "1--rate_limited", "1--default--v1".
  */
 export async function connectMock(
   t: Backend,
@@ -416,7 +458,11 @@ export async function connectMock(
     "code",
     mockAuthorizationCode(provider, url.searchParams.get("code_challenge") ?? undefined, user),
   );
-  const params = redirectParams(await followCallback(t, url.toString()));
+  const params = await claimResult(
+    t,
+    redirectParams(await followCallback(t, url.toString())),
+    identityInput,
+  );
   expect(params.get("status"), params.get("error") ?? "").toBe("connected");
   return params.get("connection")!;
 }
@@ -476,7 +522,7 @@ export function stubLiveMeta(graph: FakeGraph, env: Record<string, string> = {})
 /**
  * Connects a Meta identity through the REAL connect flow (beginConnect -> fake
  * Facebook consent -> /oauth/callback -> Meta OAuthSpec against the fake Graph).
- * Returns the callback's redirect parameters.
+ * Returns the connect result: the callback redirect completed by the claim (claimResult).
  */
 export async function connectMetaFake(
   t: Backend,
@@ -492,11 +538,15 @@ export async function connectMetaFake(
   const state = params.get("state")!;
   // Bound to the authorization request's redirect_uri: the exchange must send the same one.
   const code = graph.issueCode(user, params.get("redirect_uri") ?? undefined);
-  return redirectParams(
-    await t.fetch(
-      `/oauth/callback?state=${encodeURIComponent(state)}&code=${encodeURIComponent(code)}`,
-      { method: "GET", redirect: "manual" },
+  return await claimResult(
+    t,
+    redirectParams(
+      await t.fetch(
+        `/oauth/callback?state=${encodeURIComponent(state)}&code=${encodeURIComponent(code)}`,
+        { method: "GET", redirect: "manual" },
+      ),
     ),
+    identityInput,
   );
 }
 
@@ -519,7 +569,7 @@ export function stubLiveGoogle(fake: FakeGoogleAds, env: Record<string, string> 
 /**
  * Connects a Google identity through the REAL connect flow (beginConnect -> fake Google
  * consent bound to the PKCE challenge and redirect URI -> /oauth/callback -> Google OAuthSpec
- * against the fake API). Returns the callback's redirect parameters.
+ * against the fake API). Returns the connect result (callback + claim, see claimResult).
  */
 export async function connectGoogleFake(
   t: Backend,
@@ -537,11 +587,15 @@ export async function connectGoogleFake(
     params.get("code_challenge")!,
     params.get("redirect_uri") ?? undefined,
   );
-  return redirectParams(
-    await t.fetch(
-      `/oauth/callback?state=${encodeURIComponent(params.get("state")!)}&code=${encodeURIComponent(code)}`,
-      { method: "GET", redirect: "manual" },
+  return await claimResult(
+    t,
+    redirectParams(
+      await t.fetch(
+        `/oauth/callback?state=${encodeURIComponent(params.get("state")!)}&code=${encodeURIComponent(code)}`,
+        { method: "GET", redirect: "manual" },
+      ),
     ),
+    identityInput,
   );
 }
 
@@ -561,7 +615,7 @@ export function stubLiveInstagram(fake: FakeInstagram, env: Record<string, strin
 /**
  * Connects an Instagram professional account through the REAL connect flow (beginConnect ->
  * fake Instagram consent -> /oauth/callback -> Instagram OAuthSpec + SDK-free discovery
- * against the fake API). Returns the callback's redirect parameters.
+ * against the fake API). Returns the connect result (callback + claim, see claimResult).
  */
 export async function connectInstagramFake(
   t: Backend,
@@ -576,11 +630,15 @@ export async function connectInstagramFake(
     ...extra,
   });
   const state = new URL(authorizeUrl).searchParams.get("state")!;
-  return redirectParams(
-    await t.fetch(
-      `/oauth/callback?state=${encodeURIComponent(state)}&code=${encodeURIComponent(fake.issueCode(user))}`,
-      { method: "GET", redirect: "manual" },
+  return await claimResult(
+    t,
+    redirectParams(
+      await t.fetch(
+        `/oauth/callback?state=${encodeURIComponent(state)}&code=${encodeURIComponent(fake.issueCode(user))}`,
+        { method: "GET", redirect: "manual" },
+      ),
     ),
+    identityInput,
   );
 }
 
@@ -596,7 +654,11 @@ export async function connectMockInstagram(
   });
   const url = new URL(authorizeUrl);
   url.searchParams.set("code", mockInstagramCode(user));
-  return redirectParams(await followCallback(t, url.toString()));
+  return await claimResult(
+    t,
+    redirectParams(await followCallback(t, url.toString())),
+    identityInput,
+  );
 }
 
 export async function linkSocial(

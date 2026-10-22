@@ -1,3 +1,5 @@
+import { isLocalDeployment } from "../providers/mode";
+
 /**
  * Parses the `AUTH_ISSUERS` Convex environment variable into Convex
  * `customJwt` providers. One entry per trusted parent application:
@@ -17,6 +19,29 @@ export type IssuerConfig = {
   applicationID: string;
   algorithm: "RS256" | "ES256";
 };
+
+/**
+ * The local stand-in issuer minted by scripts/dev-auth.mjs. Its private key lives on developer
+ * machines, so it is only ever trusted by a local deployment (see `assertDevIssuerAllowed`).
+ */
+export const DEV_ISSUER = "https://dev-issuer.marketing.local";
+
+/**
+ * Refuses the dev issuer on a cloud deployment (non-loopback CONVEX_CLOUD_URL): anyone holding
+ * the developer key could otherwise mint admin tokens for any organization. Local deployments
+ * (loopback URL) and in-process tests (no URL) may trust it.
+ */
+export function isDevIssuerAllowed(cloudUrl: string | undefined): boolean {
+  return isLocalDeployment(cloudUrl);
+}
+
+export function assertDevIssuerAllowed(issuers: IssuerConfig[], cloudUrl: string | undefined) {
+  if (!isDevIssuerAllowed(cloudUrl) && issuers.some((entry) => entry.issuer === DEV_ISSUER)) {
+    throw new Error(
+      `AUTH_ISSUERS: the local dev issuer "${DEV_ISSUER}" is refused on a cloud deployment.`,
+    );
+  }
+}
 
 export function parseAuthIssuers(raw: string | undefined): IssuerConfig[] {
   if (raw === undefined || raw.trim() === "") return [];

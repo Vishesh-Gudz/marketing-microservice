@@ -139,7 +139,11 @@ export function DiscoveredAccounts({
       )}
       {notice && <ConnectionNotice notice={notice} />}
       {assets === undefined ? (
-        <Skeleton className="h-32 w-full" aria-label={`Loading discovered ${info.name} accounts`} />
+        <Skeleton
+          className="h-32 w-full"
+          role="status"
+          aria-label={`Loading discovered ${info.name} accounts`}
+        />
       ) : assets.length === 0 ? (
         <>
           {connection.lastError === undefined && (

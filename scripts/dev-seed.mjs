@@ -28,6 +28,8 @@ import { fileURLToPath } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
 import { anyApi } from "convex/server";
 import { DEV_RETURN_URLS, mintToken } from "./dev-auth.mjs";
+import { convexChildEnv } from "./google-ads-tester.mjs";
+import { assertLocalConvexTarget, assertLoopbackUrl } from "./local-convex-guard.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CONVEX_BIN = join(ROOT, "node_modules", "convex", "bin", "main.js");
@@ -82,6 +84,7 @@ function convexRun(fn, args) {
   const result = spawnSync(process.execPath, [CONVEX_BIN, "run", fn, JSON.stringify(args)], {
     cwd: ROOT,
     encoding: "utf8",
+    env: convexChildEnv(process.env),
   });
   if (result.status !== 0) throw new Error(`convex run ${fn} failed:\n${result.stderr}`);
   return JSON.parse(result.stdout);
@@ -103,19 +106,21 @@ async function connect(client, provider, mockUser) {
     returnUrl: DEV_RETURN_URLS[0],
   });
   // The mock provider's consent screen redirects straight to the Convex callback,
-  // which stores the (mock) credential and redirects to the return URL. For the mock
-  // Instagram OAuth the authorization URL IS that callback; its code selects the mock user.
+  // which stores the (mock) grant and redirects to the return URL with a one-time claim
+  // code; the same identity then claims it (S2). For the mock Instagram OAuth the
+  // authorization URL IS that callback; its code selects the mock user.
   const url = new URL(authorizeUrl);
   if (mockUser !== undefined) url.searchParams.set("code", mockInstagramCode(mockUser));
   const response = await fetch(url, { redirect: "manual" });
   const location = response.headers.get("location");
   const params = location ? new URL(location).searchParams : undefined;
-  const connectionId = params?.get("connection");
-  if (!connectionId || params?.get("status") !== "connected") {
+  const claim = params?.get("claim");
+  if (!claim || params?.get("status") !== "pending") {
     throw new Error(
       `Connecting ${provider} failed (status ${params?.get("status") ?? "unknown"}).`,
     );
   }
+  const { connectionId } = await client.action(anyApi.v1.connections.completeConnect, { claim });
   return connectionId;
 }
 
@@ -187,7 +192,12 @@ async function seedInstagram(client, connections, timeoutMs = 180_000) {
 async function main() {
   const org = typeof flag("org") === "string" ? flag("org") : "dev-org";
   const resync = flag("resync") === true;
-  const client = new ConvexHttpClient(convexUrl());
+  // Local development only: the dashboard URL must be the local backend and the Convex CLI
+  // must target the local deployment (never a cloud dev, preview or production deployment).
+  const url = convexUrl();
+  assertLoopbackUrl(url, "NEXT_PUBLIC_CONVEX_URL");
+  assertLocalConvexTarget();
+  const client = new ConvexHttpClient(url);
   client.setAuth(
     await mintToken({ org, role: "admin", sub: "dev-seed", name: "Dev Organization" }),
   );

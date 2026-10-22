@@ -2,9 +2,9 @@
 
 Platform connections and encrypted credentials (Phase 4). See [docs/connections.md](../../docs/connections.md) and [docs/security/credentials.md](../../docs/security/credentials.md).
 
-- `credentialStore.ts`: THE only access to the `credentials` table and the only decryption path (`withConnectionCredential`)
+- `credentialStore.ts`: THE only access to the `credentials` and `oauthGrants` tables and the only decryption path (`withConnectionCredential`); S2 pending grants (`storeGrant`, `claimGrant`, `deleteExpiredGrants`)
 - `oauthState.ts`: single-use, hashed OAuth states
-- `oauthFlow.ts`: callback, discovery and revoke (actions; the only place plaintext exists)
+- `oauthFlow.ts`: callback (stores a pending grant, S2), discovery and revoke (actions; the only place plaintext exists)
 - `assets.ts`: discovered assets and linking to `adAccounts`
 - `lifecycle.ts`: disconnect and `markNeedsReauth`
 - `maintenance.ts`: hourly health sweep

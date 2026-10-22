@@ -157,6 +157,7 @@ describe("Instagram connect flow (live, fake API)", () => {
     expect((await auditActions(t)).map((e) => e.action)).toEqual([
       "org.provisioned",
       "connection.oauth_started",
+      "connection.oauth_granted",
       "connection.connected",
       "connection.assets_discovered",
     ]);
@@ -248,7 +249,10 @@ describe("Instagram connect flow (live, fake API)", () => {
     const t = newBackend();
     await setupSyncOrg(t);
     await expectMarketingError(
-      as(t).action(api.v1.connections.beginConnect, { provider: "instagram" }),
+      as(t).action(api.v1.connections.beginConnect, {
+        provider: "instagram",
+        returnUrl: RETURN_URL,
+      }),
       "INVALID_ARGUMENT",
     );
   });

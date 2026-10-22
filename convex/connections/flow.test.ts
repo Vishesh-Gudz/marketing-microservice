@@ -9,6 +9,7 @@ import {
 } from "../providers/mock/oauth";
 import {
   as,
+  claimResult,
   connectMockInstagram,
   expectMarketingError,
   followCallback,
@@ -37,15 +38,23 @@ async function setup() {
 async function begin(
   t: Backend,
   provider: "meta" | "google_ads" = "meta",
-  extra: Record<string, string> = { returnUrl: RETURN_URL },
+  extra: { returnUrl?: string; reconnectConnectionId?: string } = {},
 ) {
-  return await as(t).action(api.v1.connections.beginConnect, { provider, ...extra });
+  return await as(t).action(api.v1.connections.beginConnect, {
+    provider,
+    returnUrl: RETURN_URL,
+    ...extra,
+  });
+}
+
+/** Callback, then the claim by the same user (S2), as the dashboard does. */
+async function complete(t: Backend, url: string) {
+  return await claimResult(t, redirectParams(await followCallback(t, url)));
 }
 
 async function connect(t: Backend, provider: "meta" | "google_ads" = "meta") {
   const { authorizeUrl } = await begin(t, provider);
-  const response = await followCallback(t, authorizeUrl);
-  const params = redirectParams(response);
+  const params = await complete(t, authorizeUrl);
   expect(params.get("status")).toBe("connected");
   return { connectionId: params.get("connection")!, authorizeUrl };
 }
@@ -140,6 +149,7 @@ describe("OAuth callback", () => {
     expect(await audit(t)).toEqual(
       expect.arrayContaining([
         "connection.oauth_started",
+        "connection.oauth_granted",
         "connection.connected",
         "connection.assets_discovered",
       ]),
@@ -235,24 +245,30 @@ describe("OAuth callback", () => {
     expect(await t.run((ctx) => ctx.db.query("credentials").collect())).toHaveLength(0);
   });
 
-  it("shows a static page when no return URL was requested", async () => {
+  it("refuses a state without a return URL before any exchange (S2: nowhere to claim)", async () => {
     const t = await setup();
-    const { authorizeUrl } = await begin(t, "google_ads", {});
+    const { authorizeUrl } = await begin(t, "google_ads");
+    // A state created before returnUrl became required.
+    await t.run(async (ctx) => {
+      for (const s of await ctx.db.query("oauthStates").collect())
+        await ctx.db.patch(s._id, { returnUrl: undefined });
+    });
     const response = await followCallback(t, authorizeUrl);
     expect(response.status).toBe(200);
-    expect(await response.text()).toContain("Connection complete");
-    expect(await connections(t)).toHaveLength(1);
+    expect(response.headers.get("location")).toBeNull();
+    expect(await response.text()).toContain("Connection failed");
+    expect((await states(t))[0]).toMatchObject({ status: "failed", failureCode: "invalid_state" });
+    expect(await connections(t)).toHaveLength(0);
+    expect(await t.run((ctx) => ctx.db.query("oauthGrants").collect())).toHaveLength(0);
   });
 
   it("keeps the connection but reports discovery failures", async () => {
     const t = await setup();
     const { authorizeUrl } = await begin(t);
     const challenge = new URL(authorizeUrl).searchParams.get("code_challenge")!;
-    const params = redirectParams(
-      await followCallback(
-        t,
-        withCode(authorizeUrl, mockAuthorizationCode("meta", challenge, "revoked")),
-      ),
+    const params = await complete(
+      t,
+      withCode(authorizeUrl, mockAuthorizationCode("meta", challenge, "revoked")),
     );
     expect(params.get("status")).toBe("connected");
     expect(params.get("warning")).toBe("discovery_failed");
@@ -270,11 +286,9 @@ describe("OAuth callback", () => {
     const t = await setup();
     const { authorizeUrl } = await begin(t, "google_ads");
     const challenge = new URL(authorizeUrl).searchParams.get("code_challenge")!;
-    const params = redirectParams(
-      await followCallback(
-        t,
-        withCode(authorizeUrl, mockAuthorizationCode("google_ads", challenge, "limited")),
-      ),
+    const params = await complete(
+      t,
+      withCode(authorizeUrl, mockAuthorizationCode("google_ads", challenge, "limited")),
     );
     const connection = await as(t).query(api.v1.connections.get, {
       connectionId: params.get("connection")!,
@@ -453,17 +467,24 @@ describe("lifecycle", () => {
     );
   });
 
-  it("health sweep: expires states, flags expired tokens, deletes revoked credentials", async () => {
+  it("health sweep: expires states and grants, flags expired tokens, deletes revoked credentials", async () => {
     const t = await setup();
     const { connectionId } = await connect(t);
     await begin(t); // leaves a pending state
+    // Leaves an unclaimed grant (consent completed, never claimed).
+    const { authorizeUrl } = await begin(t);
+    expect(redirectParams(await followCallback(t, authorizeUrl)).get("status")).toBe("pending");
     await t.run(async (ctx) => {
       for (const s of await ctx.db.query("oauthStates").collect())
         await ctx.db.patch(s._id, { expiresAt: Date.now() - 2 * 3_600_000 });
+      for (const g of await ctx.db.query("oauthGrants").collect())
+        await ctx.db.patch(g._id, { expiresAt: Date.now() - 1 });
       await ctx.db.patch(connectionId as Id<"connections">, { tokenExpiresAt: Date.now() - 1 });
     });
     const first = await t.mutation(internal.connections.maintenance.sweep, {});
-    expect(first).toMatchObject({ statesDeleted: 2, expired: 1 });
+    expect(first).toMatchObject({ statesDeleted: 3, grantsDeleted: 1, expired: 1 });
+    expect(await t.run((ctx) => ctx.db.query("oauthGrants").collect())).toHaveLength(0);
+    expect(await audit(t)).toContain("connection.grant_expired");
     expect((await as(t).query(api.v1.connections.get, { connectionId })).status).toBe(
       "needs_reauth",
     );

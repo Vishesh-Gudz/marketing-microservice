@@ -37,13 +37,13 @@ set `CONVEX_TMPDIR` to a folder on the repo's drive.
 
 ## Authentication (development)
 
-The service has no login. Parent applications send signed JWTs (see [api/auth.md](api/auth.md)).
-Locally, `scripts/dev-auth.mjs` stands in for the parent app:
+Users sign in with Clerk (see [api/auth.md](api/auth.md), section 4). Locally you do not need
+Clerk: `scripts/dev-auth.mjs` stands in for an identity provider:
 
 ```bash
 npm run dev:auth setup                              # all of the below in one go
 npm run dev:auth keys                               # RSA key pair -> .dev-keys/ (git-ignored)
-npm run dev:auth apply                              # convex env set AUTH_ISSUERS (JWKS as data: URI)
+npm run dev:auth apply                              # add/replace the dev issuer in AUTH_ISSUERS (keeps others)
 npm run dev:auth seed                               # register the dev issuer in integrationApps
 npm run dev:auth -- token --org acme --role viewer  # mint a token for any org/role
 ```
@@ -53,6 +53,18 @@ connections; never written to disk) and allowlists `http://localhost:3000/` as a
 for the dev app. It writes a 30-day `NEXT_PUBLIC_DEV_AUTH_TOKEN` (org `dev-org`, role `admin`) to
 `.env.local`. Restart `dev:frontend` afterwards. The dashboard header then shows the resolved
 organization, role and reporting currency. Production builds ignore this variable.
+
+**Local only.** `dev:auth`'s deployment commands (`apply`, `seed`, `encryption-key`, `setup`) and
+`dev:seed` refuse to run unless the Convex CLI targets your local (or an anonymous local)
+deployment; deploy keys and `CONVEX_DEPLOYMENT` exported in the shell are ignored. `dev:seed` and the
+live tests also require `NEXT_PUBLIC_CONVEX_URL` to be the local backend
+(`http://127.0.0.1:3210`). Keep `.env.local` pointed at the local backend for local work; never
+at a cloud or production deployment.
+
+**Clerk locally (optional).** Remove `NEXT_PUBLIC_DEV_AUTH_TOKEN`, set the Clerk development
+instance's `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` in `.env.local`, add the Clerk
+development issuer to the local `AUTH_ISSUERS` (`npm run dev:auth apply` keeps it) and register it
+([api/auth.md](api/auth.md), section 4).
 
 `AUTH_ISSUERS` must be set before Convex will deploy (`[]` = trust no issuer). A brand-new
 deployment reports `Environment variable AUTH_ISSUERS is used in auth config file but its value was

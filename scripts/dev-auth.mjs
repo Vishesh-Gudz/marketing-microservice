@@ -1,11 +1,13 @@
 #!/usr/bin/env node
-// Local development stand-in for a parent application's JWT issuer.
+// Local development stand-in for a JWT issuer (production signs in with Clerk).
 // DEV ONLY: keys live in .dev-keys/ (git-ignored) and must never be used in production.
+// Every command that writes to a Convex deployment refuses anything but a LOCAL deployment
+// (scripts/local-convex-guard.mjs); AUTH_ISSUERS is merged, never replaced.
 //
 //   node scripts/dev-auth.mjs setup                 keys (if missing) + AUTH_ISSUERS + register app + dashboard token
 //   node scripts/dev-auth.mjs keys [--force]        generate RSA key pair + JWKS
 //   node scripts/dev-auth.mjs env                   print AUTH_ISSUERS JSON for the dev issuer
-//   node scripts/dev-auth.mjs apply                 npx convex env set AUTH_ISSUERS <json>
+//   node scripts/dev-auth.mjs apply                 add/replace the dev issuer in AUTH_ISSUERS (keeps others)
 //   node scripts/dev-auth.mjs seed                  register the dev issuer (+ localhost OAuth return URLs)
 //   node scripts/dev-auth.mjs encryption-key [--force]  set TOKEN_ENCRYPTION_KEYS in the Convex env (never on disk)
 //   node scripts/dev-auth.mjs token --org acme --role admin [--sub user_1] [--name "Acme"]
@@ -17,6 +19,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { exportJWK, exportPKCS8, generateKeyPair, importPKCS8, SignJWT } from "jose";
+import { convexChildEnv } from "./google-ads-tester.mjs";
+import { assertLocalConvexTarget, runLocalConvex } from "./local-convex-guard.mjs";
 
 export const DEV_ISSUER = "https://dev-issuer.marketing.local";
 export const DEV_AUDIENCE = "marketing-service";
@@ -50,14 +54,50 @@ function requireKeys() {
   }
 }
 
-/** AUTH_ISSUERS value for the dev issuer; JWKS inlined as a data: URI (no HTTP fetch). */
-export function authIssuersJson() {
+/** The dev issuer's AUTH_ISSUERS entry; JWKS inlined as a data: URI (no HTTP fetch). */
+export function devIssuerEntry() {
   requireKeys();
   const jwks = readFileSync(JWKS_PATH, "utf8");
   const dataUri = `data:text/plain;charset=utf-8;base64,${Buffer.from(jwks).toString("base64")}`;
-  return JSON.stringify([
-    { issuer: DEV_ISSUER, jwks: dataUri, applicationID: DEV_AUDIENCE, algorithm: "RS256" },
-  ]);
+  return { issuer: DEV_ISSUER, jwks: dataUri, applicationID: DEV_AUDIENCE, algorithm: "RS256" };
+}
+
+/** AUTH_ISSUERS value with only the dev issuer (printed by `env`). */
+export function authIssuersJson() {
+  return JSON.stringify([devIssuerEntry()]);
+}
+
+/**
+ * The AUTH_ISSUERS value with the dev issuer's entry added or replaced and every other issuer
+ * kept (e.g. the Clerk development instance). An unreadable current value is refused, never
+ * overwritten.
+ */
+export function mergeDevIssuer(currentRaw, devEntry) {
+  let current = [];
+  if (currentRaw !== undefined && currentRaw.trim() !== "") {
+    let parsed;
+    try {
+      parsed = JSON.parse(currentRaw);
+    } catch {
+      parsed = undefined;
+    }
+    if (!Array.isArray(parsed)) {
+      throw new Error("AUTH_ISSUERS is not a JSON array; fix it first (it is never overwritten).");
+    }
+    current = parsed;
+  }
+  const others = current.filter(
+    (entry) => !(entry && typeof entry === "object" && entry.issuer === devEntry.issuer),
+  );
+  return JSON.stringify([...others, devEntry]);
+}
+
+/** The current AUTH_ISSUERS of the local deployment (undefined when unset). Never printed. */
+function readAuthIssuers() {
+  const result = runLocalConvex(["env", "get", "AUTH_ISSUERS"]);
+  if (result.status === 0) return result.stdout.replace(/\r?\n$/, "");
+  if (/not found/i.test(`${result.stdout}\n${result.stderr}`)) return undefined;
+  throw new Error("Could not read AUTH_ISSUERS from the local deployment.");
 }
 
 function convex(args) {
@@ -65,12 +105,13 @@ function convex(args) {
   const result = spawnSync(process.execPath, [CONVEX_BIN, ...args], {
     cwd: ROOT,
     stdio: "inherit",
+    env: convexChildEnv(process.env),
   });
   if (result.status !== 0) throw new Error(`convex ${args[0]} ${args[1] ?? ""} failed`);
 }
 
 export function applyAuthIssuers() {
-  convex(["env", "set", "AUTH_ISSUERS", authIssuersJson()]);
+  convex(["env", "set", "AUTH_ISSUERS", mergeDevIssuer(readAuthIssuers(), devIssuerEntry())]);
 }
 
 export function seedDevApp() {
@@ -95,6 +136,7 @@ export function ensureEncryptionKey({ force = false } = {}) {
   const current = spawnSync(process.execPath, [CONVEX_BIN, "env", "get", "TOKEN_ENCRYPTION_KEYS"], {
     cwd: ROOT,
     encoding: "utf8",
+    env: convexChildEnv(process.env),
   });
   if (!force && current.status === 0 && current.stdout.trim() !== "") {
     console.log("TOKEN_ENCRYPTION_KEYS already set (use --force to replace).");
@@ -107,6 +149,7 @@ export function ensureEncryptionKey({ force = false } = {}) {
     {
       cwd: ROOT,
       stdio: ["ignore", "ignore", "inherit"],
+      env: convexChildEnv(process.env),
     },
   );
   if (result.status !== 0) throw new Error("convex env set TOKEN_ENCRYPTION_KEYS failed");
@@ -173,6 +216,9 @@ function upsertEnvLocal(key, value) {
   writeFileSync(ENV_LOCAL_PATH, lines.join("\n").replace(/\n{3,}/g, "\n\n"));
 }
 
+/** Commands that write to a Convex deployment: local deployments only. */
+export const DEPLOYMENT_COMMANDS = new Set(["apply", "seed", "encryption-key", "setup"]);
+
 function parseFlags(argv) {
   const flags = {};
   for (let i = 0; i < argv.length; i++) {
@@ -189,6 +235,7 @@ function parseFlags(argv) {
 async function main() {
   const [command, ...rest] = process.argv.slice(2);
   const flags = parseFlags(rest);
+  if (DEPLOYMENT_COMMANDS.has(command)) assertLocalConvexTarget();
 
   switch (command) {
     case "keys":

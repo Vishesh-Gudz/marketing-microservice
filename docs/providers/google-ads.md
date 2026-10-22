@@ -576,9 +576,9 @@ cannot sign in or connect real accounts yet (Phase 15).
    allowlisted for the dev integration app there (`admin/integrationApps:setAllowedReturnUrls`).
    How to configure this without changing `.env.local` is still to be decided. Never use the dev
    issuer on production.
-6. **Known test users only:** the
-   [callback ownership gap](../security/credentials.md#known-gap-oauth-callback-ownership) makes
-   the flow unsafe for public or multi-tenant use.
+6. **Callback ownership (S2):** a consent becomes a connection only when the user who started it
+   claims it ([security/credentials.md](../security/credentials.md#oauth-callback-ownership-s2)); cloud
+   deployments still need `OAUTH_CONNECTIONS_ENABLED=true` (an approved operator step).
 7. Afterwards, return the deployment to safe mode (remove `PROVIDER_MODE`).
 
 What a first real run should confirm: consent and return to `/connections`; discovery through a
@@ -608,22 +608,26 @@ validation tool, not the user-facing flow (that is the dashboard's
 
 **Commands** (`node scripts/google-ads-tester.mjs <command> --deployment <name>`):
 
-| Command                                                             | Does                                                                                                                                         |
-| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `guard-check`                                                       | runs the guard only                                                                                                                          |
-| `connect [--port N]`                                                | requires `PROVIDER_MODE=live`; `beginConnect` (verifies `redirect_uri`), one-time redirect at `http://127.0.0.1:<port>/start`, waits ≤10 min |
-| `discover [--connection id]`                                        | customer id, name, type, manager relation, `testAccountStatus` (literal `unknown`), status, linked                                           |
-| `link --customer <id> [--connection id] [--allow-non-test-account]` | exactly ONE confirmed client; the exact customer id must be typed to confirm                                                                 |
-| `status`                                                            | connection health and per-account sync state / last error reason                                                                             |
-| `report [--days N]`                                                 | v1 analytics overview, coverage and campaign rows of the linked Google accounts                                                              |
+| Command                                                             | Does                                                                                                                                                                                  |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `guard-check`                                                       | runs the guard only                                                                                                                                                                   |
+| `connect [--port N]`                                                | requires `PROVIDER_MODE=live`; `beginConnect` (verifies `redirect_uri`), one-time redirect at `http://127.0.0.1:<port>/start`, waits ≤10 min for the return at `/return`, then claims |
+| `discover [--connection id]`                                        | customer id, name, type, manager relation, `testAccountStatus` (literal `unknown`), status, linked                                                                                    |
+| `link --customer <id> [--connection id] [--allow-non-test-account]` | exactly ONE confirmed client; the exact customer id must be typed to confirm                                                                                                          |
+| `status`                                                            | connection health and per-account sync state / last error reason                                                                                                                      |
+| `report [--days N]`                                                 | v1 analytics overview, coverage and campaign rows of the linked Google accounts                                                                                                       |
 
 - `--allow-non-test-account` is an acknowledgement only (for `not_test` / `unknown`): it never
   unlocks managers or unknown types and never bypasses Google's access rules (a Test-access Cloud
   project still gets `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION` on production accounts).
 - Every printed line passes a redactor (JWTs, bearer tokens, OAuth URLs and `state` / `code` /
   token parameters, Google token shapes, deploy keys, private keys, emails).
-- The OAuth return URL is the dev integration app's allowlisted `http://localhost:3000/`; the tool
-  learns the result from `v1/connections:list` and the sanitized `connection.oauth_failed` audit.
+- S2: the OAuth return URL is the tool's own loopback server, `http://127.0.0.1:<port>/return`
+  (default port 4455), which accepts one return after `/start` and shows fixed text. A pending
+  result's claim code is redeemed with `completeConnect` as the tool's identity (never printed);
+  an error result is explained from the sanitized `connection.oauth_failed` audit. The origin
+  `http://127.0.0.1:<port>/` must be allowlisted for the dev integration app on the validation
+  deployment (`admin/integrationApps:setAllowedReturnUrls`, an approved operator step).
 
 **Operator steps outside the tool (each needs explicit approval):** set `DEPLOYMENT_ROLE` on the
 validation deployment, deploy the code, set `PROVIDER_MODE=live` there only, add the tester's

@@ -18,7 +18,7 @@ export function TimeSeriesPanel({ args, title }: { args: TimeSeriesArgs; title?:
   const { data, isLoading, isUpdating } = useAnalyticsQuery(api.v1.analytics.timeSeries, args);
 
   if (isLoading || !data) {
-    return <Skeleton className="h-80 w-full rounded-lg" aria-label="Loading chart" />;
+    return <Skeleton className="h-80 w-full rounded-lg" role="status" aria-label="Loading chart" />;
   }
   return (
     <div className={cn("rounded-lg border p-4", isUpdating && "opacity-60")} aria-busy={isUpdating}>

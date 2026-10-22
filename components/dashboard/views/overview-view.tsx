@@ -65,7 +65,7 @@ function PlatformSplit({ args }: { args: BreakdownArgs }) {
         Spend by platform
       </h2>
       {isLoading || !data ? (
-        <Skeleton className="h-16 w-full" aria-label="Loading platform split" />
+        <Skeleton className="h-16 w-full" role="status" aria-label="Loading platform split" />
       ) : data.groups.length === 0 ? (
         <p className="text-sm text-muted-foreground">No platforms in this scope.</p>
       ) : (
@@ -98,7 +98,9 @@ function TopCampaigns({ args }: { args: PerformanceArgs }) {
           All campaigns
         </Link>
       </div>
-      {isLoading && <Skeleton className="h-24 w-full" aria-label="Loading campaigns" />}
+      {isLoading && (
+        <Skeleton className="h-24 w-full" role="status" aria-label="Loading campaigns" />
+      )}
       {data && data.page.length === 0 && (
         <p className="text-sm text-muted-foreground">No campaigns in this scope yet.</p>
       )}

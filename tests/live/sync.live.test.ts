@@ -1,10 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ConvexHttpClient } from "convex/browser";
 import { beforeAll, describe, expect, it } from "vitest";
 import { api } from "../../convex/_generated/api";
 import { DEV_RETURN_URLS, mintToken } from "../../scripts/dev-auth.mjs";
+import { liveConvexUrl } from "./local-backend";
+import { assertLocalMockDeployment } from "../../scripts/e2e-connections.mjs";
 
 // Opt-in (`npm run test:live`): a complete mock sync on the REAL Convex runtime
 // (scheduler, action/mutation limits, pagination limits) rather than convex-test.
@@ -13,13 +14,8 @@ import { DEV_RETURN_URLS, mintToken } from "../../scripts/dev-auth.mjs";
 // start the sync and report status. Prerequisites: `npm run dev:backend` +
 // `npm run dev:auth setup`.
 
-function envLocal(name: string): string | undefined {
-  const path = join(process.cwd(), ".env.local");
-  if (!existsSync(path)) return undefined;
-  return new RegExp(`^${name}=(.+)$`, "m").exec(readFileSync(path, "utf8"))?.[1]?.trim();
-}
-
-const url = process.env.NEXT_PUBLIC_CONVEX_URL ?? envLocal("NEXT_PUBLIC_CONVEX_URL") ?? "";
+// Local backend only (loopback): the live tests never reach a cloud or production deployment.
+const url = liveConvexUrl();
 const run = Date.now().toString(36);
 const returnUrl = `${DEV_RETURN_URLS[0]}settings/connections`;
 const CONVEX_BIN = join(process.cwd(), "node_modules", "convex", "bin", "main.js");
@@ -60,6 +56,9 @@ async function client(org: string) {
 
 beforeAll(() => {
   if (!url) throw new Error("NEXT_PUBLIC_CONVEX_URL not found. Run `npm run dev:backend`.");
+  // These flows follow the authorization URL. Only a local MOCK deployment answers it locally;
+  // in live mode it would be a real Meta/Google sign-in URL. Refuse before connecting anything.
+  assertLocalMockDeployment();
 });
 
 describe("live sync (mock providers, real runtime)", () => {
@@ -73,7 +72,9 @@ describe("live sync (mock providers, real runtime)", () => {
       returnUrl,
     });
     const callback = await fetch(authorizeUrl, { redirect: "manual" });
-    const connectionId = new URL(callback.headers.get("location")!).searchParams.get("connection")!;
+    // S2: the callback returns a one-time claim code; the same admin redeems it.
+    const claim = new URL(callback.headers.get("location")!).searchParams.get("claim")!;
+    const { connectionId } = await admin.action(api.v1.connections.completeConnect, { claim });
     const [account] = await admin.mutation(api.v1.connections.linkAdAccounts, {
       connectionId,
       externalIds: [externalId],

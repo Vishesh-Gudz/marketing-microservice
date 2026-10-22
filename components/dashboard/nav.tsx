@@ -2,6 +2,7 @@
 
 import {
   BarChart3,
+  Building2,
   Camera,
   Layers,
   LayoutDashboard,
@@ -23,6 +24,8 @@ export const NAV_ITEMS = [
   { href: "/accounts", label: "Accounts", icon: Wallet },
   // Phase 10: organic Instagram, separate from the paid pages above.
   { href: "/social", label: "Organic", icon: Camera },
+  // Standalone SaaS: members, invitations and roles (Clerk organization profile, D9).
+  { href: "/organization", label: "Organization", icon: Building2 },
   // Google Ads connection management (connect, choose the account, follow its sync).
   { href: "/connections", label: "Connections", icon: Plug },
 ] as const;

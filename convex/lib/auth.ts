@@ -1,6 +1,7 @@
 import type { Auth, UserIdentity } from "convex/server";
+import { DEV_ISSUER, isDevIssuerAllowed } from "./authIssuers";
 import { apiError } from "./errors";
-import { isRole, isValidExternalOrgId, type Role } from "./validation";
+import { isValidExternalOrgId, normalizeRoleClaim, type Role } from "./validation";
 
 /**
  * JWT claim contract for parent applications (see docs/api/auth.md).
@@ -34,11 +35,11 @@ export function parseClaims(identity: UserIdentity): VerifiedClaims {
     );
   }
 
-  const role = identity[CLAIMS.role];
-  if (!isRole(role)) {
+  const role = normalizeRoleClaim(identity[CLAIMS.role]);
+  if (role === null) {
     throw apiError(
       "INVALID_TOKEN_CLAIMS",
-      `Token claim "${CLAIMS.role}" is missing or invalid (expected viewer, editor or admin).`,
+      `Token claim "${CLAIMS.role}" is missing or invalid (expected viewer, editor or admin, or Clerk's org:viewer, org:editor or org:admin).`,
       { claim: CLAIMS.role },
     );
   }
@@ -63,6 +64,11 @@ export function parseClaims(identity: UserIdentity): VerifiedClaims {
 export async function requireClaims(ctx: { auth: Auth }): Promise<VerifiedClaims> {
   const identity = await ctx.auth.getUserIdentity();
   if (identity === null) {
+    throw apiError("UNAUTHENTICATED", "A valid bearer token from a registered issuer is required.");
+  }
+  // The dev issuer's key lives on developer machines: a cloud deployment never accepts it,
+  // even if AUTH_ISSUERS were misconfigured to trust it.
+  if (identity.issuer === DEV_ISSUER && !isDevIssuerAllowed(process.env.CONVEX_CLOUD_URL)) {
     throw apiError("UNAUTHENTICATED", "A valid bearer token from a registered issuer is required.");
   }
   return parseClaims(identity);

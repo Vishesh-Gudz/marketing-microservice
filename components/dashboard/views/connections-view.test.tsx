@@ -807,6 +807,76 @@ describe("OAuth callback result", () => {
   });
 });
 
+describe("OAuth claim (S2)", () => {
+  const COMPLETE = "v1/connections:completeConnect";
+  const CLAIM = "Aa0_-".repeat(8) + "xyz";
+
+  it("claims a pending consent exactly once, strips the code, then confirms that connection", async () => {
+    setUrl("/connections", `preset=last_7_days&status=pending&claim=${CLAIM}&connect=google_ads`);
+    setup({
+      connections: [
+        connection({ id: C1, connectedAt: "2026-09-01T10:00:00.000Z" }),
+        connection({ id: C2, connectedAt: "2026-09-02T10:00:00.000Z" }),
+      ],
+    });
+    let finish: (value: { connectionId: string; discoveryFailed: boolean }) => void = () => {};
+    mockAction(COMPLETE).mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    const { rerender } = renderWithOrg(<ConnectionsView />);
+
+    // While the server checks the claim: an in-progress notice; the code is already gone.
+    expect(screen.getByLabelText("Finishing the Google Ads connection…")).toBeInTheDocument();
+    expect(routerReplace).toHaveBeenCalledExactlyOnceWith("/connections?preset=last_7_days", {
+      scroll: false,
+    });
+    expect(document.body.textContent).not.toContain(CLAIM);
+
+    finish({ connectionId: C1, discoveryFailed: false });
+    await waitFor(() => expect(screen.getByLabelText("Google Ads connected")).toBeInTheDocument());
+    // The claimed (older) connection is shown, not the newest one.
+    expect(screen.getByRole("combobox", { name: "Google connection" })).toHaveValue(C1);
+    rerender(<ConnectionsView />);
+    expect(mockAction(COMPLETE)).toHaveBeenCalledExactlyOnceWith({ claim: CLAIM });
+  });
+
+  it("warns when discovery failed after the claim", async () => {
+    setUrl("/connections", `status=pending&claim=${CLAIM}&connect=meta`);
+    setup();
+    mockAction(COMPLETE).mockResolvedValue({ connectionId: C1, discoveryFailed: true });
+    renderWithOrg(<ConnectionsView />);
+    expect(
+      await screen.findByLabelText("Meta Ads connected, but your accounts could not be loaded"),
+    ).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      apiError("NOT_FOUND", "x", { reason: "invalid_claim" }),
+      "This connection request is not valid",
+    ],
+    [apiError("CONFLICT", "x", { reason: "expired_claim" }), "The connection request expired"],
+    [
+      apiError("CONFLICT", "x", { reason: "identity_mismatch" }),
+      "A different Google account was used",
+    ],
+    [apiError("FORBIDDEN", "x"), "Admins only"],
+  ])("shows a fixed notice when the claim is refused (%#)", async (error, title) => {
+    setUrl("/connections", `status=pending&claim=${CLAIM}&connect=google_ads`);
+    setup({ connections: [] });
+    mockAction(COMPLETE).mockRejectedValue(error);
+    renderWithOrg(<ConnectionsView />);
+    expect(await screen.findByLabelText(title)).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain(CLAIM);
+  });
+
+  it("never claims a malformed code", () => {
+    setUrl("/connections", "status=pending&claim=not-a-claim-code&connect=google_ads");
+    setup();
+    renderWithOrg(<ConnectionsView />);
+    expect(screen.getByLabelText("The connection result could not be read")).toBeInTheDocument();
+    expect(mockAction(COMPLETE)).not.toHaveBeenCalled();
+  });
+});
+
 describe("discovered accounts and linking", () => {
   it("lists every discovered account with its facts; only confirmed clients are selectable", () => {
     setup();
