@@ -60,7 +60,7 @@ function BreakdownTable({ args }: { args: BreakdownArgs }) {
   const { data, isLoading, isUpdating } = useAnalyticsQuery(api.v1.analytics.breakdown, args);
   const { data: accounts } = useAnalyticsQuery(api.v1.adAccounts.list, {});
   if (isLoading || !data)
-    return <Skeleton className="h-64 w-full" aria-label="Loading breakdown" />;
+    return <Skeleton className="h-64 w-full" role="status" aria-label="Loading breakdown" />;
   const accountName = new Map((accounts ?? []).map((a) => [a.id, a.name]));
   const labelOf = (group: BreakdownGroup) => {
     if (data.by === "account") return accountName.get(group.accountId ?? "") ?? "Ad account";

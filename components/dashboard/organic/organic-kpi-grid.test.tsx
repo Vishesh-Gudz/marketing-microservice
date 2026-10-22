@@ -67,7 +67,9 @@ describe("OrganicKpiGrid", () => {
         })}
       />,
     );
-    expect(within(card("Views")).getByLabelText("(partial data)")).toBeInTheDocument();
+    // Screen-reader text; the visible asterisk is hidden from assistive technology.
+    expect(within(card("Views")).getByText("(partial data)")).toHaveClass("sr-only");
+    expect(within(card("Views")).getByText("*")).toHaveAttribute("aria-hidden", "true");
   });
 
   it("a single-day engagement rate is the API value; zero reach is explained", () => {

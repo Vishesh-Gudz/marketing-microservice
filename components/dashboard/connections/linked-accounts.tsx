@@ -39,7 +39,13 @@ export function LinkedAccounts({ provider }: { provider: AdConnectionProvider })
   const headingId = `${provider}-linked-accounts`;
 
   if (accounts === undefined) {
-    return <Skeleton className="h-24 w-full" aria-label={`Loading linked ${info.name} accounts`} />;
+    return (
+      <Skeleton
+        className="h-24 w-full"
+        role="status"
+        aria-label={`Loading linked ${info.name} accounts`}
+      />
+    );
   }
   const linked = accounts.filter((a) => a.platform === provider && a.linked && !a.isManager);
 

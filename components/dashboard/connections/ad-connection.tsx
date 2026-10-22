@@ -42,7 +42,13 @@ export function AdConnection({
   const [disconnected, setDisconnected] = useState<Notice | null>(null);
 
   if (connections === undefined) {
-    return <Skeleton className="h-24 w-full" aria-label={`Loading the ${info.name} connection`} />;
+    return (
+      <Skeleton
+        className="h-24 w-full"
+        role="status"
+        aria-label={`Loading the ${info.name} connection`}
+      />
+    );
   }
   const candidates = adConnections(connections, provider);
   const connection = pickConnection(candidates, chosenId ?? preferredConnectionId);

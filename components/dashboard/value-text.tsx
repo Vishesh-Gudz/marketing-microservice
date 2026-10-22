@@ -4,6 +4,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ValueView } from "@/lib/analytics/values";
 import { cn } from "@/lib/utils";
+import { PartialMarker } from "./partial-marker";
 
 /**
  * Renders a ValueView (D10/D11): the exact formatted value with a partial-data
@@ -31,9 +32,7 @@ export function ValueText({ view, className }: { view: ValueView; className?: st
     );
   }
   const partial = view.partial && (
-    <span className="ml-0.5 text-amber-600 dark:text-amber-400" aria-label="(partial data)">
-      *
-    </span>
+    <PartialMarker className="ml-0.5 text-amber-600 dark:text-amber-400" />
   );
   if (!view.detail) {
     return (

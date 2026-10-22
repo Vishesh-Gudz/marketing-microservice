@@ -40,7 +40,7 @@ function AccountsTable({ args }: { args: BreakdownArgs }) {
   // KPIs and coverage per account for the selected range.
   const { data: breakdown, isUpdating } = useAnalyticsQuery(api.v1.analytics.breakdown, args);
   if (accounts === undefined) {
-    return <Skeleton className="h-48 w-full" aria-label="Loading accounts" />;
+    return <Skeleton className="h-48 w-full" role="status" aria-label="Loading accounts" />;
   }
   const visible = accounts.filter((a) => !a.isManager);
   if (visible.length === 0) {

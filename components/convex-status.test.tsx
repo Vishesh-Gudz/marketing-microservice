@@ -24,4 +24,18 @@ describe("ConvexStatus", () => {
     render(<ConvexStatus />);
     expect(screen.getByText("Convex: marketing-microservice")).toBeInTheDocument();
   });
+
+  // Regression: the variant swap must be instant. A color transition made accessibility scans
+  // sample an intermediate (failing) text color while the badge changed state.
+  it.each([
+    ["connecting", undefined],
+    ["connected", { ok: true, service: "marketing-microservice" }],
+    ["unhealthy", { ok: false, service: "marketing-microservice" }],
+  ])("never animates its colors (%s)", (_label, health) => {
+    useQueryMock.mockReturnValue(health);
+    const { container } = render(<ConvexStatus />);
+    const badge = container.querySelector('[data-slot="badge"]')!;
+    expect(badge.className).toContain("transition-none");
+    expect(badge.className).not.toMatch(/transition-\[color/);
+  });
 });
