@@ -1,0 +1,52 @@
+# ADR 0013 — WhatsApp inbox
+
+- Status: in progress. Stage 1 (inbound webhook slice) implemented and tested against signed
+  fake deliveries only. Embedded Signup, outbound sending and the dashboard are not built yet.
+  No real Meta interaction has happened; every payload shape is provisional.
+- Date: 2026-10-22
+
+## Context
+
+Customers connect their own WhatsApp Business numbers (Meta Embedded Signup) and answer
+customers from a shared inbox. Meta delivers inbound messages and delivery statuses to one
+webhook URL per app, authenticated only by an HMAC signature with the app secret: the request
+says nothing trustworthy about which tenant it belongs to. No real WhatsApp Business account is
+available.
+
+## Decisions
+
+1. **Webhook on Convex HTTP actions** (`/whatsapp/webhook`). GET answers Meta's verification
+   handshake with the configured verify token (constant-time compare). POST verifies
+   `X-Hub-Signature-256` (HMAC-SHA256 over the exact raw bytes, `crypto.subtle.verify`) before
+   decoding or parsing anything. Missing configuration fails closed (GET 403, POST 503).
+2. **Strict parsing.** A wrong envelope (object, entry, changes, metadata) rejects the whole
+   delivery (400). Invalid individual messages / statuses are skipped and counted, so one
+   unexpected item cannot block a batch through endless Meta retries. Only allowlisted fields
+   are copied; payload organization ids are ignored. Size limits: 3 MiB body, 1000 events.
+3. **Tenant = registered phone number.** `whatsappPhoneNumbers` maps a Meta `phone_number_id`
+   to one org. Its global index `by_phone_number_status` is the fifth approved global index
+   (convex/schema.test.ts): the webhook cannot be tenant-authenticated, so the org must be
+   derived server-side. At most one `active` row per number (enforced on register); the
+   webhook also requires exactly one active row and a matching WABA id, otherwise it drops the
+   change (still 200, so Meta does not retry forever).
+4. **Idempotent, asynchronous ingestion.** One fast mutation stores each event once per org
+   under a dedupe key (`message:<wamid>`, `status:<wamid>:<status>`) and schedules processing in
+   batches of 100. Processing applies only `pending` events in the same transaction that marks
+   them done, so redelivery, retries and re-runs change nothing. Event bodies are cleared once
+   applied.
+5. **Statuses only move forward** (pending < submitted < sent < delivered < read; failed is
+   terminal and only before delivery). Out-of-order reports still record their timestamps.
+   A status for an unknown message is kept `unmatched` with its body for the send path.
+6. **No logging** in `convex/whatsapp/**` and `convex/v1/whatsapp.ts` (ESLint `no-console`).
+   Message bodies are stored for the inbox, never logged; failures keep only a numeric code.
+7. **Read API** `v1/whatsapp:listConversations`, `getConversation`, `listMessages` (viewer).
+   The 24-hour service window is exposed only as `serviceWindowExpiresAt`; send-time
+   enforcement is server-side (later stage).
+
+## Consequences
+
+- New Convex env vars: `WHATSAPP_APP_SECRET`, `WHATSAPP_WEBHOOK_VERIFY_TOKEN`.
+- Webhook events are kept (bodies cleared) for deduplication; retention is not implemented yet.
+- Open risks (event retention, unmatched-status replay, stuck-event recovery, number-transfer
+  timing, maximum-size deliveries) are listed in [docs/whatsapp.md](../whatsapp.md#open-risks-stage-1).
+- See [docs/whatsapp.md](../whatsapp.md) for the setup checklist and real-account validation.

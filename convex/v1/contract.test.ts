@@ -98,6 +98,9 @@ describe("public API contract", () => {
       "v1/socialAccounts:list",
       "v1/socialPosts:get",
       "v1/socialPosts:list",
+      "v1/whatsapp:getConversation",
+      "v1/whatsapp:listConversations",
+      "v1/whatsapp:listMessages",
     ]);
   });
 

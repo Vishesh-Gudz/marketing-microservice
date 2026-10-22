@@ -283,5 +283,43 @@ exports[`schema inventory > declares the approved indexes 1`] = `
       "seq",
     ],
   },
+  "whatsappConversations": {
+    "by_org_last_message": [
+      "orgId",
+      "lastMessageAt",
+    ],
+    "by_org_number_contact": [
+      "orgId",
+      "numberId",
+      "contactWaId",
+    ],
+  },
+  "whatsappMessages": {
+    "by_org_conversation_platform": [
+      "orgId",
+      "conversationId",
+      "platformAt",
+    ],
+    "by_org_wamid": [
+      "orgId",
+      "wamid",
+    ],
+  },
+  "whatsappPhoneNumbers": {
+    "by_org_phone_number": [
+      "orgId",
+      "phoneNumberId",
+    ],
+    "by_phone_number_status": [
+      "phoneNumberId",
+      "status",
+    ],
+  },
+  "whatsappWebhookEvents": {
+    "by_org_dedupe": [
+      "orgId",
+      "dedupeKey",
+    ],
+  },
 }
 `;

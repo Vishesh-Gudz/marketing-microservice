@@ -6,11 +6,14 @@ import { metricTables } from "./tables/metrics";
 import { socialTables } from "./tables/social";
 import { syncTables } from "./tables/sync";
 import { tenancyTables } from "./tables/tenancy";
+import { whatsappTables } from "./tables/whatsapp";
 
 // Conventions (enforced by convex/schema.test.ts):
 // - Every table except the global integrationApps/organizations/fxRates carries `orgId`,
-//   and every index on those tables starts with `orgId` (four approved global
-//   system indexes: three in tables/connections.ts, one in tables/sync.ts).
+//   and every index on those tables starts with `orgId` (seven approved global
+//   system indexes: five in tables/connections.ts, including the S2 oauthGrants claim
+//   lookup and sweep; one in tables/sync.ts; and the WhatsApp webhook's tenant lookup
+//   in tables/whatsapp.ts).
 // - Money fields (*Micros) are int64 micros; calendar dates are "YYYY-MM-DD" strings.
 // Tables for later phases (inbox, alerts) are added by the phase that writes
 // them. See docs/data-model.md.
@@ -22,4 +25,5 @@ export default defineSchema({
   ...connectionTables,
   ...syncTables,
   ...analyticsTables,
+  ...whatsappTables,
 });
