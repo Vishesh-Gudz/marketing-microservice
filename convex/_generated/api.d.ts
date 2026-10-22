@@ -152,6 +152,7 @@ import type * as tables_metrics from "../tables/metrics.js";
 import type * as tables_social from "../tables/social.js";
 import type * as tables_sync from "../tables/sync.js";
 import type * as tables_tenancy from "../tables/tenancy.js";
+import type * as tables_whatsapp from "../tables/whatsapp.js";
 import type * as tenancy from "../tenancy.js";
 import type * as v1_adAccounts from "../v1/adAccounts.js";
 import type * as v1_analytics from "../v1/analytics.js";
@@ -165,10 +166,22 @@ import type * as v1_dto_org from "../v1/dto/org.js";
 import type * as v1_dto_organicAnalytics from "../v1/dto/organicAnalytics.js";
 import type * as v1_dto_socialAccount from "../v1/dto/socialAccount.js";
 import type * as v1_dto_socialPost from "../v1/dto/socialPost.js";
+import type * as v1_dto_whatsapp from "../v1/dto/whatsapp.js";
 import type * as v1_organicAnalytics from "../v1/organicAnalytics.js";
 import type * as v1_orgs from "../v1/orgs.js";
 import type * as v1_socialAccounts from "../v1/socialAccounts.js";
 import type * as v1_socialPosts from "../v1/socialPosts.js";
+import type * as v1_whatsapp from "../v1/whatsapp.js";
+import type * as whatsapp_config from "../whatsapp/config.js";
+import type * as whatsapp_ingest from "../whatsapp/ingest.js";
+import type * as whatsapp_payload from "../whatsapp/payload.js";
+import type * as whatsapp_phoneNumbers from "../whatsapp/phoneNumbers.js";
+import type * as whatsapp_processing from "../whatsapp/processing.js";
+import type * as whatsapp_signature from "../whatsapp/signature.js";
+import type * as whatsapp_status from "../whatsapp/status.js";
+import type * as whatsapp_validators from "../whatsapp/validators.js";
+import type * as whatsapp_webhook from "../whatsapp/webhook.js";
+import type * as whatsapp_window from "../whatsapp/window.js";
 
 import type {
   ApiFromModules,
@@ -321,6 +334,7 @@ declare const fullApi: ApiFromModules<{
   "tables/social": typeof tables_social;
   "tables/sync": typeof tables_sync;
   "tables/tenancy": typeof tables_tenancy;
+  "tables/whatsapp": typeof tables_whatsapp;
   tenancy: typeof tenancy;
   "v1/adAccounts": typeof v1_adAccounts;
   "v1/analytics": typeof v1_analytics;
@@ -334,10 +348,22 @@ declare const fullApi: ApiFromModules<{
   "v1/dto/organicAnalytics": typeof v1_dto_organicAnalytics;
   "v1/dto/socialAccount": typeof v1_dto_socialAccount;
   "v1/dto/socialPost": typeof v1_dto_socialPost;
+  "v1/dto/whatsapp": typeof v1_dto_whatsapp;
   "v1/organicAnalytics": typeof v1_organicAnalytics;
   "v1/orgs": typeof v1_orgs;
   "v1/socialAccounts": typeof v1_socialAccounts;
   "v1/socialPosts": typeof v1_socialPosts;
+  "v1/whatsapp": typeof v1_whatsapp;
+  "whatsapp/config": typeof whatsapp_config;
+  "whatsapp/ingest": typeof whatsapp_ingest;
+  "whatsapp/payload": typeof whatsapp_payload;
+  "whatsapp/phoneNumbers": typeof whatsapp_phoneNumbers;
+  "whatsapp/processing": typeof whatsapp_processing;
+  "whatsapp/signature": typeof whatsapp_signature;
+  "whatsapp/status": typeof whatsapp_status;
+  "whatsapp/validators": typeof whatsapp_validators;
+  "whatsapp/webhook": typeof whatsapp_webhook;
+  "whatsapp/window": typeof whatsapp_window;
 }>;
 
 /**

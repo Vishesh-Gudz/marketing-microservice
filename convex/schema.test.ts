@@ -34,6 +34,10 @@ const APPROVED_GLOBAL_INDEXES = [
   "oauthStates.by_expires",
   "oauthStates.by_nonce_hash",
   "syncAccounts.by_next_plan",
+  // WhatsApp (ADR 0013): webhook deliveries are authenticated as Meta, not as a tenant, so the
+  // org is resolved from the registered phone_number_id. Rows are re-verified (active, unique,
+  // WABA match) before any write; covered by convex/whatsapp/webhook.test.ts isolation tests.
+  "whatsappPhoneNumbers.by_phone_number_status",
 ];
 const tenantTables = tableNames.filter((name) => !GLOBAL_TABLES.includes(name));
 
@@ -46,7 +50,7 @@ function indexes(table: string) {
 }
 
 describe("schema inventory", () => {
-  it("contains exactly the Phase 1, 2, 4, 5, 6 and 10 tables", () => {
+  it("contains exactly the Phase 1, 2, 4, 5, 6, 10 and WhatsApp inbox tables", () => {
     expect(tableNames).toEqual(
       [
         "connections",
@@ -73,6 +77,10 @@ describe("schema inventory", () => {
         "syncAccounts",
         "syncRuns",
         "syncTasks",
+        "whatsappConversations",
+        "whatsappMessages",
+        "whatsappPhoneNumbers",
+        "whatsappWebhookEvents",
       ].sort(),
     );
   });
@@ -143,6 +151,10 @@ describe("tenant ownership", () => {
       "syncAccounts",
       "syncRuns",
       "syncTasks",
+      "whatsappPhoneNumbers",
+      "whatsappWebhookEvents",
+      "whatsappConversations",
+      "whatsappMessages",
     ];
     expect([...owned].sort()).toEqual(tenantTables);
   });

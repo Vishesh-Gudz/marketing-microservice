@@ -205,8 +205,15 @@ const eslintConfig = defineConfig([
   },
   // No logging in the connection layer, the sync engine or the providers (credentials,
   // codes, states, cursors, tokens and provider payloads must never reach logs; Phase 8 D27).
+  // WhatsApp (ADR 0013): message content, webhook bodies and signatures never reach logs.
   {
-    files: ["convex/connections/**/*.ts", "convex/sync/**/*.ts", "convex/providers/**/*.ts"],
+    files: [
+      "convex/connections/**/*.ts",
+      "convex/sync/**/*.ts",
+      "convex/providers/**/*.ts",
+      "convex/whatsapp/**/*.ts",
+      "convex/v1/whatsapp.ts",
+    ],
     ignores: ["**/*.test.ts"],
     rules: { "no-console": "error" },
   },
