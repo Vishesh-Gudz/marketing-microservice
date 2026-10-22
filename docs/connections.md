@@ -17,9 +17,11 @@ integration and no other credential store.
   only; hosted users cannot sign in or connect yet.
 - **Instagram:** the parent app through v1. The dashboard shows its status read-only.
 
-> **Not ready for public use:** the OAuth callback stores a connection for whoever _started_ the
-> sign-in, not for whoever _completed_ it. This must be fixed before any public or multi-tenant
-> launch; see [Callback ownership](#security-requirement-callback-ownership).
+> **Ownership (S2):** the OAuth callback never creates a connection. It stores the consented,
+> encrypted grant and returns a one-time claim code to the return URL; only the user who started
+> the sign-in, signed in to the same org, can turn it into a connection
+> ([Callback ownership](#callback-ownership-s2)). Cloud deployments still refuse new connections
+> until an operator sets `OAUTH_CONNECTIONS_ENABLED=true` after S2 is deployed and verified.
 
 ## Flow
 
@@ -27,13 +29,18 @@ integration and no other credential store.
 v1/connections:beginConnect (admin, ACTION: secure randomness)
   nonce + PKCE verifier (crypto.getRandomValues) ─► oauthStates { sha256(nonce), verifier, org, initiator, returnUrl, TTL 10 min }
   ◄─ authorizeUrl (state = raw nonce)        mock: the authorize URL IS the callback URL
-browser ─► platform consent ─► GET <CONVEX_SITE_URL>/oauth/callback?state&code
-  consume state (single-use; expired / app disabled / org gone → rejected)
+browser ─► platform consent ─► GET <CONVEX_SITE_URL>/oauth/callback?state&code   (unauthenticated)
+  consume state (single-use; expired / app disabled / org gone / no returnUrl → rejected)
   OAuthSpec.exchangeCode (PKCE) ─► grant { credential, identity, scopes, expiresAt }
   encrypt (AES-256-GCM, AAD = orgId|provider|externalUserId|v1)   ← plaintext only in this action
-  upsertConnectionWithCredential (atomic; natural key org+provider+identity)
+  storeGrant ─► oauthGrants { ciphertext, identity, org, issuer, initiator, sha256(claim), TTL 10 min }
+                (reconnect: a different identity is refused here already)
+  302 ─► allow-listed returnUrl?status=pending&claim=<one-time code>   (or a static page)
+v1/connections:completeConnect { claim } (admin, ACTION; the SAME issuer + user + org as beginConnect)
+  claimGrant (atomic): owner, expiry and reconnect identity checked; connection + credential
+                       (ciphertext moved unchanged) created; grant deleted
   discovery: AdsProvider.listAccounts({ credential, attempt })  ─► discoveredAssets
-  302 ─► allow-listed returnUrl?status=connected&connection=<id>   (or a static page)
+  ◄─ { connectionId, discoveryFailed }
 v1/connections:linkAdAccounts ─► mapAdAccount(record, OrgScope) ─► adAccounts { connectionId, linkedAt }
 ```
 
@@ -42,6 +49,7 @@ v1/connections:linkAdAccounts ─► mapAdAccount(record, OrgScope) ─► adAcc
 | Function                              | Wrapper            | Role   |
 | ------------------------------------- | ------------------ | ------ |
 | `v1/connections:beginConnect`         | `orgAdminAction`   | admin  |
+| `v1/connections:completeConnect`      | `orgAdminAction`   | admin  |
 | `v1/connections:list` / `get`         | `orgQuery`         | viewer |
 | `v1/connections:listDiscoveredAssets` | `orgQuery` (admin) | admin  |
 | `v1/connections:linkAdAccounts`       | `orgAdminMutation` | admin  |
@@ -50,25 +58,44 @@ v1/connections:linkAdAccounts ─► mapAdAccount(record, OrgScope) ─► adAcc
 | `v1/connections:refreshAssets`        | `orgAdminMutation` | admin  |
 | `v1/adAccounts:list`                  | `orgQuery`         | viewer |
 
-`beginConnect` args: `{ provider, returnUrl?, reconnectConnectionId? }` → `{ authorizeUrl, expiresAt }`.
+`beginConnect` args: `{ provider, returnUrl, reconnectConnectionId? }` → `{ authorizeUrl, expiresAt }`.
+`returnUrl` is **required** (S2): the claim code is delivered only there.
 
-**Callback result parameters** (appended to the allowlisted `returnUrl`; never tokens, codes or
-messages):
+`completeConnect` args: `{ claim }` → `{ connectionId, discoveryFailed }`. Refusals carry a fixed
+`details.reason` and nothing more:
 
-- `status=connected&connection=<id>`, plus `&warning=discovery_failed` when discovery failed: the
-  connection is stored and active, and its `lastError` says why discovery failed (below).
+- `NOT_FOUND` `invalid_claim`: unknown, already used, invalidated, or presented by another user,
+  org or app.
+- `CONFLICT` `expired_claim`: older than 10 minutes.
+- `CONFLICT` `identity_mismatch`: the reconnect target no longer matches.
+- `FORBIDDEN`: the caller is not an admin.
+- `INVALID_ARGUMENT` `connections_disabled`: a cloud deployment without `OAUTH_CONNECTIONS_ENABLED`.
+
+A claim presented by anyone other than the initiator **deletes the grant**, so it can never be
+claimed afterwards.
+
+**Callback result parameters** (appended to the allowlisted `returnUrl`; never tokens,
+authorization codes or messages):
+
+- `status=pending&claim=<code>`: the consent succeeded and waits to be claimed. The client must
+  remove the code from its URL and call `completeConnect` as the signed-in user that started the
+  connection, within 10 minutes. The code is a single-use capability: never log or display it.
 - `status=error&error=<code>`, where `<code>` is one of `access_denied`, `invalid_state`,
   `expired_state`, `exchange_failed`, `identity_mismatch`, `internal`. The published code set
-  (`CALLBACK_ERROR_CODES`) also contains `discovery_failed`, but the callback reports discovery
-  failures only as the warning above; clients should still handle it (the dashboard does).
+  (`CALLBACK_ERROR_CODES`) also contains `discovery_failed`; discovery now runs in
+  `completeConnect` and is reported as `discoveryFailed: true` (the connection is kept and its
+  `lastError` says why).
 - Clients must treat unknown codes as a generic failure and must not display parameter values.
+- Before S2 the callback returned `status=connected&connection=<id>[&warning=discovery_failed]`;
+  it no longer does. The dashboard still reads that shape (display only).
 
 **Google Ads today (Phase 9).** `beginConnect` builds Google's authorization URL (`adwords` and
 `openid` scopes, `access_type=offline`, `prompt=consent`, PKCE S256). The callback exchanges the
 code (a refresh token is required), reads the OpenID `sub` as the identity, and probes Google Ads
 API access (`listAccessibleCustomers`) **before** anything is stored: a Google account with no
 Google Ads access (`NOT_ADS_USER`) fails as `exchange_failed`, with no connection created. Then
-it encrypts and stores the credential and runs discovery (manager hierarchies included). Details:
+it encrypts the credential and stores it as a pending grant; the claim (`completeConnect`)
+creates the connection and runs discovery (manager hierarchies included). Details:
 [providers/google-ads.md](providers/google-ads.md#connection-flow-and-credential).
 
 **Discovered accounts and linking (additive fields).** `listDiscoveredAssets` returns, per account,
@@ -83,7 +110,7 @@ the account type (Meta, the mocks) derive it from `isManager`. Google Ads rows d
 these fields were recorded read `unknown` until discovery runs again. Linking never trusts a
 client-supplied customer id: only ids this connection discovered can be linked.
 
-**Discovery errors (additive).** A failed discovery (in the callback or a retry) keeps the
+**Discovery errors (additive).** A failed discovery (on claim or a retry) keeps the
 connection and records a sanitized `lastError { kind, message, reason?, at }` on it:
 `kind` is the provider error kind and `message` a generic text. For **Google Ads** connections the
 platform code, and for **Meta Ads** connections the code and the error kind, is translated into an
@@ -109,13 +136,15 @@ platform error code itself is never returned. See [sync.md](sync.md).
 ## Lifecycle
 
 ```text
-(none) ─callback─► active ─provider auth error / token expiry─► needs_reauth ─reconnect─► active
+(none) ─callback─► pending grant ─claim by the initiator─► active ─auth error / token expiry─► needs_reauth ─reconnect─► active
+pending grant ─claim by anyone else / expiry / reconnect identity mismatch─► deleted (nothing connected)
 active | needs_reauth ─disconnect─► revoked   (credential deleted; ad accounts unlinked, rows kept)
 ```
 
 - **Reconnect** with the same identity updates the same connection: new credential,
   `credentialVersion + 1`. An explicit reconnect (`reconnectConnectionId`) by a **different**
-  identity fails with `identity_mismatch`. To switch accounts, disconnect first, then connect
+  identity fails with `identity_mismatch` (at the callback, and again when the grant is claimed).
+  To switch accounts, disconnect first, then connect
   without `reconnectConnectionId` (in the dashboard: **Disconnect Google Ads**, then **Connect
   Google Ads**).
 - **Relinking** an ad account to another connection of the same org is allowed and audited
@@ -126,33 +155,38 @@ active | needs_reauth ─disconnect─► revoked   (credential deleted; ad acco
   flight is cancelled at its next step. See [sync.md](sync.md).
 - **The health sweep** (`convex/crons.ts`, hourly):
   - deletes expired states
+  - deletes unclaimed grants past their 10-minute expiry, with their ciphertext (audited
+    `connection.grant_expired`)
   - marks active connections whose `tokenExpiresAt` has passed as `needs_reauth`
   - deletes any credential still attached to a revoked connection
 - **Sync on provider `auth` errors (Phase 5)** calls `markConnectionNeedsReauth` (the helper behind
   `internal.connections.lifecycle.markNeedsReauth`) inside its own failure transaction, audited as
   subject `system:sync`, and cancels the connection's other active runs.
 
-## Security requirement: callback ownership
+## Callback ownership (S2)
 
-**Must be fixed before any public or multi-tenant launch.** The OAuth state binds a pending
-connection to the org, app and user that called `beginConnect`, but **not** to the browser or
-person that completes the platform consent. Whoever opens a valid authorization URL (single-use,
-10 minutes) and consents attaches **their** platform access to the initiating org. The current
-flow is therefore not safe for public access, even with the existing CSRF, PKCE, allowlist and
-encryption protections. Full description and the required fix:
-[security/credentials.md](security/credentials.md#known-gap-oauth-callback-ownership).
+The OAuth state binds a sign-in to the org, app and user that called `beginConnect`, but the
+callback is unauthenticated: the person completing the platform consent may be someone else (a
+forwarded authorization link). So a consent alone connects nothing. The callback stores the
+encrypted grant (`oauthGrants`, 10 minutes) and sends a one-time claim code to the return URL;
+`completeConnect` turns it into a connection only for the **same issuer, user and org** that
+started it, once. A consent completed by someone else lands in their browser, where their own
+session cannot claim it; their attempt invalidates the grant. Details, audit entries and the
+browser-binding trade-offs:
+[security/credentials.md](security/credentials.md#oauth-callback-ownership-s2).
 
 ## Configuration
 
-| Convex env var                                           | Purpose                                                                                                                      |
-| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `TOKEN_ENCRYPTION_KEYS`                                  | `{"1":"<base64 32 bytes>"}`; highest version encrypts. **Required**; missing = fail closed                                   |
-| `CONVEX_SITE_URL`                                        | Built in; the redirect URI is `<CONVEX_SITE_URL>/oauth/callback`                                                             |
-| `PROVIDER_MODE`                                          | Phase 8: `mock` or `live`; **required on every cloud deployment** (fails closed, see [providers/meta.md](providers/meta.md)) |
-| `META_APP_ID`, `META_APP_SECRET`, `META_LOGIN_CONFIG_ID` | Phase 8 (real Meta spec, `PROVIDER_MODE=live`); optional `META_GRAPH_API_VERSION`                                            |
-| `META_OAUTH_REDIRECT_ORIGIN`                             | Optional, Meta only, local deployments only: `http://localhost:<site port>` (see below)                                      |
-| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`               | Phase 9 (real Google spec)                                                                                                   |
-| `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET`               | Phase 10 (Instagram Login, organic Instagram; see [providers/instagram.md](providers/instagram.md))                          |
+| Convex env var                                           | Purpose                                                                                                                             |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `TOKEN_ENCRYPTION_KEYS`                                  | `{"1":"<base64 32 bytes>"}`; highest version encrypts. **Required**; missing = fail closed                                          |
+| `CONVEX_SITE_URL`                                        | Built in; the redirect URI is `<CONVEX_SITE_URL>/oauth/callback`                                                                    |
+| `PROVIDER_MODE`                                          | Phase 8: `mock` or `live`; **required on every cloud deployment** (fails closed, see [providers/meta.md](providers/meta.md))        |
+| `META_APP_ID`, `META_APP_SECRET`, `META_LOGIN_CONFIG_ID` | Phase 8 (real Meta spec, `PROVIDER_MODE=live`); optional `META_GRAPH_API_VERSION`                                                   |
+| `META_OAUTH_REDIRECT_ORIGIN`                             | Optional, Meta only, local deployments only: `http://localhost:<site port>` (see below)                                             |
+| `OAUTH_CONNECTIONS_ENABLED`                              | Cloud deployments only: `beginConnect` / `completeConnect` refuse unless exactly `true`; set only after S2 is deployed and verified |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`               | Phase 9 (real Google spec)                                                                                                          |
+| `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET`               | Phase 10 (Instagram Login, organic Instagram; see [providers/instagram.md](providers/instagram.md))                                 |
 
 **Meta redirect origin (`META_OAUTH_REDIRECT_ORIGIN`).** Facebook Login for Business only accepts
 HTTPS redirect URIs, except `http://localhost`, which Meta allows automatically while the app is in

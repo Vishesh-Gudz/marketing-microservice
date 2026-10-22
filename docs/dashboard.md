@@ -7,19 +7,28 @@ It has no server-side data fetching, no route handlers and no backend of its own
 ## Architecture
 
 - **Data (D1, D2):** every value comes from `useQuery(api.v1.*)` (`convex/react`) in the browser,
-  authenticated with the parent-issued JWT. Convex `useQuery` is the only cache (reactive, deduplicated);
+  authenticated with the signed-in user's JWT (Clerk, or the local dev token). Convex `useQuery` is the only cache (reactive, deduplicated);
   there is no TanStack Query, Redux or Zustand. The only writes are on `/connections` (Google Ads
   and Meta Ads: `useAction(beginConnect)`, `useMutation(linkAdAccounts | refreshAssets |
 disconnect)`) and the org gate's `ensure`.
-- **Identity (today: local development only):** the token comes from a token source
-  (`lib/auth/token-source.ts`). The only implemented source is the dev token
-  (`NEXT_PUBLIC_DEV_AUTH_TOKEN`, minted by `npm run dev:auth setup` for org `dev-org`, role
-  `admin`); production builds drop it, so a hosted dashboard shows "Not signed in". The parent
-  token handoff is Phase 15. There is no application login of its own.
+- **Identity (standalone SaaS, ADR 0012):** decided at build time (`lib/auth/mode.ts`).
+  - **Clerk** (every production build, and development builds without a dev token): sign-up and
+    sign-in pages (`/sign-in`, `/sign-up`), the "choose an organization" task
+    (`/session-tasks/choose-organization`; personal accounts are off, so every user works inside
+    an organization), the organization switcher and user menu in the header, and members,
+    invitations and roles on `/organization` (Clerk's embedded organization profile). The Convex
+    token is Clerk's `convex` JWT template for the active organization
+    (`lib/auth/use-clerk-convex-auth.ts`); `proxy.ts` sends visitors to sign-in or to choose an
+    organization, as a navigation convenience only: Convex verifies every call. Without a valid
+    `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` the dashboard stays signed out ("Not signed in").
+  - **Dev token** (a development build with `NEXT_PUBLIC_DEV_AUTH_TOKEN`, minted by
+    `npm run dev:auth setup` for org `dev-org`, role `admin`): Clerk is not loaded at all. Local
+    development and the Playwright journeys use it; production builds never contain it.
 - **Routes (D4, D22):** thin Server Components in `app/(dashboard)/` read `params` and render a
   client view from `components/dashboard/views/`.
-- **Org gate (D16):** the shell calls `v1/orgs:ensure` once per session, then subscribes to
-  `v1/orgs:me`. The org (display name, role, reporting currency, time zone) is provided through
+- **Org gate (D16):** the shell calls `v1/orgs:ensure` (again after every Clerk organization
+  switch, accepting the result only when it is the newly active organization), then subscribes to
+  `v1/orgs:me`. It never shows another organization's data while the token catches up. The org (display name, role, reporting currency, time zone) is provided through
   React context (`lib/analytics/org-context.tsx`). Pages render only once it resolves; without a
   token the gate shows "Not signed in". The org id is never sent as an argument.
 - **Previous data (D4):** `useAnalyticsQuery` wraps `useQuery` and keeps the last result while new
@@ -271,8 +280,10 @@ text. Unexpected errors never show their message.
 
 **Limitations (today):**
 
-- **Local development only.** The only identity is the local dev token (above). Hosted users
-  cannot sign in or connect real accounts until the Phase 15 parent-token handoff.
+- **Connections are closed on cloud deployments** until an operator sets
+  `OAUTH_CONNECTIONS_ENABLED=true` after S2 is deployed and verified: `beginConnect` refuses
+  until then (the page shows the platform as not available). Signing in with Clerk,
+  organizations and roles work there.
 - **Real accounts.** Google Ads: a real Google sign-in and account discovery were completed from
   the dashboard on the local deployment in live mode (2026-10-21); linking and a live sync were
   not ([providers/google-ads.md](providers/google-ads.md#dashboard-connection-flow)). Meta Ads:
@@ -280,12 +291,16 @@ text. Unexpected errors never show their message.
   connection needs the Meta app settings (`META_APP_ID`, `META_APP_SECRET`,
   `META_LOGIN_CONFIG_ID`) and the real-account checks in
   [providers/meta.md](providers/meta.md#real-account-validation-required).
-- **Not safe for public access.** The OAuth callback ownership gap
-  ([security/credentials.md](security/credentials.md#known-gap-oauth-callback-ownership)) must be
-  fixed before any public or multi-tenant launch.
+- **Callback ownership (S2).** The callback returns `status=pending&claim=<code>`; the page
+  removes the code from the URL at once, shows "Finishing the … connection…" and claims it once
+  with `v1/connections:completeConnect` as the signed-in user (the page renders only behind the
+  org gate, so a claim waits for sign-in). A refused claim shows fixed text (not valid, expired,
+  different account, admins only). If the user switched organization or account since starting,
+  the claim is refused and they start again
+  ([security/credentials.md](security/credentials.md#oauth-callback-ownership-s2)).
 - A Google account with no Google Ads access fails during the OAuth exchange
   (`exchange_failed`), not during discovery; the notice can only suggest the cause.
-- Embedded (iframe) use needs a top-level or popup consent page; to be decided in Phase 15.
+- Embedded (iframe) use is not a goal of the standalone SaaS (ADR 0012).
 
 ## Import guard (D23)
 

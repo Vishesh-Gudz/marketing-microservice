@@ -3,7 +3,7 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalAction, type ActionCtx } from "../_generated/server";
 import { isAdPlatform, isSocialConnectionProvider } from "../domain/types";
-import { sha256Base64Url } from "../lib/crypto";
+import { randomToken, sha256Base64Url } from "../lib/crypto";
 import { isProviderError } from "../providers/errors";
 import type { ProviderDiscoveredSocialAccount } from "../providers/social/types";
 import type { ProviderAdAccount } from "../providers/types";
@@ -23,6 +23,12 @@ import { withResultParams } from "./returnUrls";
  * credentials exist). The callback is unauthenticated; the single-use state
  * nonce is its only capability, and the org/initiator come from that stored
  * state. Providers and OAuth specs stay tenant-free.
+ *
+ * S2 (ownership): whoever completes the platform consent is not necessarily the user who
+ * started it (a forwarded authorization link). The callback therefore never creates a
+ * connection: it stores the encrypted grant and returns a one-time claim code to the return
+ * URL. Only the initiating user, signed in to the initiating org, can claim it
+ * (v1/connections:completeConnect), which creates the connection and runs discovery.
  */
 
 const SECURITY_HEADERS = {
@@ -43,29 +49,24 @@ function htmlPage(title: string, message: string): Response {
   });
 }
 
-type Outcome =
-  | { status: "connected"; connectionId: string; warning?: "discovery_failed" }
-  | { status: "error"; error: CallbackErrorCode };
+type Outcome = { status: "pending"; claim: string } | { status: "error"; error: CallbackErrorCode };
 
-/** Redirects to the (already allow-listed) return URL, or shows a static page. */
+/**
+ * Redirects to the (already allow-listed) return URL, or shows a static page. A pending grant
+ * always has a return URL (storeGrant refuses states without one).
+ */
 function finish(returnUrl: string | undefined, outcome: Outcome): Response {
   if (returnUrl !== undefined) {
     const params: Record<string, string> =
-      outcome.status === "connected"
-        ? {
-            status: "connected",
-            connection: outcome.connectionId,
-            ...(outcome.warning ? { warning: outcome.warning } : {}),
-          }
+      outcome.status === "pending"
+        ? { status: "pending", claim: outcome.claim }
         : { status: "error", error: outcome.error };
     return new Response(null, {
       status: 302,
       headers: { ...SECURITY_HEADERS, Location: withResultParams(returnUrl, params) },
     });
   }
-  return outcome.status === "connected"
-    ? htmlPage("Connection complete", "You can close this window.")
-    : htmlPage("Connection failed", "The connection could not be completed. Please try again.");
+  return htmlPage("Connection failed", "The connection could not be completed. Please try again.");
 }
 
 /**
@@ -169,6 +170,10 @@ export async function handleOAuthCallback(ctx: ActionCtx, request: Request): Pro
     return finish(consumed.returnUrl, { status: "error", error });
   };
 
+  // S2: the grant can only be claimed from the return URL. A state without one (created before
+  // returnUrl became required) is refused before anything is exchanged.
+  if (consumed.returnUrl === undefined) return await fail("invalid_state");
+
   const code = url.searchParams.get("code");
   if (url.searchParams.get("error") !== null || !code) return await fail("access_denied");
 
@@ -219,40 +224,51 @@ export async function handleOAuthCallback(ctx: ActionCtx, request: Request): Pro
     return await fail("internal");
   }
 
-  const stored = await ctx.runMutation(
-    internal.connections.credentialStore.upsertConnectionWithCredential,
-    {
-      stateId: consumed.stateId,
-      identity: {
-        externalUserId: grant.identity.externalUserId,
-        ...(grant.identity.displayName !== undefined
-          ? { displayName: grant.identity.displayName }
-          : {}),
-      },
-      grantedScopes: grant.grantedScopes,
-      ...(grant.expiresAt !== undefined ? { tokenExpiresAt: grant.expiresAt } : {}),
-      encrypted,
+  // S2: the raw claim code travels only in the redirect to the allow-listed return URL; the
+  // database keeps its SHA-256 hash.
+  const claim = randomToken();
+  const stored = await ctx.runMutation(internal.connections.credentialStore.storeGrant, {
+    stateId: consumed.stateId,
+    identity: {
+      externalUserId: grant.identity.externalUserId,
+      ...(grant.identity.displayName !== undefined
+        ? { displayName: grant.identity.displayName }
+        : {}),
     },
-  );
+    grantedScopes: grant.grantedScopes,
+    ...(grant.expiresAt !== undefined ? { tokenExpiresAt: grant.expiresAt } : {}),
+    encrypted,
+    claimHash: await sha256Base64Url(claim),
+  });
   if (!stored.ok)
     return await fail(
       stored.reason === "identity_mismatch" ? "identity_mismatch" : "invalid_state",
     );
+  return finish(consumed.returnUrl, { status: "pending", claim });
+}
 
+export type CompletedConnection = { connectionId: Id<"connections">; discoveryFailed: boolean };
+
+/**
+ * Discovery right after a successful claim (v1/connections:completeConnect). A discovery
+ * failure keeps the connection (recorded as its sanitized lastError) and is reported as a
+ * warning, as the callback used to.
+ */
+export async function discoverAfterClaim(
+  ctx: ActionCtx,
+  connectionId: Id<"connections">,
+  actorSubject: string,
+): Promise<CompletedConnection> {
   try {
-    await discoverAssets(ctx, stored.connectionId, consumed.initiatedBySubject);
+    await discoverAssets(ctx, connectionId, actorSubject);
+    return { connectionId, discoveryFailed: false };
   } catch (error) {
     await ctx.runMutation(internal.connections.assets.recordConnectionError, {
-      connectionId: stored.connectionId,
+      connectionId,
       ...sanitize(error),
     });
-    return finish(consumed.returnUrl, {
-      status: "connected",
-      connectionId: stored.connectionId,
-      warning: "discovery_failed",
-    });
+    return { connectionId, discoveryFailed: true };
   }
-  return finish(consumed.returnUrl, { status: "connected", connectionId: stored.connectionId });
 }
 
 /** Re-runs discovery (scheduled by v1/connections:refreshAssets). */

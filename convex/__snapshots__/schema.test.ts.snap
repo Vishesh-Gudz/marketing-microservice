@@ -165,6 +165,18 @@ exports[`schema inventory > declares the approved indexes 1`] = `
       "date",
     ],
   },
+  "oauthGrants": {
+    "by_claim_hash": [
+      "claimHash",
+    ],
+    "by_expires": [
+      "expiresAt",
+    ],
+    "by_org_created": [
+      "orgId",
+      "createdAt",
+    ],
+  },
   "oauthStates": {
     "by_expires": [
       "expiresAt",

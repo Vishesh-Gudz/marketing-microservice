@@ -3,6 +3,7 @@ import { api } from "../_generated/api";
 import { mockAuthorizationCode } from "../providers/mock/oauth";
 import {
   as,
+  claimResult,
   expectMarketingError,
   followCallback,
   ISSUER_ERP,
@@ -30,7 +31,9 @@ async function connect(t: Backend, provider: "meta" | "google_ads" = "meta", use
     "code",
     mockAuthorizationCode(provider, url.searchParams.get("code_challenge")!, user),
   );
-  return redirectParams(await followCallback(t, url.toString())).get("connection")!;
+  return (await claimResult(t, redirectParams(await followCallback(t, url.toString())))).get(
+    "connection",
+  )!;
 }
 
 const accountRows = (t: Backend) => t.run((ctx) => ctx.db.query("adAccounts").collect());
@@ -178,7 +181,7 @@ describe("roles", () => {
     const user = as(t, { role, sub: `${role}-user` });
 
     await expectMarketingError(
-      user.action(api.v1.connections.beginConnect, { provider: "meta" }),
+      user.action(api.v1.connections.beginConnect, { provider: "meta", returnUrl: RETURN_URL }),
       "FORBIDDEN",
     );
     await expectMarketingError(
@@ -219,12 +222,13 @@ describe("roles", () => {
   it("actions require authentication and a provisioned org", async () => {
     const t = await setup();
     await expectMarketingError(
-      t.action(api.v1.connections.beginConnect, { provider: "meta" }),
+      t.action(api.v1.connections.beginConnect, { provider: "meta", returnUrl: RETURN_URL }),
       "UNAUTHENTICATED",
     );
     await expectMarketingError(
       as(t, { org: "never-provisioned" }).action(api.v1.connections.beginConnect, {
         provider: "meta",
+        returnUrl: RETURN_URL,
       }),
       "ORG_NOT_PROVISIONED",
     );

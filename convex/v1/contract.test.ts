@@ -78,6 +78,7 @@ describe("public API contract", () => {
       "v1/analytics:timeSeries",
       "v1/audit:list",
       "v1/connections:beginConnect",
+      "v1/connections:completeConnect",
       "v1/connections:disconnect",
       "v1/connections:get",
       "v1/connections:linkAdAccounts",

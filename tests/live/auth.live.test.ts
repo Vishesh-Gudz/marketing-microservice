@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ConvexHttpClient } from "convex/browser";
 import { exportPKCS8, generateKeyPair } from "jose";
@@ -7,6 +7,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { api } from "../../convex/_generated/api";
 import { isMarketingError } from "../../convex/lib/errors";
 import { DEV_ISSUER, mintToken } from "../../scripts/dev-auth.mjs";
+import { liveConvexUrl } from "./local-backend";
 
 // Opt-in: `npm run test:live`. Exercises REAL JWT verification by the Convex
 // backend (signature via JWKS, iss, aud, exp) plus our tenancy layer over HTTP.
@@ -14,17 +15,7 @@ import { DEV_ISSUER, mintToken } from "../../scripts/dev-auth.mjs";
 
 const ROOT = process.cwd();
 
-function readConvexUrl(): string {
-  const envPath = join(ROOT, ".env.local");
-  const fromFile = existsSync(envPath)
-    ? /^NEXT_PUBLIC_CONVEX_URL=(.+)$/m.exec(readFileSync(envPath, "utf8"))?.[1]?.trim()
-    : undefined;
-  const url = process.env.NEXT_PUBLIC_CONVEX_URL ?? fromFile;
-  if (!url) throw new Error("NEXT_PUBLIC_CONVEX_URL not found. Run `npm run dev:backend` first.");
-  return url;
-}
-
-const url = readConvexUrl();
+const url = liveConvexUrl();
 const run = Date.now().toString(36);
 
 function client(token?: string) {
@@ -146,6 +137,25 @@ describe("tenant isolation over HTTP", () => {
     const viewer = client(await mintToken({ org: `iso-a-${run}`, role: "viewer" }));
     const error = await rejection(viewer.mutation(api.v1.orgs.updateSettings, { timezone: "UTC" }));
     expect(isMarketingError(error) && error.data.code).toBe("FORBIDDEN");
+  });
+});
+
+describe("Clerk-shaped claims (Standalone SaaS, S1)", () => {
+  // Same verification path as a Clerk token (customJwt: JWKS signature, iss, aud, exp); only
+  // the claim shapes differ: Clerk organization ids and org:-prefixed roles.
+  it("accepts a Clerk organization id with a prefixed role", async () => {
+    const org = `org_2clerk${run}`;
+    const c = client(await mintToken({ org, role: "org:admin", sub: "user_2clerk" }));
+    expect(await c.mutation(api.v1.orgs.ensure, {})).toMatchObject({
+      externalOrgId: org,
+      role: "admin",
+    });
+  });
+
+  it("refuses Clerk's default org:member role", async () => {
+    const c = client(await mintToken({ org: `org_2clerk${run}`, role: "org:member" }));
+    const error = await rejection(c.mutation(api.v1.orgs.ensure, {}));
+    expect(isMarketingError(error) && error.data.code).toBe("INVALID_TOKEN_CLAIMS");
   });
 });
 

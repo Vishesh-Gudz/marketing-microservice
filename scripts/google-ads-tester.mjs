@@ -26,7 +26,7 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
 import { anyApi } from "convex/server";
-import { DEV_RETURN_URLS, mintToken } from "./dev-auth.mjs";
+import { mintToken } from "./dev-auth.mjs";
 import {
   accountSyncLines,
   campaignLines,
@@ -39,7 +39,7 @@ import {
   parseConfig,
   verifyDeployment,
 } from "./google-ads-tester/guard.mjs";
-import { startOneTimeRedirect } from "./google-ads-tester/oauth.mjs";
+import { loopbackReturnUrl, startOneTimeRedirect } from "./google-ads-tester/oauth.mjs";
 import { createOutput } from "./google-ads-tester/redact.mjs";
 import {
   confirmationMatches,
@@ -225,7 +225,6 @@ async function connect(out, target, flags) {
     return 1;
   }
   const api = apiClient(target, "admin");
-  const before = new Set((await api.query(anyApi.v1.connections.list)).map((c) => c.id));
   const auditPage = (
     await api.query(anyApi.v1.audit.list, {
       paginationOpts: { numItems: 50, cursor: null },
@@ -233,9 +232,12 @@ async function connect(out, target, flags) {
   ).page;
   const seenAudit = new Set(auditPage.map((a) => a.id));
 
+  // S2: the callback returns a one-time claim code to the return URL, which only this tool's
+  // identity can redeem; so the return URL is the tool's own loopback server.
+  const port = flags.port !== undefined ? Number(flags.port) : undefined;
   const { authorizeUrl } = await api.action(anyApi.v1.connections.beginConnect, {
     provider: "google_ads",
-    returnUrl: DEV_RETURN_URLS[0],
+    returnUrl: loopbackReturnUrl(port),
   });
   const url = new URL(authorizeUrl);
   const p = url.searchParams;
@@ -253,47 +255,51 @@ async function connect(out, target, flags) {
     `scope=${p.get("scope")} | access_type=${p.get("access_type")} | prompt=${p.get("prompt")} | PKCE=${p.get("code_challenge_method")}`,
   );
 
-  const redirect = startOneTimeRedirect(authorizeUrl, {
-    ...(flags.port !== undefined ? { port: Number(flags.port) } : {}),
-  });
+  const redirect = startOneTimeRedirect(authorizeUrl, port !== undefined ? { port } : {});
   await redirect.listening;
   out.line(`Open ${redirect.startUrl} in the browser you sign in to Google with (single use).`);
   out.line("Waiting up to 10 minutes for the OAuth callback...");
 
-  const deadline = Date.now() + WAIT_MS;
+  let timer;
+  const timedOut = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(null), WAIT_MS);
+  });
   try {
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 5_000));
-      const connections = (await api.query(anyApi.v1.connections.list)).filter(
-        (c) => !before.has(c.id),
+    const outcome = await Promise.race([redirect.result, timedOut]);
+    if (outcome === null) {
+      out.line(
+        "Timed out waiting for the OAuth callback (the sign-in request expires after 10 minutes).",
       );
-      if (connections.length > 0) {
-        const connection = connections[0];
-        out.line(`Connected: ${connectionLines([connection])[0]}`);
-        await printDiscovery(out, api, connection);
-        return 0;
-      }
-      const audits = (
-        await api.query(anyApi.v1.audit.list, {
-          paginationOpts: { numItems: 50, cursor: null },
-        })
-      ).page.filter((a) => !seenAudit.has(a.id));
-      const failed = audits.find((a) => a.action === "connection.oauth_failed");
-      if (failed) {
-        const changes = failed.changes ?? {};
-        const pick = (k) => (changes[k] ? `${k}=${changes[k].to}` : undefined);
-        out.line(
-          `OAuth failed: ${["reason", "failureKind", "failureStage", "providerCode"].map(pick).filter(Boolean).join(" | ")}`,
-        );
-        return 1;
-      }
+      return 1;
     }
-    out.line(
-      "Timed out waiting for the OAuth callback (the sign-in request expires after 10 minutes).",
-    );
+    if (outcome.status === "pending" && outcome.claim) {
+      // Redeemed as this tool's identity (the one that called beginConnect); never printed.
+      const { connectionId, discoveryFailed } = await api.action(
+        anyApi.v1.connections.completeConnect,
+        { claim: outcome.claim },
+      );
+      const connection = await api.query(anyApi.v1.connections.get, { connectionId });
+      out.line(`Connected: ${connectionLines([connection])[0]}`);
+      if (discoveryFailed) out.line("Discovery failed; run `discover` after fixing the cause.");
+      await printDiscovery(out, api, connection);
+      return 0;
+    }
+    const audits = (
+      await api.query(anyApi.v1.audit.list, {
+        paginationOpts: { numItems: 50, cursor: null },
+      })
+    ).page.filter((a) => !seenAudit.has(a.id));
+    const failed = audits.find((a) => a.action === "connection.oauth_failed");
+    const changes = failed?.changes ?? {};
+    const pick = (k) => (changes[k] ? `${k}=${changes[k].to}` : undefined);
+    const details = ["reason", "failureKind", "failureStage", "providerCode"]
+      .map(pick)
+      .filter(Boolean);
+    out.line(`OAuth failed: ${details.length > 0 ? details.join(" | ") : "reason=unknown"}`);
     return 1;
   } finally {
-    await redirect.close();
+    clearTimeout(timer);
+    await redirect.close().catch(() => undefined);
   }
 }
 

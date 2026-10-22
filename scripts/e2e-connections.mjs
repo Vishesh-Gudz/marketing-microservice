@@ -212,8 +212,9 @@ export async function cleanupE2EOrg(backendUrl, org = E2E_ORG) {
 /**
  * Connects the mock identity of `provider` for a THROWAWAY org through the real connect flow
  * without a browser: beginConnect → the mock consent, which is the local OAuth callback →
- * its result redirect. Only a loopback authorization URL is ever followed (mock mode), so
- * nothing reaches Google or Meta; the URL is never printed. Returns the connection id.
+ * its pending result → completeConnect with the claim code, as the same admin (S2). Only a
+ * loopback authorization URL is ever followed (mock mode), so nothing reaches Google or Meta;
+ * neither the URL nor the claim code is printed. Returns the connection id.
  */
 export async function connectMockFixture(backendUrl, org, provider) {
   throwawayOrg(org);
@@ -231,10 +232,11 @@ export async function connectMockFixture(backendUrl, org, provider) {
   });
   const location = response.headers.get("location");
   const params = location ? new URL(location).searchParams : undefined;
-  const connectionId = params?.get("connection");
-  if (params?.get("status") !== "connected" || !connectionId) {
+  const claim = params?.get("claim");
+  if (params?.get("status") !== "pending" || !claim) {
     throw new Error(`The mock ${provider} connection failed.`);
   }
+  const { connectionId } = await admin.action(anyApi.v1.connections.completeConnect, { claim });
   return connectionId;
 }
 

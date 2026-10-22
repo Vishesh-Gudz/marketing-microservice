@@ -2,19 +2,21 @@ import { v } from "convex/values";
 import { internalMutation } from "../_generated/server";
 import { AUDIT_ACTIONS, SYSTEM_SWEEP_SUBJECT, writeAudit } from "../lib/audit";
 import { STATE_RETENTION_MS, SWEEP_BATCH } from "./config";
-import { deleteCredential } from "./credentialStore";
+import { deleteCredential, deleteExpiredGrants } from "./credentialStore";
 
 /**
- * Hourly connection health sweep (convex/crons.ts). Uses the three approved
- * global system indexes; every step is bounded by SWEEP_BATCH.
+ * Hourly connection health sweep (convex/crons.ts). Uses the approved global
+ * system indexes; every step is bounded by SWEEP_BATCH.
  * 1. Deletes expired pending states and old consumed/failed states.
- * 2. Marks active connections whose access token expired as needs_reauth (Meta ~60 days).
- * 3. Backstop: deletes credentials still attached to revoked connections.
+ * 2. S2: deletes unclaimed OAuth grants (encrypted credentials) past their expiry.
+ * 3. Marks active connections whose access token expired as needs_reauth (Meta ~60 days).
+ * 4. Backstop: deletes credentials still attached to revoked connections.
  */
 export const sweep = internalMutation({
   args: {},
   returns: v.object({
     statesDeleted: v.number(),
+    grantsDeleted: v.number(),
     expired: v.number(),
     credentialsDeleted: v.number(),
   }),
@@ -32,6 +34,8 @@ export const sweep = internalMutation({
         statesDeleted++;
       }
     }
+
+    const grantsDeleted = await deleteExpiredGrants(ctx.db, now, SWEEP_BATCH);
 
     let expired = 0;
     const expiring = await ctx.db
@@ -84,6 +88,6 @@ export const sweep = internalMutation({
       }
     }
 
-    return { statesDeleted, expired, credentialsDeleted };
+    return { statesDeleted, grantsDeleted, expired, credentialsDeleted };
   },
 });

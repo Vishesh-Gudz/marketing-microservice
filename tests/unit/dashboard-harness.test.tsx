@@ -35,13 +35,18 @@ describe("dashboard harness: actions", () => {
     const begin = renderHook(() => useAction(api.v1.connections.beginConnect)).result.current;
     const other = renderHook(() => useAction(otherAction)).result.current;
 
-    await expect(begin({ provider: "google_ads" })).resolves.toEqual({
+    await expect(
+      begin({ provider: "google_ads", returnUrl: "https://app.test/" }),
+    ).resolves.toEqual({
       authorizeUrl: "https://example.test/a",
       expiresAt: "x",
     });
     const error = await other({}).catch((e: unknown) => e);
     expect(isMarketingError(error) && error.data.code).toBe("FORBIDDEN");
-    expect(mockAction(BEGIN)).toHaveBeenCalledExactlyOnceWith({ provider: "google_ads" });
+    expect(mockAction(BEGIN)).toHaveBeenCalledExactlyOnceWith({
+      provider: "google_ads",
+      returnUrl: "https://app.test/",
+    });
     expect(mockAction("v1/testOnly:otherAction")).toHaveBeenCalledOnce();
   });
 
@@ -55,7 +60,7 @@ describe("dashboard harness: actions", () => {
 
   it("an unconfigured action rejects with a descriptive error", async () => {
     const begin = renderHook(() => useAction(api.v1.connections.beginConnect)).result.current;
-    await expect(begin({ provider: "google_ads" })).rejects.toThrow(
+    await expect(begin({ provider: "google_ads", returnUrl: "https://app.test/" })).rejects.toThrow(
       `No result configured for action ${BEGIN}`,
     );
   });

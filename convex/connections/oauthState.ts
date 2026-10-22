@@ -47,7 +47,8 @@ export const create = internalMutation({
     provider: connectionProviderValidator,
     nonceHash: v.string(),
     codeVerifier: v.optional(v.string()),
-    returnUrl: v.optional(v.string()),
+    // S2: required; the claim code is returned only to this URL.
+    returnUrl: v.string(),
     reconnectConnectionId: v.optional(v.string()),
   },
   returns: v.object({ expiresAt: v.number() }),
@@ -57,10 +58,7 @@ export const create = internalMutation({
     if (app === null)
       throw apiError("APP_DISABLED", "The integration app for this token issuer is disabled.");
 
-    if (
-      args.returnUrl !== undefined &&
-      !isAllowedReturnUrl(args.returnUrl, app.allowedReturnUrls)
-    ) {
+    if (!isAllowedReturnUrl(args.returnUrl, app.allowedReturnUrls)) {
       throw apiError("INVALID_ARGUMENT", "returnUrl is not allowed for this application.", {
         field: "returnUrl",
       });
@@ -100,7 +98,7 @@ export const create = internalMutation({
       ...(args.codeVerifier !== undefined ? { codeVerifier: args.codeVerifier } : {}),
       issuer: args.issuer,
       initiatedBySubject: args.subject,
-      ...(args.returnUrl !== undefined ? { returnUrl: args.returnUrl } : {}),
+      returnUrl: args.returnUrl,
       ...(reconnectConnectionId !== undefined ? { reconnectConnectionId } : {}),
       status: "pending",
       expiresAt,

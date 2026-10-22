@@ -23,11 +23,14 @@ const GLOBAL_TABLES = ["fxRates", "integrationApps", "organizations"];
 
 /**
  * The ONLY indexes on tenant tables that may not start with orgId: the
- * unauthenticated OAuth callback and the system health sweep (Phase 4), and
- * the sync planner's due-account index (Phase 5; rows re-verified on read).
+ * unauthenticated OAuth callback and the system health sweep (Phase 4), the
+ * sync planner's due-account index (Phase 5; rows re-verified on read), and the
+ * OAuth grant claim lookup and grant sweep (S2; the claim re-verifies the owner).
  */
 const APPROVED_GLOBAL_INDEXES = [
   "connections.by_status_expires",
+  "oauthGrants.by_claim_hash",
+  "oauthGrants.by_expires",
   "oauthStates.by_expires",
   "oauthStates.by_nonce_hash",
   "syncAccounts.by_next_plan",
@@ -50,6 +53,7 @@ describe("schema inventory", () => {
         "credentials",
         "discoveredAssets",
         "discoveredSocialAccounts",
+        "oauthGrants",
         "oauthStates",
         "fxRates",
         "actionMetricsDaily",
@@ -133,6 +137,7 @@ describe("tenant ownership", () => {
       "connections",
       "credentials",
       "oauthStates",
+      "oauthGrants",
       "discoveredAssets",
       "discoveredSocialAccounts",
       "syncAccounts",
@@ -162,11 +167,13 @@ describe("value conventions", () => {
     }
   });
 
-  it("stores credential material only as bytes in the credentials table", () => {
+  it("stores credential material only as bytes in the credentials and oauthGrants tables", () => {
     const bytes = allFields.filter((f) => f.field.fieldType.type === "bytes");
     expect(bytes.map((f) => `${f.table}.${f.name}`).sort()).toEqual([
       "credentials.ciphertext",
       "credentials.iv",
+      "oauthGrants.ciphertext",
+      "oauthGrants.iv",
     ]);
   });
 

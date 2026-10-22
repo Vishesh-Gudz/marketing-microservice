@@ -5,8 +5,15 @@ import {
   discoveredAssetsOf,
   unlinkAdAccount as unlinkAccount,
 } from "../connections/assets";
-import { oauthClientConfig, oauthRedirectUri, providerRegistry } from "../connections/config";
+import {
+  CLAIM_CODE_PATTERN,
+  connectionsEnabled,
+  oauthClientConfig,
+  oauthRedirectUri,
+  providerRegistry,
+} from "../connections/config";
 import { disconnectConnection } from "../connections/lifecycle";
+import { discoverAfterClaim } from "../connections/oauthFlow";
 import {
   discoveredSocialAccountsOf,
   linkSocialAccounts as linkSocial,
@@ -54,11 +61,21 @@ function requiredScopes(provider: Parameters<ReturnType<typeof providerRegistry>
 export const beginConnect = orgAdminAction({
   args: {
     provider: connectionProviderValidator,
-    returnUrl: v.optional(v.string()),
+    // S2: required. The callback returns the one-time claim code only to this (allow-listed)
+    // URL, where the same signed-in user completes the connection with completeConnect.
+    returnUrl: v.string(),
     reconnectConnectionId: v.optional(v.string()),
   },
   returns: v.object({ authorizeUrl: v.string(), expiresAt: v.string() }),
   handler: async (ctx, args): Promise<{ authorizeUrl: string; expiresAt: string }> => {
+    // D8: cloud deployments refuse new connections until OAUTH_CONNECTIONS_ENABLED is set
+    // (after the callback ownership fix ships). Refused before any OAuth state exists.
+    if (!connectionsEnabled()) {
+      throw apiError("INVALID_ARGUMENT", "This platform cannot be connected yet.", {
+        field: "provider",
+        reason: "connections_disabled",
+      });
+    }
     const registry = providerRegistry();
     // Refused before any OAuth state exists: the platform is not registered, or its app
     // settings are missing or invalid (Meta).
@@ -85,7 +102,7 @@ export const beginConnect = orgAdminAction({
         provider: args.provider,
         nonceHash: await sha256Base64Url(nonce),
         ...(codeVerifier !== undefined ? { codeVerifier } : {}),
-        ...(args.returnUrl !== undefined ? { returnUrl: args.returnUrl } : {}),
+        returnUrl: args.returnUrl,
         ...(args.reconnectConnectionId !== undefined
           ? { reconnectConnectionId: args.reconnectConnectionId }
           : {}),
@@ -101,6 +118,54 @@ export const beginConnect = orgAdminAction({
       config: oauthClientConfig(args.provider),
     });
     return { authorizeUrl, expiresAt: toIso(expiresAt) };
+  },
+});
+
+const CLAIM_ERRORS = {
+  invalid_claim: () =>
+    apiError("NOT_FOUND", "This connection request is not valid. Start the connection again.", {
+      reason: "invalid_claim",
+    }),
+  expired_claim: () =>
+    apiError("CONFLICT", "This connection request expired. Start the connection again.", {
+      reason: "expired_claim",
+    }),
+  identity_mismatch: () =>
+    apiError("CONFLICT", "A different platform account was used to reconnect.", {
+      reason: "identity_mismatch",
+    }),
+} as const;
+
+/**
+ * S2: completes a connection after the platform consent. The callback redirects to the
+ * return URL with `status=pending&claim=<code>`; the SAME user, signed in to the SAME org that
+ * called beginConnect, passes the code here (admin only, like beginConnect). Then the
+ * connection and its credential are created and the accounts discovered. A code presented by
+ * anyone else, a second time or after 10 minutes is refused, and a mismatched presentation
+ * invalidates the grant for good.
+ */
+export const completeConnect = orgAdminAction({
+  args: { claim: v.string() },
+  returns: v.object({ connectionId: v.string(), discoveryFailed: v.boolean() }),
+  handler: async (ctx, { claim }): Promise<{ connectionId: string; discoveryFailed: boolean }> => {
+    if (!connectionsEnabled()) {
+      throw apiError("INVALID_ARGUMENT", "This platform cannot be connected yet.", {
+        field: "claim",
+        reason: "connections_disabled",
+      });
+    }
+    // Malformed codes never reach the database.
+    if (!CLAIM_CODE_PATTERN.test(claim)) throw CLAIM_ERRORS.invalid_claim();
+    const claimed = await ctx.runMutation(internal.connections.credentialStore.claimGrant, {
+      claimHash: await sha256Base64Url(claim),
+      claimant: {
+        orgId: ctx.tenant.orgId,
+        issuer: ctx.tenant.issuer,
+        subject: ctx.tenant.subject,
+      },
+    });
+    if (!claimed.ok) throw CLAIM_ERRORS[claimed.reason]();
+    return await discoverAfterClaim(ctx, claimed.connectionId, ctx.tenant.subject);
   },
 });
 

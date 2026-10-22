@@ -76,4 +76,21 @@ describe("sync engine hygiene", () => {
       ).toBeGreaterThan(0);
     }
   });
+
+  it("S2: only the credential store may name the oauthGrants table (encrypted grants)", async () => {
+    const source = 'export const t = "oauthGrants";\n';
+    for (const file of [
+      "convex/connections/maintenance.ts",
+      "convex/connections/oauthFlow.ts",
+      "convex/v1/__fixture__.ts",
+      "convex/sync/__fixture__.ts",
+    ]) {
+      expect((await violations(source, file)).length, file).toBeGreaterThan(0);
+    }
+    expect(await violations(source, "convex/connections/credentialStore.ts")).toEqual([]);
+    // Similar names are not caught by the exact-name rule.
+    expect(
+      await violations('export const t = "oauthGrantsLegacy";\n', "convex/v1/__fixture__.ts"),
+    ).toEqual([]);
+  });
 });

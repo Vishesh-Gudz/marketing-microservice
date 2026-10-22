@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/sheet";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { OrgProvider } from "@/lib/analytics/org-context";
+import { AccountControls } from "./account-controls";
 import { Brand, DashboardNav } from "./nav";
 import { OrgBadge, OrgGateMessage, useOrgGate } from "./org-gate";
 
@@ -57,6 +58,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <span className="hidden sm:inline-flex">
               <ConvexStatus />
             </span>
+            <AccountControls />
           </div>
         </header>
         <div className="flex flex-1">
