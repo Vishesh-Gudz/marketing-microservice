@@ -34,10 +34,12 @@ export const AUDIT_ACTIONS = {
   syncAccountUnblocked: "sync.account_unblocked",
   syncAccountAttributesChanged: "sync.account_attributes_changed",
   syncRemovalSkipped: "sync.removal_skipped",
-  // WhatsApp inbox (ADR 0013): phone-number routing changes. Inbound messages and webhook
-  // events are routine and NOT audited. Entries carry ids/statuses only, never content.
+  // WhatsApp inbox (ADR 0013): phone-number routing changes and admin requeues of failed
+  // webhook events. Inbound messages and routine processing are NOT audited. Entries carry
+  // ids/statuses only, never content.
   whatsappNumberRegistered: "whatsapp.number_registered",
   whatsappNumberDisconnected: "whatsapp.number_disconnected",
+  whatsappEventRequeued: "whatsapp.event_requeued",
 } as const;
 
 /** Actor used for audit entries written by scheduled system jobs. */

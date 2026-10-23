@@ -53,6 +53,11 @@ export const webhookEventStatusValidator = v.union(
   v.literal("unmatched"),
   /** Valid but nothing to apply (e.g. a status that would move a message backwards). */
   v.literal("ignored"),
+  /**
+   * Processing kept failing: still pending after every recovery retry
+   * (convex/whatsapp/recovery.ts). The body is kept so an admin can requeue it after a fix.
+   */
+  v.literal("failed"),
 );
 
 export const messageDirectionValidator = v.union(v.literal("inbound"), v.literal("outbound"));

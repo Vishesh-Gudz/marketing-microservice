@@ -31,6 +31,32 @@ export const MAX_EVENTS_PER_DELIVERY = 1000;
 /** Events handed to one processing mutation; larger deliveries are split into several jobs. */
 export const PROCESS_BATCH_SIZE = 100;
 
+/**
+ * Stuck-event recovery (convex/whatsapp/recovery.ts, cron every RECOVERY_INTERVAL_MINUTES): an
+ * event still pending this long after receipt is retried on its own, so one failing event
+ * cannot hold back the rest of its batch. A retry still queued or running is never duplicated.
+ */
+export const STUCK_EVENT_AFTER_MS = 5 * 60 * 1000;
+export const RECOVERY_INTERVAL_MINUTES = 5;
+/**
+ * Finished retries (after the original attempt) before an event becomes `failed`. A retry
+ * counts once its job is no longer queued, whatever its outcome or whether its record still
+ * exists; retries that have not run yet are never counted.
+ */
+export const MAX_RECOVERY_ATTEMPTS = 3;
+/**
+ * A retry still queued this long after it was scheduled is canceled and its event marked
+ * `failed`: no event waits on a job that never runs.
+ */
+export const RETRY_GIVE_UP_AFTER_MS = 24 * 60 * 60 * 1000;
+/** Stuck events examined per sweep run (bounded; the next run continues). */
+export const RECOVERY_BATCH_SIZE = 100;
+/**
+ * Audit subject for internal admin functions run by an operator (dashboard / CLI). Supplied by
+ * the operator, not verified by this application, so it gets its own namespace.
+ */
+export const OPERATOR_SUBJECT = /^operator:[A-Za-z0-9._@-]{1,64}$/;
+
 /** Longest inbound text body stored (WhatsApp's own limit for a text message). */
 export const MAX_TEXT_BODY_CHARS = 65_536;
 

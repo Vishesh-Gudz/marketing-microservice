@@ -1,6 +1,7 @@
 import { cronJobs } from "convex/server";
 import { internal } from "./_generated/api";
 import { SYNC_CADENCE } from "./sync/config";
+import { RECOVERY_INTERVAL_MINUTES } from "./whatsapp/config";
 
 const crons = cronJobs();
 
@@ -26,6 +27,15 @@ crons.interval(
   "sync planner",
   { minutes: SYNC_CADENCE.plannerIntervalMinutes },
   internal.sync.planner.tick,
+  {},
+);
+
+// WhatsApp (ADR 0013): retry webhook events stuck in processing one by one; repeated failures
+// become `failed` for an admin to requeue.
+crons.interval(
+  "whatsapp stuck event recovery",
+  { minutes: RECOVERY_INTERVAL_MINUTES },
+  internal.whatsapp.recovery.recoverStuckEvents,
   {},
 );
 

@@ -10,7 +10,16 @@ import {
   seedOrg,
   type Backend,
 } from "../test.helpers";
-import { MAX_WEBHOOK_BODY_BYTES, WHATSAPP_ENV, WHATSAPP_WEBHOOK_PATH } from "./config";
+import crons from "../crons";
+import {
+  MAX_RECOVERY_ATTEMPTS,
+  MAX_WEBHOOK_BODY_BYTES,
+  RECOVERY_INTERVAL_MINUTES,
+  RETRY_GIVE_UP_AFTER_MS,
+  STUCK_EVENT_AFTER_MS,
+  WHATSAPP_ENV,
+  WHATSAPP_WEBHOOK_PATH,
+} from "./config";
 import {
   CUSTOMER_1,
   CUSTOMER_2,
@@ -1091,5 +1100,397 @@ describe("number activation cutoff", () => {
     // A's message is never touched from B's side, and B gets no message or conversation.
     expect(await t.run(async (ctx) => (await ctx.db.get(outboundA))!.status)).toBe("submitted");
     expect(await wamidsOf(t, orgB)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stuck-event recovery (hardening step 3)
+// ---------------------------------------------------------------------------
+
+describe("stuck-event recovery", () => {
+  /**
+   * A poison event, as data drift would create one: two conversation rows for the same contact
+   * make processing that contact's message throw (`.unique()`), which rolls back its batch.
+   */
+  async function poisonContact(
+    t: Backend,
+    orgId: Id<"organizations">,
+    numberId: Id<"whatsappPhoneNumbers">,
+    contactWaId: string,
+  ) {
+    return await t.run(async (ctx) => {
+      const now = Date.now();
+      const row = { orgId, numberId, contactWaId, lastMessageAt: now, createdAt: now };
+      await ctx.db.insert("whatsappConversations", { ...row, updatedAt: now });
+      return await ctx.db.insert("whatsappConversations", { ...row, updatedAt: now });
+    });
+  }
+
+  async function sweep(t: Backend) {
+    return await t.mutation(internal.whatsapp.recovery.recoverStuckEvents, {});
+  }
+
+  async function eventsByWamid(t: Backend) {
+    return new Map((await table(t, "whatsappWebhookEvents")).map((e) => [e.wamid, e]));
+  }
+
+  /** Processing jobs that have not run yet (pending in Convex's scheduler). */
+  async function queuedProcessingJobs(t: Backend) {
+    const jobs = await t.run(
+      async (ctx) => await ctx.db.system.query("_scheduled_functions").collect(),
+    );
+    return jobs.filter((j) => j.name.includes("processEvents") && j.state.kind === "pending");
+  }
+
+  async function requeue(
+    t: Backend,
+    eventId: Id<"whatsappWebhookEvents">,
+    actorSubject = "operator:test",
+  ) {
+    return await t.mutation(internal.whatsapp.recovery.requeueFailedEvent, {
+      eventId,
+      actorSubject,
+    });
+  }
+
+  /** Cancels every processing job that has not run yet (original batch or retry). */
+  async function cancelQueuedProcessing(t: Backend) {
+    const queued = await queuedProcessingJobs(t);
+    await t.run(async (ctx) => {
+      for (const job of queued) await ctx.scheduler.cancel(job._id);
+    });
+    return queued.length;
+  }
+
+  async function requeueAudits(t: Backend) {
+    return (await t.run(async (ctx) => await ctx.db.query("auditLog").collect())).filter(
+      (entry) => entry.action === "whatsapp.event_requeued",
+    );
+  }
+
+  function later(ms: number) {
+    vi.setSystemTime(Date.now() + ms);
+  }
+
+  /** Lets the poison event fail its original attempt and every retry, then marks it failed. */
+  async function untilFailed(t: Backend) {
+    await processAll(t);
+    for (let attempt = 0; attempt <= MAX_RECOVERY_ATTEMPTS; attempt++) {
+      later(STUCK_EVENT_AFTER_MS + 1000);
+      await sweep(t);
+      await processAll(t);
+    }
+  }
+
+  let errors: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    // convex-test logs every failing scheduled function; the failures here are deliberate.
+    errors = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => errors.mockRestore());
+
+  it("is scheduled by cron every RECOVERY_INTERVAL_MINUTES", () => {
+    expect(crons.crons["whatsapp stuck event recovery"]?.schedule).toEqual({
+      type: "interval",
+      minutes: RECOVERY_INTERVAL_MINUTES,
+    });
+  });
+
+  it("retries a failed batch event by event, so healthy events are processed", async () => {
+    const { t, orgA, numberA } = await setup();
+    await poisonContact(t, orgA, numberA, CUSTOMER_2);
+    await postDelivery(
+      t,
+      delivery(
+        entry({
+          messages: [
+            { id: "wamid.healthy", from: CUSTOMER_1 },
+            { id: "wamid.poison", from: CUSTOMER_2 },
+          ],
+        }),
+      ),
+    );
+    await processAll(t); // the batch throws and rolls back: both stay pending
+    expect([...(await eventsByWamid(t)).values()].map((e) => e.status)).toEqual([
+      "pending",
+      "pending",
+    ]);
+    expect(await table(t, "whatsappMessages")).toEqual([]);
+
+    later(STUCK_EVENT_AFTER_MS + 1000);
+    expect(await sweep(t)).toEqual({ retried: 2, failed: 0, waiting: 0 });
+    await processAll(t);
+
+    let events = await eventsByWamid(t);
+    expect(events.get("wamid.healthy")).toMatchObject({ status: "processed", attempts: 0 });
+    expect(events.get("wamid.poison")).toMatchObject({ status: "pending", attempts: 0 });
+    expect((await table(t, "whatsappMessages")).map((m) => m.wamid)).toEqual(["wamid.healthy"]);
+
+    // Only now, with its retry job recorded as failed, does the poison event's failure count.
+    later(STUCK_EVENT_AFTER_MS + 1000);
+    expect(await sweep(t)).toEqual({ retried: 1, failed: 0, waiting: 0 });
+    events = await eventsByWamid(t);
+    expect(events.get("wamid.poison")).toMatchObject({ status: "pending", attempts: 1 });
+  });
+
+  it(`marks an event failed after ${MAX_RECOVERY_ATTEMPTS} failed retries and keeps its body`, async () => {
+    const { t, orgA, numberA } = await setup();
+    await poisonContact(t, orgA, numberA, CUSTOMER_1);
+    await postDelivery(t, delivery(entry({ messages: [{ id: "wamid.poison", text: "kept" }] })));
+    await processAll(t);
+
+    for (let attempt = 1; attempt <= MAX_RECOVERY_ATTEMPTS; attempt++) {
+      later(STUCK_EVENT_AFTER_MS + 1000);
+      expect(await sweep(t)).toEqual({ retried: 1, failed: 0, waiting: 0 });
+      await processAll(t);
+    }
+    later(STUCK_EVENT_AFTER_MS + 1000);
+    expect(await sweep(t)).toEqual({ retried: 0, failed: 1, waiting: 0 });
+
+    const failed = (await eventsByWamid(t)).get("wamid.poison")!;
+    expect(failed).toMatchObject({ status: "failed", attempts: MAX_RECOVERY_ATTEMPTS });
+    expect(failed.failedAt).toBe(Date.now());
+    expect(failed.event).toMatchObject({ kind: "message", text: "kept" });
+    // Failed events are not retried again by the sweep.
+    later(STUCK_EVENT_AFTER_MS + 1000);
+    expect(await sweep(t)).toEqual({ retried: 0, failed: 0, waiting: 0 });
+    expect(await table(t, "whatsappMessages")).toEqual([]);
+  });
+
+  it("leaves events alone until they have been pending for the threshold", async () => {
+    const { t, orgA, numberA } = await setup();
+    await poisonContact(t, orgA, numberA, CUSTOMER_1);
+    await postDelivery(t, delivery(entry({ messages: [{ id: "wamid.poison" }] })));
+    await processAll(t);
+    expect(await sweep(t)).toEqual({ retried: 0, failed: 0, waiting: 0 });
+    later(STUCK_EVENT_AFTER_MS - 1000);
+    expect(await sweep(t)).toEqual({ retried: 0, failed: 0, waiting: 0 });
+    later(2000);
+    expect(await sweep(t)).toEqual({ retried: 1, failed: 0, waiting: 0 });
+  });
+
+  it("never counts or duplicates a retry that is still queued (scheduler backlog)", async () => {
+    const { t, orgA, numberA } = await setup();
+    await poisonContact(t, orgA, numberA, CUSTOMER_1);
+    await postDelivery(t, delivery(entry({ messages: [{ id: "wamid.backlog" }] })));
+    await processAll(t); // the original attempt fails
+
+    later(STUCK_EVENT_AFTER_MS + 1000);
+    expect(await sweep(t)).toEqual({ retried: 1, failed: 0, waiting: 0 });
+    // The retry does not run (backlog) for many sweeps: far longer than all retries combined.
+    for (let sweepRun = 0; sweepRun < 2 * MAX_RECOVERY_ATTEMPTS + 2; sweepRun++) {
+      later(STUCK_EVENT_AFTER_MS + 1000);
+      expect(await sweep(t)).toEqual({ retried: 0, failed: 0, waiting: 1 });
+    }
+    expect(await queuedProcessingJobs(t)).toHaveLength(1);
+    expect((await eventsByWamid(t)).get("wamid.backlog")).toMatchObject({
+      status: "pending",
+      attempts: 0,
+    });
+
+    // Once the queued retry runs and fails, exactly one failure is counted.
+    await processAll(t);
+    later(STUCK_EVENT_AFTER_MS + 1000);
+    expect(await sweep(t)).toEqual({ retried: 1, failed: 0, waiting: 0 });
+    expect((await eventsByWamid(t)).get("wamid.backlog")).toMatchObject({ attempts: 1 });
+  });
+
+  it("schedules a retry beside a still-queued original batch without duplicating anything", async () => {
+    const { t } = await setup();
+    await postDelivery(t, delivery(entry({ messages: [{ id: "wamid.slow", text: "once" }] })));
+    // The original batch has not run yet when the sweep finds the event.
+    later(STUCK_EVENT_AFTER_MS + 1000);
+    expect(await sweep(t)).toEqual({ retried: 1, failed: 0, waiting: 0 });
+    expect(await queuedProcessingJobs(t)).toHaveLength(2);
+
+    await processAll(t); // both run: the first applies the event, the second skips it
+    expect(await table(t, "whatsappWebhookEvents")).toHaveLength(1);
+    expect(await table(t, "whatsappConversations")).toHaveLength(1);
+    expect((await table(t, "whatsappMessages")).map((m) => m.text)).toEqual(["once"]);
+    expect((await eventsByWamid(t)).get("wamid.slow")).toMatchObject({
+      status: "processed",
+      attempts: 0,
+    });
+    later(STUCK_EVENT_AFTER_MS + 1000);
+    expect(await sweep(t)).toEqual({ retried: 0, failed: 0, waiting: 0 });
+  });
+
+  it("never retries processed events", async () => {
+    const { t } = await setup();
+    await postDelivery(t, delivery(entry({ messages: [{ id: "wamid.ok" }] })));
+    await processAll(t);
+    later(STUCK_EVENT_AFTER_MS + 1000);
+    expect(await sweep(t)).toEqual({ retried: 0, failed: 0, waiting: 0 });
+    expect(await table(t, "whatsappMessages")).toHaveLength(1);
+  });
+
+  it("keeps each org's events in that org when a mixed batch is recovered", async () => {
+    const { t, orgA, orgB, numberA } = await setup();
+    await poisonContact(t, orgA, numberA, CUSTOMER_1);
+    await postDelivery(
+      t,
+      delivery(
+        entry({ messages: [{ id: "wamid.poison-a" }] }),
+        entry({ wabaId: WABA_B, phoneNumberId: PHONE_B, messages: [{ id: "wamid.for-b" }] }),
+      ),
+    );
+    await processAll(t); // one batch for both orgs: rolled back together
+    later(STUCK_EVENT_AFTER_MS + 1000);
+    await sweep(t);
+    await processAll(t);
+
+    const events = await eventsByWamid(t);
+    expect(events.get("wamid.for-b")).toMatchObject({ orgId: orgB, status: "processed" });
+    expect(events.get("wamid.poison-a")).toMatchObject({ orgId: orgA, status: "pending" });
+    const [message] = await table(t, "whatsappMessages");
+    expect(message).toMatchObject({ orgId: orgB, wamid: "wamid.for-b" });
+    expect(await conversations(t, ORG_A)).toHaveLength(2); // only the two poison rows
+  });
+
+  it("lets an admin requeue a failed event once the cause is fixed, and audits it", async () => {
+    const { t, orgA, numberA } = await setup();
+    const duplicate = await poisonContact(t, orgA, numberA, CUSTOMER_1);
+    await postDelivery(t, delivery(entry({ messages: [{ id: "wamid.requeue", text: "back" }] })));
+    await untilFailed(t);
+    const failed = (await eventsByWamid(t)).get("wamid.requeue")!;
+    expect(failed).toMatchObject({ status: "failed", attempts: MAX_RECOVERY_ATTEMPTS });
+
+    await t.run(async (ctx) => await ctx.db.delete(duplicate)); // the fix
+    expect(await requeue(t, failed._id)).toBe(true);
+    const [audit] = await requeueAudits(t);
+    expect(audit).toMatchObject({
+      orgId: orgA,
+      subject: "operator:test",
+      targetType: "whatsappWebhookEvent",
+      targetId: failed._id,
+      changes: {
+        status: { from: "failed", to: "pending" },
+        attempts: { from: MAX_RECOVERY_ATTEMPTS, to: 0 },
+      },
+    });
+    expect(JSON.stringify(audit)).not.toContain("back");
+    await processAll(t);
+
+    const requeued = (await eventsByWamid(t)).get("wamid.requeue")!;
+    expect(requeued).toMatchObject({ status: "processed", attempts: 0 });
+    expect(requeued.event).toBeUndefined();
+    expect(requeued.failedAt).toBeUndefined();
+    const [message] = await table(t, "whatsappMessages");
+    expect(message).toMatchObject({ orgId: orgA, text: "back" });
+  });
+
+  it("refuses to requeue events that are not failed, leaves them unchanged and unaudited", async () => {
+    const { t } = await setup();
+    // processed (body cleared), unmatched (body kept) and pending (body kept, not yet run)
+    await postDelivery(t, delivery(entry({ messages: [{ id: "wamid.done" }] })));
+    await postDelivery(t, delivery(entry({ statuses: [{ id: "wamid.unknown", status: "sent" }] })));
+    await processAll(t);
+    await postDelivery(t, delivery(entry({ messages: [{ id: "wamid.waiting" }] })));
+
+    const before = await table(t, "whatsappWebhookEvents");
+    expect(before.map((e) => e.status).sort()).toEqual(["pending", "processed", "unmatched"]);
+    for (const event of before) {
+      expect(await requeue(t, event._id)).toBe(false);
+    }
+    expect(await table(t, "whatsappWebhookEvents")).toEqual(before);
+    expect(await requeueAudits(t)).toEqual([]);
+  });
+
+  it("requires an operator: subject for requeue and changes nothing otherwise", async () => {
+    const { t, orgA, numberA } = await setup();
+    await poisonContact(t, orgA, numberA, CUSTOMER_1);
+    await postDelivery(t, delivery(entry({ messages: [{ id: "wamid.attribution" }] })));
+    await untilFailed(t);
+    const failed = (await eventsByWamid(t)).get("wamid.attribution")!;
+    expect(failed.status).toBe("failed");
+
+    // Empty, JWT-style, system-style, unnamed, spaced and overlong subjects are all refused.
+    for (const actorSubject of [
+      "",
+      "user_2abc",
+      "system:connection-sweep",
+      "operator:",
+      "operator:has space",
+      `operator:${"x".repeat(65)}`,
+    ]) {
+      await expectMarketingError(requeue(t, failed._id, actorSubject), "INVALID_ARGUMENT");
+    }
+    expect((await eventsByWamid(t)).get("wamid.attribution")).toEqual(failed);
+    expect(await requeueAudits(t)).toEqual([]);
+  });
+
+  // Job-record lifecycle: Convex keeps finished scheduled jobs for 7 days only, and jobs can be
+  // canceled. None of that may let an event be retried forever.
+
+  it("counts a canceled retry, so an event whose retries keep getting canceled still fails", async () => {
+    const { t } = await setup();
+    await postDelivery(t, delivery(entry({ messages: [{ id: "wamid.canceled" }] })));
+    expect(await cancelQueuedProcessing(t)).toBe(1); // the original batch never runs
+
+    for (let attempt = 1; attempt <= MAX_RECOVERY_ATTEMPTS; attempt++) {
+      later(STUCK_EVENT_AFTER_MS + 1000);
+      expect(await sweep(t)).toEqual({ retried: 1, failed: 0, waiting: 0 });
+      expect(await cancelQueuedProcessing(t)).toBe(1);
+      expect((await eventsByWamid(t)).get("wamid.canceled")).toMatchObject({
+        status: "pending",
+        attempts: attempt - 1,
+      });
+    }
+    later(STUCK_EVENT_AFTER_MS + 1000);
+    expect(await sweep(t)).toEqual({ retried: 0, failed: 1, waiting: 0 });
+    expect((await eventsByWamid(t)).get("wamid.canceled")).toMatchObject({
+      status: "failed",
+      attempts: MAX_RECOVERY_ATTEMPTS,
+    });
+    expect(await table(t, "whatsappMessages")).toEqual([]);
+  });
+
+  it("counts a retry whose job record has expired, so missing records still end in failed", async () => {
+    const { t, orgA, numberA } = await setup();
+    await poisonContact(t, orgA, numberA, CUSTOMER_1);
+    await postDelivery(t, delivery(entry({ messages: [{ id: "wamid.expired" }] })));
+    await processAll(t);
+
+    for (let attempt = 1; attempt <= MAX_RECOVERY_ATTEMPTS; attempt++) {
+      later(STUCK_EVENT_AFTER_MS + 1000);
+      expect(await sweep(t)).toEqual({ retried: 1, failed: 0, waiting: 0 });
+      await processAll(t); // the retry fails...
+      const { retryJobId } = (await eventsByWamid(t)).get("wamid.expired")!;
+      // ...and its record is gone before the next sweep (as after Convex's 7-day retention).
+      // Functions cannot delete system records in Convex; convex-test can, which simulates expiry.
+      // @ts-expect-error -- deleting a _scheduled_functions record is test-only.
+      await t.run(async (ctx) => await ctx.db.delete(retryJobId!));
+      expect(await t.run(async (ctx) => await ctx.db.system.get(retryJobId!))).toBeNull();
+    }
+    later(STUCK_EVENT_AFTER_MS + 1000);
+    expect(await sweep(t)).toEqual({ retried: 0, failed: 1, waiting: 0 });
+    expect((await eventsByWamid(t)).get("wamid.expired")).toMatchObject({
+      status: "failed",
+      attempts: MAX_RECOVERY_ATTEMPTS,
+    });
+  });
+
+  it("gives up on a retry still queued a day after it was scheduled, and cancels it", async () => {
+    const { t, orgA, numberA } = await setup();
+    await poisonContact(t, orgA, numberA, CUSTOMER_1);
+    await postDelivery(t, delivery(entry({ messages: [{ id: "wamid.stuck-queue" }] })));
+    await processAll(t);
+    later(STUCK_EVENT_AFTER_MS + 1000);
+    expect(await sweep(t)).toEqual({ retried: 1, failed: 0, waiting: 0 });
+    const { retryJobId } = (await eventsByWamid(t)).get("wamid.stuck-queue")!;
+
+    later(RETRY_GIVE_UP_AFTER_MS - 1000); // still within the limit: keep waiting
+    expect(await sweep(t)).toEqual({ retried: 0, failed: 0, waiting: 1 });
+    later(2000);
+    expect(await sweep(t)).toEqual({ retried: 0, failed: 1, waiting: 0 });
+
+    expect((await eventsByWamid(t)).get("wamid.stuck-queue")).toMatchObject({
+      status: "failed",
+      attempts: 0, // the queued retry never ran, so it never counted
+    });
+    const job = await t.run(async (ctx) => await ctx.db.system.get(retryJobId!));
+    expect(job?.state.kind).toBe("canceled");
+    await processAll(t); // the canceled job never runs
+    expect(await table(t, "whatsappMessages")).toEqual([]);
   });
 });

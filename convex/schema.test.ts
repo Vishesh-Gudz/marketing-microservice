@@ -38,6 +38,10 @@ const APPROVED_GLOBAL_INDEXES = [
   // org is resolved from the registered phone_number_id. Rows are re-verified (active, unique,
   // WABA match) before any write; covered by convex/whatsapp/webhook.test.ts isolation tests.
   "whatsappPhoneNumbers.by_phone_number_status",
+  // WhatsApp stuck-event recovery: a system sweep (no tenant caller) finds events still pending
+  // across orgs. Each row is re-checked and retried under its own orgId; covered by the
+  // recovery tests in convex/whatsapp/webhook.test.ts.
+  "whatsappWebhookEvents.by_status_received",
 ];
 const tenantTables = tableNames.filter((name) => !GLOBAL_TABLES.includes(name));
 

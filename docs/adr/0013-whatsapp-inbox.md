@@ -35,7 +35,14 @@ available.
    under a dedupe key (`message:<wamid>`, `status:<wamid>:<status>`) and schedules processing in
    batches of 100. Processing applies only `pending` events in the same transaction that marks
    them done, so redelivery, retries and re-runs change nothing. Event bodies are cleared once
-   applied.
+   applied. A cron retries events still pending after 5 minutes one by one (a failing event no
+   longer holds back its batch). It stores each retry's scheduled job id: a queued retry is never
+   duplicated or counted, and any retry that is no longer queued counts, whether its job record
+   failed, was canceled or has expired (Convex keeps finished jobs for 7 days). After 3 counted
+   retries, or a retry still queued after 24 hours, the event is `failed` for an operator to
+   requeue; the requeue is audited under an operator-supplied `operator:<name>` subject that the
+   application does not verify. It reads through a second approved global index,
+   `whatsappWebhookEvents.by_status_received`, because the sweep has no tenant caller.
 5. **Statuses only move forward** (pending < submitted < sent < delivered < read; failed is
    terminal and only before delivery). Out-of-order reports still record their timestamps.
    A status for an unknown message is kept `unmatched` with its body for the send path.

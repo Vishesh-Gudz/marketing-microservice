@@ -320,6 +320,10 @@ exports[`schema inventory > declares the approved indexes 1`] = `
       "orgId",
       "dedupeKey",
     ],
+    "by_status_received": [
+      "status",
+      "receivedAt",
+    ],
   },
 }
 `;

@@ -35,12 +35,12 @@ per deployment with `npx convex env set`; never in source files or `.env.local`.
 
 ## Data
 
-| Table                   | Holds                                                                                  |
-| ----------------------- | -------------------------------------------------------------------------------------- |
-| `whatsappPhoneNumbers`  | phone_number_id → org routing (WABA id, status, activation time). Global lookup index. |
-| `whatsappWebhookEvents` | One row per received event (dedupe key; body cleared once applied).                    |
-| `whatsappConversations` | One thread per (business number, customer wa_id); last inbound time.                   |
-| `whatsappMessages`      | Inbound and outbound messages; delivery status and timestamps.                         |
+| Table                   | Holds                                                                                                      |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `whatsappPhoneNumbers`  | phone_number_id → org routing (WABA id, status, activation time). Global lookup index.                     |
+| `whatsappWebhookEvents` | One row per received event (dedupe key; body cleared once applied; recovery state). Global recovery index. |
+| `whatsappConversations` | One thread per (business number, customer wa_id); last inbound time.                                       |
+| `whatsappMessages`      | Inbound and outbound messages; delivery status and timestamps.                                             |
 
 Phone numbers are registered only by internal functions (the Embedded Signup flow, later; tests
 today). No public function routes a number or accepts an org id.
@@ -57,18 +57,56 @@ Known gaps in the inbound slice, to be closed before customers depend on it:
 
 1. **Event retention.** `whatsappWebhookEvents` rows are never deleted. Processed and ignored
    rows keep only the dedupe key, wamid and number; `unmatched` rows keep their status body,
-   which includes the customer's WhatsApp id. A sweep must keep keys for at least Meta's retry
-   period (about 7 days, unverified) and should use an org-first `(orgId, receivedAt)` index
-   walked per org, not a new global index. If a key is deleted and Meta redelivers, inbound
-   messages are still unique per (org, wamid) and statuses only move forward. Retention and
-   deletion of stored message text and contact names are not defined.
+   which includes the customer's WhatsApp id; `failed` rows keep their full body for requeue.
+   Planned: a sweep over the approved `by_status_received` index deleting event rows after 30
+   days (longer than Meta's retry period, about 7 days, unverified). If a key is deleted and
+   Meta redelivers, inbound messages are still unique per (org, wamid) and statuses only move
+   forward. Retention and deletion of stored message text and contact names are not defined.
 2. **Unmatched-status replay.** A status for a message the org does not know yet is stored as
    `unmatched` and nothing applies it later. Once outbound sending exists, a `sent` webhook that
    arrives before the send result is recorded would be lost. Planned: an org-first
    `(orgId, wamid)` index on events and a replay when the send result is written.
-3. **Stuck-event recovery.** A processing batch (up to 100 events) runs in one transaction. A
-   non-transient error rolls the batch back and leaves its events `pending` with their bodies
-   (message text included). There is no re-processing path, stale-pending detection or alert.
+3. **Stuck-event recovery (mitigated).** A processing batch (up to 100 events) runs in one
+   transaction, so one event that keeps throwing rolls back its whole batch. The
+   `whatsapp stuck event recovery` cron (every 5 minutes, `convex/whatsapp/recovery.ts`) finds
+   events still `pending` 5 minutes after receipt, through the approved global index
+   `whatsappWebhookEvents.by_status_received`, and retries each one on its own, so healthy
+   events succeed. Each retry's scheduled job id is stored on the event (`retryJobId`), and the
+   sweep reads that job's state:
+   - Still queued (`pending` / `inProgress`): the retry is neither counted nor scheduled again,
+     so a scheduler backlog cannot use up an event's retries. A retry still queued 24 hours
+     after it was scheduled is canceled and the event marked `failed`.
+   - Anything else while the event is still `pending` (the job failed, was canceled, or its
+     record is gone) means the retry finished without processing the event, and it counts
+     (`attempts`). Convex keeps finished scheduled jobs for 7 days only ("Scheduled function
+     results are available for 7 days after they have completed", Convex docs, Scheduled
+     Functions), so a missing record is treated as finished, never as a reason to retry
+     without counting.
+
+   So every stuck event becomes `failed` (body kept) after at most 3 finished retries (4
+   attempts including the original batch), or after a day with a retry that never ran.
+
+   **Requeue (operators).** Once the cause is fixed, someone with admin access to the Convex
+   deployment requeues an event with the internal function
+   `whatsapp/recovery:requeueFailedEvent`: from the dashboard (Functions → `whatsapp/recovery`
+   → `requeueFailedEvent` → Run, arguments
+   `{ "eventId": "<event _id>", "actorSubject": "operator:<name>" }`), or from a terminal with a
+   deploy key: `npx convex run whatsapp/recovery:requeueFailedEvent '{"eventId":"…","actorSubject":"operator:<name>"}'`.
+   It is audited as `whatsapp.event_requeued` in the event's org. `actorSubject` is typed in by
+   the operator and is **not verified by this application**: it is a label, not authenticated
+   attribution. It must be `operator:<name>` (letters, digits, `.`, `_`, `@`, `-`; at most 64),
+   so audit readers can tell it apart from authenticated users (JWT subjects) and system jobs.
+   What is controlled is who may run it at all: only deployment admins (Convex dashboard
+   access, or a deploy key). Authenticated attribution would need a staff-facing admin mutation
+   behind the org's JWT, which does not exist yet. Remaining limits:
+   - No alert yet: `failed` events are only visible in the data (filter `status = "failed"`).
+   - Each sweep examines at most 100 stuck events; a larger backlog takes several runs.
+   - The original batch's job is not tracked, so a retry can be scheduled while that batch is
+     still queued. Both then run; processing is idempotent, so the event is applied once.
+   - A failing job's error message is kept by Convex (function logs and the scheduled job's
+     record). Our errors carry no message content, but that is not enforced for
+     platform-generated errors.
+
 4. **Number-transfer timing (mitigated).** Each number records `activatedAt` when it is
    registered or re-activated (updating an already active number keeps it). Ingestion drops
    events whose platform timestamp is before that activation, so Meta's late retries for a
