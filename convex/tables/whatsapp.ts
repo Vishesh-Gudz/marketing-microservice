@@ -73,7 +73,8 @@ export const whatsappTables = {
     // GLOBAL (approved exception): the system recovery sweep finds events still pending long
     // after receipt, across orgs. It checks each row it reads (and its retry job's state)
     // before acting; the retry it schedules re-reads the row and processes it under its own
-    // orgId.
+    // orgId. The retention sweep reads it too, deleting rows no longer pending once older than
+    // EVENT_RETENTION_MS (never pending ones, nor any whose retry is still queued).
     .index("by_status_received", ["status", "receivedAt"]),
 
   /** One customer thread per (business number, customer WhatsApp id). */

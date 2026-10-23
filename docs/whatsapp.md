@@ -35,12 +35,12 @@ per deployment with `npx convex env set`; never in source files or `.env.local`.
 
 ## Data
 
-| Table                   | Holds                                                                                                      |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `whatsappPhoneNumbers`  | phone_number_id → org routing (WABA id, status, activation time). Global lookup index.                     |
-| `whatsappWebhookEvents` | One row per received event (dedupe key; body cleared once applied; recovery state). Global recovery index. |
-| `whatsappConversations` | One thread per (business number, customer wa_id); last inbound time.                                       |
-| `whatsappMessages`      | Inbound and outbound messages; delivery status and timestamps.                                             |
+| Table                   | Holds                                                                                                                                                    |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `whatsappPhoneNumbers`  | phone_number_id → org routing (WABA id, status, activation time). Global lookup index.                                                                   |
+| `whatsappWebhookEvents` | One row per received event (dedupe key; body cleared once applied; recovery state). Global recovery index. Deleted 30 days after receipt unless pending. |
+| `whatsappConversations` | One thread per (business number, customer wa_id); last inbound time.                                                                                     |
+| `whatsappMessages`      | Inbound and outbound messages; delivery status and timestamps.                                                                                           |
 
 Phone numbers are registered only by internal functions (the Embedded Signup flow, later; tests
 today). No public function routes a number or accepts an org id.
@@ -55,13 +55,62 @@ today). No public function routes a number or accepts an org id.
 
 Known gaps in the inbound slice, to be closed before customers depend on it:
 
-1. **Event retention.** `whatsappWebhookEvents` rows are never deleted. Processed and ignored
-   rows keep only the dedupe key, wamid and number; `unmatched` rows keep their status body,
-   which includes the customer's WhatsApp id; `failed` rows keep their full body for requeue.
-   Planned: a sweep over the approved `by_status_received` index deleting event rows after 30
-   days (longer than Meta's retry period, about 7 days, unverified). If a key is deleted and
-   Meta redelivers, inbound messages are still unique per (org, wamid) and statuses only move
-   forward. Retention and deletion of stored message text and contact names are not defined.
+1. **Event retention (mitigated).** The `whatsapp event retention` cron (hourly,
+   `convex/whatsapp/retention.ts`) deletes `whatsappWebhookEvents` rows that are no longer
+   pending once they are at least 30 days old, counted from receipt (`receivedAt`), reading the
+   approved global index `whatsappWebhookEvents.by_status_received`:
+
+   | Event status           | What the row holds                                    | Retention                  |
+   | ---------------------- | ----------------------------------------------------- | -------------------------- |
+   | `processed`, `ignored` | dedupe key, wamid, number (body cleared)              | deleted after 30 days      |
+   | `unmatched`            | status body, including the customer's WhatsApp id     | deleted after 30 days      |
+   | `failed`               | full body (message text, contact name), for requeue   | deleted after 30 days      |
+   | `pending`              | full body and recovery state (recovery still owns it) | never deleted by retention |
+
+   Messages and conversations are never deleted automatically. 30 days is far longer than
+   Meta's retry period for a delivery (about 7 days, unverified), so a deleted dedupe key is
+   not expected to be needed again. If an event is redelivered after its row was deleted, it is
+   stored again as a new row and changes nothing: a message already stored is `ignored`
+   (messages are unique per org and wamid), a status already recorded is `ignored` (statuses
+   only move forward), and a status for an unknown message is `unmatched` again.
+
+   **Failed events and requeue.** A `failed` event can be requeued (risk 3) until it is 30
+   days old. Requeuing makes it `pending` again, so retention leaves it alone until it is
+   processed (or fails again); once processed, an event already older than 30 days is deleted
+   by the next run. After retention has deleted a failed event, `requeueFailedEvent` returns
+   `false` and writes no audit entry: the event and its body are gone, and its message was
+   never stored. There is no hold mechanism; an operator who needs a failed event must requeue
+   it before then.
+
+   **Pending events and queued retries.** Retention never reads `pending` rows (the type of its
+   status list excludes them) and never deletes a row whose recovery retry (`retryJobId`) is
+   still queued. A retry still queued 30 days after receipt would take a scheduler stall of
+   weeks, so that check is a guard. A processing job that runs after its event was deleted
+   (the original batch's job is not tracked) finds no row and skips it.
+
+   Each run examines at most 200 rows. A run that deletes a full batch schedules a follow-up
+   run at once, at most 20 in a chain; the next hourly run continues after that. Every run reads
+   and deletes in one transaction: Convex mutations are serializable and a mutation whose reads
+   conflict with another's writes is re-run (Convex docs, "OCC and Atomicity"), so a retried or
+   overlapping run deletes each row at most once and never a row that no longer qualifies.
+   Limits:
+   - The requeue window counts from receipt, not from the failure. Recovery normally fails an
+     event about 20 minutes after receipt; a scheduler backlog can stretch that to a few days
+     (each retry may wait up to 24 hours in the queue). An event requeued late that fails again
+     after its 30th day is deleted by the next hourly run.
+   - No alert for `failed` events (risk 3): one nobody notices within 30 days is deleted, and
+     its message is lost for good.
+   - Nothing reads `unmatched` rows today. The planned unmatched-status replay (risk 2) must
+     apply them well within 30 days; it is meant to run when the send result is recorded.
+   - At most 4,200 rows are deleted per hour (21 runs of 200), about 100,000 a day. A sustained
+     volume above that lets the backlog of expired rows grow until volume drops.
+   - Rows kept for a queued retry count against a run's 200 rows; they could only build up if
+     the scheduler stalled for weeks.
+   - `pending` rows are never deleted, however old; recovery turns every stuck event into
+     `processed` or `failed` (normally within minutes, at most a few days under a backlog).
+   - Retention and deletion of stored message text and contact names (`whatsappMessages`,
+     `whatsappConversations`) are not defined, and there is no per-org data deletion.
+
 2. **Unmatched-status replay.** A status for a message the org does not know yet is stored as
    `unmatched` and nothing applies it later. Once outbound sending exists, a `sent` webhook that
    arrives before the send result is recorded would be lost. Planned: an org-first
@@ -84,7 +133,8 @@ Known gaps in the inbound slice, to be closed before customers depend on it:
      without counting.
 
    So every stuck event becomes `failed` (body kept) after at most 3 finished retries (4
-   attempts including the original batch), or after a day with a retry that never ran.
+   attempts including the original batch), or after a day with a retry that never ran. A
+   `failed` event can be requeued until retention deletes it, 30 days after receipt (risk 1).
 
    **Requeue (operators).** Once the cause is fixed, someone with admin access to the Convex
    deployment requeues an event with the internal function
@@ -99,7 +149,8 @@ Known gaps in the inbound slice, to be closed before customers depend on it:
    What is controlled is who may run it at all: only deployment admins (Convex dashboard
    access, or a deploy key). Authenticated attribution would need a staff-facing admin mutation
    behind the org's JWT, which does not exist yet. Remaining limits:
-   - No alert yet: `failed` events are only visible in the data (filter `status = "failed"`).
+   - No alert yet: `failed` events are only visible in the data (filter `status = "failed"`),
+     and retention deletes them 30 days after receipt whether or not anyone looked.
    - Each sweep examines at most 100 stuck events; a larger backlog takes several runs.
    - The original batch's job is not tracked, so a retry can be scheduled while that batch is
      still queued. Both then run; processing is idempotent, so the event is applied once.

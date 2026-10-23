@@ -29,13 +29,17 @@ import {
  * retries, without relying on job records being kept. A retry still queued
  * RETRY_GIVE_UP_AFTER_MS after it was scheduled is canceled and the event marked `failed`, so a
  * job that never leaves the queue cannot keep an event pending forever. `failed` events keep
- * their body for an operator to requeue once the cause is fixed. Processing itself is
+ * their body for an operator to requeue once the cause is fixed, until retention deletes them
+ * (EVENT_RETENTION_MS after receipt, convex/whatsapp/retention.ts). Processing itself is
  * idempotent, so a retry that runs beside the original batch, or after it succeeded, changes
  * nothing.
  */
 
-/** Where the event's latest retry stands. */
-async function retryOf(
+/**
+ * Where the event's latest retry stands. Retention uses it too: it never deletes the event of a
+ * queued retry.
+ */
+export async function retryOf(
   db: DatabaseReader,
   row: Doc<"whatsappWebhookEvents">,
 ): Promise<"none" | "queued" | "finished"> {
@@ -99,7 +103,7 @@ export const recoverStuckEvents = internalMutation({
 /**
  * Operator requeue of a `failed` event once its cause is fixed: back to `pending` with fresh
  * retries, processed on its own, and recorded in the event's org audit log. Anything not
- * `failed` is left alone.
+ * `failed` is left alone, and an event that retention has already deleted returns false.
  *
  * Internal function: only someone with admin access to the deployment can run it (Convex
  * dashboard function runner, or `npx convex run` with a deploy key). `actorSubject` is supplied

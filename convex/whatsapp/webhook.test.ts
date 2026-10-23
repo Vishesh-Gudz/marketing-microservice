@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, internal } from "../_generated/api";
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import {
   as,
   expectMarketingError,
@@ -12,9 +12,12 @@ import {
 } from "../test.helpers";
 import crons from "../crons";
 import {
+  EVENT_RETENTION_MS,
   MAX_RECOVERY_ATTEMPTS,
+  MAX_RETENTION_CONTINUATIONS,
   MAX_WEBHOOK_BODY_BYTES,
   RECOVERY_INTERVAL_MINUTES,
+  RETENTION_BATCH_SIZE,
   RETRY_GIVE_UP_AFTER_MS,
   STUCK_EVENT_AFTER_MS,
   WHATSAPP_ENV,
@@ -1492,5 +1495,392 @@ describe("stuck-event recovery", () => {
     expect(job?.state.kind).toBe("canceled");
     await processAll(t); // the canceled job never runs
     expect(await table(t, "whatsappMessages")).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Webhook-event retention (hardening step 4)
+// ---------------------------------------------------------------------------
+
+describe("webhook event retention", () => {
+  const DAY_MS = 24 * HOUR_MS;
+  type EventStatus = Doc<"whatsappWebhookEvents">["status"];
+  const STATUSES: EventStatus[] = ["pending", "processed", "unmatched", "ignored", "failed"];
+
+  async function purge(t: Backend, continuation?: number) {
+    return await t.mutation(
+      internal.whatsapp.retention.purgeExpiredEvents,
+      continuation === undefined ? {} : { continuation },
+    );
+  }
+
+  /** Stores event rows received `ageMs` before now and left in `status`. */
+  async function seedEvents(
+    t: Backend,
+    orgId: Id<"organizations">,
+    numberId: Id<"whatsappPhoneNumbers">,
+    options: { prefix: string; status: EventStatus; ageMs: number; count?: number },
+  ) {
+    await t.run(async (ctx) => {
+      const receivedAt = Date.now() - options.ageMs;
+      const final =
+        options.status === "pending"
+          ? {}
+          : options.status === "failed"
+            ? { failedAt: receivedAt }
+            : { processedAt: receivedAt };
+      for (let i = 0; i < (options.count ?? 1); i++) {
+        const wamid = options.count === undefined ? options.prefix : `${options.prefix}.${i}`;
+        await ctx.db.insert("whatsappWebhookEvents", {
+          orgId,
+          numberId,
+          dedupeKey: `message:${wamid}`,
+          kind: "message",
+          wamid,
+          status: options.status,
+          receivedAt,
+          ...final,
+        });
+      }
+    });
+  }
+
+  async function wamids(t: Backend) {
+    return (await table(t, "whatsappWebhookEvents")).map((e) => e.wamid).sort();
+  }
+
+  /** Retention runs queued in Convex's scheduler that have not run yet. */
+  async function queuedPurges(t: Backend) {
+    const jobs = await t.run(
+      async (ctx) => await ctx.db.system.query("_scheduled_functions").collect(),
+    );
+    return jobs.filter((j) => j.name.includes("purgeExpiredEvents") && j.state.kind === "pending");
+  }
+
+  function later(ms: number) {
+    vi.setSystemTime(Date.now() + ms);
+  }
+
+  async function requeue(t: Backend, eventId: Id<"whatsappWebhookEvents">) {
+    return await t.mutation(internal.whatsapp.recovery.requeueFailedEvent, {
+      eventId,
+      actorSubject: "operator:test",
+    });
+  }
+
+  it("is scheduled by cron every hour", () => {
+    expect(crons.crons["whatsapp event retention"]).toMatchObject({
+      name: "whatsapp/retention:purgeExpiredEvents",
+      schedule: { type: "hourly", minuteUTC: 37 },
+    });
+  });
+
+  it("deletes every event no longer pending once 30 days old, never a pending one", async () => {
+    const { t, orgA, numberA } = await setup();
+    const ages = {
+      year: 365 * DAY_MS,
+      exactly: EVENT_RETENTION_MS,
+      younger: EVENT_RETENTION_MS - 1,
+      fresh: HOUR_MS,
+    };
+    const all: string[] = [];
+    for (const status of STATUSES) {
+      for (const [label, ageMs] of Object.entries(ages)) {
+        await seedEvents(t, orgA, numberA, { prefix: `${status}.${label}`, status, ageMs });
+        all.push(`${status}.${label}`);
+      }
+    }
+    const expired = [
+      "processed.year",
+      "processed.exactly",
+      "ignored.year",
+      "ignored.exactly",
+      "unmatched.year",
+      "unmatched.exactly",
+      "failed.year",
+      "failed.exactly",
+    ];
+
+    expect(await purge(t)).toEqual({ deleted: expired.length, waiting: 0, continued: false });
+    expect(await wamids(t)).toEqual(all.filter((wamid) => !expired.includes(wamid)).sort());
+  });
+
+  it("never deletes a pending event or its queued retry, however old; it still recovers", async () => {
+    const { t } = await setup();
+    await postDelivery(
+      t,
+      delivery(entry({ messages: [{ id: "wamid.waiting", text: "still pending" }] })),
+    );
+    // As recovery leaves it while its retry is queued.
+    const [event] = await table(t, "whatsappWebhookEvents");
+    await t.run(async (ctx) => {
+      const retryJobId = await ctx.scheduler.runAfter(
+        0,
+        internal.whatsapp.processing.processEvents,
+        { eventIds: [event!._id] },
+      );
+      await ctx.db.patch(event!._id, { attempts: 1, retryJobId, lastAttemptAt: Date.now() });
+    });
+    const before = await table(t, "whatsappWebhookEvents");
+
+    later(365 * DAY_MS);
+    expect(await purge(t)).toEqual({ deleted: 0, waiting: 0, continued: false });
+    expect(await table(t, "whatsappWebhookEvents")).toEqual(before);
+    const retryJobId = before[0]!.retryJobId!;
+    const job = await t.run(async (ctx) => await ctx.db.system.get(retryJobId));
+    expect(job?.state.kind).toBe("pending");
+
+    await processAll(t);
+    const kept = await table(t, "whatsappMessages");
+    expect(kept.map((m) => [m.wamid, m.text])).toEqual([["wamid.waiting", "still pending"]]);
+    // Processed now, and long past retention: the next run deletes the event, not the message.
+    expect(await purge(t)).toEqual({ deleted: 1, waiting: 0, continued: false });
+    expect(await table(t, "whatsappWebhookEvents")).toEqual([]);
+    expect(await table(t, "whatsappMessages")).toEqual(kept);
+  });
+
+  it("lets a failed event be requeued until 30 days after receipt; then it is deleted for good", async () => {
+    const { t, orgA } = await setup();
+    await postDelivery(
+      t,
+      delivery(
+        entry({
+          messages: [
+            { id: "wamid.in-time", text: "requeued in time" },
+            { id: "wamid.too-late", from: CUSTOMER_2, text: "requeued too late" },
+          ],
+        }),
+      ),
+    );
+    // As recovery leaves them: failed, with their body. Their original processing job is not
+    // tracked and is still queued; it runs at the end.
+    const received = new Map((await table(t, "whatsappWebhookEvents")).map((e) => [e.wamid, e]));
+    const inTime = received.get("wamid.in-time")!;
+    const tooLate = received.get("wamid.too-late")!;
+    await t.run(async (ctx) => {
+      for (const id of [inTime._id, tooLate._id]) {
+        await ctx.db.patch(id, {
+          status: "failed",
+          attempts: MAX_RECOVERY_ATTEMPTS,
+          failedAt: Date.now(),
+        });
+      }
+    });
+
+    later(EVENT_RETENTION_MS - 1);
+    expect(await purge(t)).toEqual({ deleted: 0, waiting: 0, continued: false });
+    expect(await requeue(t, inTime._id)).toBe(true);
+
+    later(1); // both 30 days old: the failed one is deleted, the requeued one is pending again
+    expect(await purge(t)).toEqual({ deleted: 1, waiting: 0, continued: false });
+    expect(await table(t, "whatsappWebhookEvents")).toMatchObject([
+      { wamid: "wamid.in-time", status: "pending" },
+    ]);
+    expect(await requeue(t, tooLate._id)).toBe(false); // nothing left to requeue
+
+    // The original job skips the deleted event; the requeued one is processed.
+    await processAll(t);
+    const jobs = await t.run(
+      async (ctx) => await ctx.db.system.query("_scheduled_functions").collect(),
+    );
+    expect(jobs.map((job) => [job.name, job.state.kind])).toEqual([
+      ["whatsapp/processing:processEvents", "success"], // original batch: one event gone
+      ["whatsapp/processing:processEvents", "success"], // the requeue's retry
+    ]);
+    expect((await table(t, "whatsappMessages")).map((m) => [m.wamid, m.text])).toEqual([
+      ["wamid.in-time", "requeued in time"],
+    ]);
+    const audits = (await t.run(async (ctx) => await ctx.db.query("auditLog").collect())).filter(
+      (entry) => entry.action === "whatsapp.event_requeued",
+    );
+    expect(audits.map((entry) => [entry.orgId, entry.targetId])).toEqual([[orgA, inTime._id]]);
+    expect(await purge(t)).toEqual({ deleted: 1, waiting: 0, continued: false });
+    expect(await table(t, "whatsappWebhookEvents")).toEqual([]);
+  });
+
+  it("never deletes an event whose recovery retry is still queued", async () => {
+    const { t, orgA, numberA } = await setup();
+    const old = EVENT_RETENTION_MS + DAY_MS;
+    for (const [prefix, status] of [
+      ["queued.processed", "processed"],
+      ["queued.failed", "failed"],
+      ["canceled.failed", "failed"],
+    ] as const) {
+      await seedEvents(t, orgA, numberA, { prefix, status, ageMs: old });
+    }
+    // A retry still queued 30 days after receipt would take a scheduler stall of weeks; the
+    // guard keeps retention safe even then. A canceled retry is not queued.
+    const ids = new Map((await table(t, "whatsappWebhookEvents")).map((e) => [e.wamid, e._id]));
+    await t.run(async (ctx) => {
+      for (const [wamid, id] of ids) {
+        const retryJobId = await ctx.scheduler.runAfter(
+          0,
+          internal.whatsapp.processing.processEvents,
+          { eventIds: [id] },
+        );
+        if (wamid.startsWith("canceled")) await ctx.scheduler.cancel(retryJobId);
+        await ctx.db.patch(id, { retryJobId });
+      }
+    });
+
+    expect(await purge(t)).toEqual({ deleted: 1, waiting: 2, continued: false });
+    expect(await wamids(t)).toEqual(["queued.failed", "queued.processed"]);
+
+    await processAll(t); // the retries run, find nothing pending and change nothing
+    expect(await table(t, "whatsappMessages")).toEqual([]);
+    expect(await purge(t)).toEqual({ deleted: 2, waiting: 0, continued: false });
+    expect(await table(t, "whatsappWebhookEvents")).toEqual([]);
+  });
+
+  it("never touches messages or conversations; a redelivery after expiry changes nothing", async () => {
+    const { t, orgA, numberA } = await setup();
+    await seedOutbound(t, orgA, numberA, "wamid.out");
+    const inbound = delivery(
+      entry({ messages: [{ id: "wamid.in.a", text: "hello A" }] }),
+      entry({
+        wabaId: WABA_B,
+        phoneNumberId: PHONE_B,
+        messages: [{ id: "wamid.in.b", from: CUSTOMER_2, text: "hello B" }],
+      }),
+    );
+    const statuses = delivery(
+      entry({
+        statuses: [
+          { id: "wamid.out", status: "read" },
+          { id: "wamid.unknown", status: "sent" },
+          { id: "wamid.in.a", status: "read" },
+        ],
+      }),
+    );
+    await postDelivery(t, inbound);
+    await processAll(t);
+    await postDelivery(t, statuses);
+    await processAll(t);
+    const eventStates = async () =>
+      (await table(t, "whatsappWebhookEvents")).map((e) => [e.dedupeKey, e.status]);
+    expect(await eventStates()).toEqual([
+      ["message:wamid.in.a", "processed"],
+      ["message:wamid.in.b", "processed"],
+      ["status:wamid.out:read", "processed"],
+      ["status:wamid.unknown:sent", "unmatched"],
+      ["status:wamid.in.a:read", "ignored"],
+    ]);
+    const messagesBefore = await table(t, "whatsappMessages");
+    const conversationsBefore = await table(t, "whatsappConversations");
+    expect(messagesBefore).toHaveLength(3);
+    expect(conversationsBefore).toHaveLength(2); // org A's outbound and inbound share a thread
+
+    later(EVENT_RETENTION_MS - 1);
+    expect(await purge(t)).toEqual({ deleted: 0, waiting: 0, continued: false });
+    later(1);
+    expect(await purge(t)).toEqual({ deleted: 5, waiting: 0, continued: false });
+    expect(await table(t, "whatsappWebhookEvents")).toEqual([]);
+    expect(await table(t, "whatsappMessages")).toEqual(messagesBefore);
+    expect(await table(t, "whatsappConversations")).toEqual(conversationsBefore);
+
+    // Without their dedupe keys the same events are stored again, but nothing applies twice:
+    // known messages and an already recorded `read` are ignored.
+    await postDelivery(t, inbound);
+    await postDelivery(t, statuses);
+    await processAll(t);
+    expect(await eventStates()).toEqual([
+      ["message:wamid.in.a", "ignored"],
+      ["message:wamid.in.b", "ignored"],
+      ["status:wamid.out:read", "ignored"],
+      ["status:wamid.unknown:sent", "unmatched"],
+      ["status:wamid.in.a:read", "ignored"],
+    ]);
+    expect(await table(t, "whatsappMessages")).toEqual(messagesBefore);
+    expect(await table(t, "whatsappConversations")).toEqual(conversationsBefore);
+  });
+
+  it(`deletes at most ${RETENTION_BATCH_SIZE} events per run across statuses and orgs, then chains a follow-up`, async () => {
+    const { t, orgA, orgB, numberA, numberB } = await setup();
+    const old = EVENT_RETENTION_MS + DAY_MS;
+    const recent = EVENT_RETENTION_MS - HOUR_MS;
+    await seedEvents(t, orgA, numberA, {
+      prefix: "p",
+      status: "processed",
+      ageMs: old,
+      count: 150,
+    });
+    await seedEvents(t, orgB, numberB, {
+      prefix: "u",
+      status: "unmatched",
+      ageMs: old,
+      count: 100,
+    });
+    await seedEvents(t, orgA, numberA, { prefix: "i", status: "ignored", ageMs: old, count: 10 });
+    await seedEvents(t, orgA, numberA, {
+      prefix: "r",
+      status: "processed",
+      ageMs: recent,
+      count: 5,
+    });
+    await seedEvents(t, orgB, numberB, { prefix: "f", status: "failed", ageMs: old, count: 5 });
+
+    expect(await purge(t)).toEqual({ deleted: RETENTION_BATCH_SIZE, waiting: 0, continued: true });
+    expect(await table(t, "whatsappWebhookEvents")).toHaveLength(270 - RETENTION_BATCH_SIZE);
+    const followUps = await queuedPurges(t);
+    expect(followUps.map((job) => job.args)).toEqual([[{ continuation: 1 }]]);
+
+    await processAll(t); // the follow-up deletes the last 65 expired events: not a full batch
+    expect(await queuedPurges(t)).toEqual([]);
+    expect(await wamids(t)).toEqual(Array.from({ length: 5 }, (_, i) => `r.${i}`));
+  });
+
+  it(`stops chaining after ${MAX_RETENTION_CONTINUATIONS} follow-ups; the next scheduled run continues`, async () => {
+    const { t, orgA, numberA } = await setup();
+    await seedEvents(t, orgA, numberA, {
+      prefix: "p",
+      status: "processed",
+      ageMs: EVENT_RETENTION_MS + DAY_MS,
+      count: RETENTION_BATCH_SIZE + 1,
+    });
+
+    expect(await purge(t, MAX_RETENTION_CONTINUATIONS)).toEqual({
+      deleted: RETENTION_BATCH_SIZE,
+      waiting: 0,
+      continued: false,
+    });
+    expect(await queuedPurges(t)).toEqual([]);
+    expect(await table(t, "whatsappWebhookEvents")).toHaveLength(1);
+    expect(await purge(t)).toEqual({ deleted: 1, waiting: 0, continued: false });
+  });
+
+  it("is idempotent: repeated, overlapping and retried runs delete each expired event once", async () => {
+    const { t, orgA, numberA } = await setup();
+    const old = EVENT_RETENTION_MS + DAY_MS;
+    await seedEvents(t, orgA, numberA, {
+      prefix: "old",
+      status: "processed",
+      ageMs: old,
+      count: 30,
+    });
+    await seedEvents(t, orgA, numberA, {
+      prefix: "new",
+      status: "ignored",
+      ageMs: HOUR_MS,
+      count: 3,
+    });
+
+    const runs = await Promise.all([purge(t), purge(t), purge(t)]);
+    expect(runs.reduce((sum, run) => sum + run.deleted, 0)).toBe(30);
+    expect(runs.some((run) => run.continued)).toBe(false);
+    expect(await purge(t)).toEqual({ deleted: 0, waiting: 0, continued: false });
+    expect(await purge(t, 1)).toEqual({ deleted: 0, waiting: 0, continued: false }); // a retried follow-up
+    expect(await wamids(t)).toEqual(["new.0", "new.1", "new.2"]);
+
+    // A batch that empties the backlog exactly chains one follow-up, which finds nothing.
+    await seedEvents(t, orgA, numberA, {
+      prefix: "full",
+      status: "unmatched",
+      ageMs: old,
+      count: RETENTION_BATCH_SIZE,
+    });
+    expect(await purge(t)).toEqual({ deleted: RETENTION_BATCH_SIZE, waiting: 0, continued: true });
+    await processAll(t);
+    expect(await queuedPurges(t)).toEqual([]);
+    expect(await wamids(t)).toEqual(["new.0", "new.1", "new.2"]);
   });
 });

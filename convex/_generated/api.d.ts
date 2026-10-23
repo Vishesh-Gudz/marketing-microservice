@@ -178,6 +178,7 @@ import type * as whatsapp_payload from "../whatsapp/payload.js";
 import type * as whatsapp_phoneNumbers from "../whatsapp/phoneNumbers.js";
 import type * as whatsapp_processing from "../whatsapp/processing.js";
 import type * as whatsapp_recovery from "../whatsapp/recovery.js";
+import type * as whatsapp_retention from "../whatsapp/retention.js";
 import type * as whatsapp_signature from "../whatsapp/signature.js";
 import type * as whatsapp_status from "../whatsapp/status.js";
 import type * as whatsapp_validators from "../whatsapp/validators.js";
@@ -361,6 +362,7 @@ declare const fullApi: ApiFromModules<{
   "whatsapp/phoneNumbers": typeof whatsapp_phoneNumbers;
   "whatsapp/processing": typeof whatsapp_processing;
   "whatsapp/recovery": typeof whatsapp_recovery;
+  "whatsapp/retention": typeof whatsapp_retention;
   "whatsapp/signature": typeof whatsapp_signature;
   "whatsapp/status": typeof whatsapp_status;
   "whatsapp/validators": typeof whatsapp_validators;

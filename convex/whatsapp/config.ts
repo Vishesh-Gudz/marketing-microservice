@@ -57,6 +57,19 @@ export const RECOVERY_BATCH_SIZE = 100;
  */
 export const OPERATOR_SUBJECT = /^operator:[A-Za-z0-9._@-]{1,64}$/;
 
+/**
+ * Webhook events that are no longer pending (`processed`, `ignored`, `unmatched`, `failed`) are
+ * deleted once at least this old, counted from receipt. Far longer than Meta's retry period
+ * for a delivery (about 7 days, unverified), so a deleted dedupe key is not expected to be
+ * needed again. It is also how long a `failed` event can be requeued. `pending` events are
+ * never deleted by retention.
+ */
+export const EVENT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+/** Expired events examined per retention run (bounded; a full batch chains another run). */
+export const RETENTION_BATCH_SIZE = 200;
+/** Follow-up runs one scheduled retention run may chain; the next hourly run continues. */
+export const MAX_RETENTION_CONTINUATIONS = 20;
+
 /** Longest inbound text body stored (WhatsApp's own limit for a text message). */
 export const MAX_TEXT_BODY_CHARS = 65_536;
 

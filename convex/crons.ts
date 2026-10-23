@@ -39,4 +39,13 @@ crons.interval(
   {},
 );
 
+// WhatsApp: delete webhook events no longer pending 30 days after receipt (bounded batches).
+// Never deletes pending events, events with a queued retry, messages or conversations.
+crons.hourly(
+  "whatsapp event retention",
+  { minuteUTC: 37 },
+  internal.whatsapp.retention.purgeExpiredEvents,
+  {},
+);
+
 export default crons;

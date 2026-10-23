@@ -42,7 +42,11 @@ available.
    retries, or a retry still queued after 24 hours, the event is `failed` for an operator to
    requeue; the requeue is audited under an operator-supplied `operator:<name>` subject that the
    application does not verify. It reads through a second approved global index,
-   `whatsappWebhookEvents.by_status_received`, because the sweep has no tenant caller.
+   `whatsappWebhookEvents.by_status_received`, because the sweep has no tenant caller. An
+   hourly retention cron reads the same index and deletes events that are no longer pending
+   (`processed`, `ignored`, `unmatched`, `failed`) 30 days after receipt, in bounded batches,
+   so a `failed` event can be requeued for 30 days (no hold mechanism). `pending` events,
+   events whose retry is still queued, messages and conversations are never deleted by it.
 5. **Statuses only move forward** (pending < submitted < sent < delivered < read; failed is
    terminal and only before delivery). Out-of-order reports still record their timestamps.
    A status for an unknown message is kept `unmatched` with its body for the send path.
@@ -55,7 +59,8 @@ available.
 ## Consequences
 
 - New Convex env vars: `WHATSAPP_APP_SECRET`, `WHATSAPP_WEBHOOK_VERIFY_TOKEN`.
-- Webhook events are kept (bodies cleared) for deduplication; retention is not implemented yet.
+- Webhook events are kept for deduplication (bodies cleared once applied) and deleted 30 days
+  after receipt unless still pending; a `failed` event not requeued by then is lost for good.
 - Open risks (event retention, unmatched-status replay, stuck-event recovery, number-transfer
   timing, maximum-size deliveries) are listed in [docs/whatsapp.md](../whatsapp.md#open-risks-stage-1).
 - See [docs/whatsapp.md](../whatsapp.md) for the setup checklist and real-account validation.
