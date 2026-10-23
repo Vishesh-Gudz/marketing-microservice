@@ -24,6 +24,7 @@ import {
   entry,
   nowSeconds,
   postDelivery,
+  signBody,
   signBytes,
   stubWhatsAppEnv,
 } from "./fakeWebhook.fixtures";
@@ -676,5 +677,207 @@ describe("delivery statuses", () => {
     const [message] = await table(t, "whatsappMessages");
     expect(message).toMatchObject({ status: "received" });
     expect(message!.readAt).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tenant isolation of the read API (hardening step 1)
+// ---------------------------------------------------------------------------
+
+describe("v1/whatsapp tenant isolation", () => {
+  /** Same external org id as ORG_A under another issuer: a different tenant. */
+  const ORG_C = { issuer: ISSUER_CRM, org: ORG_A.org };
+
+  /** Org A gets two customers' messages; org B gets one; org C has no WhatsApp at all. */
+  async function seeded() {
+    const ctx = await setup();
+    await seedOrg(ctx.t, ORG_C.issuer, ORG_C.org);
+    await postDelivery(
+      ctx.t,
+      delivery(
+        entry({
+          messages: [
+            { id: "wamid.a1", from: CUSTOMER_1, text: "a one" },
+            { id: "wamid.a2", from: CUSTOMER_2, text: "a two" },
+          ],
+        }),
+        entry({ wabaId: WABA_B, phoneNumberId: PHONE_B, messages: [{ id: "wamid.b1" }] }),
+      ),
+    );
+    await processAll(ctx.t);
+    const threadsA = await conversations(ctx.t, ORG_A);
+    expect(threadsA).toHaveLength(2);
+    return { ...ctx, threadsA };
+  }
+
+  it("lists none of another org's conversations, at any page size", async () => {
+    const { t, threadsA } = await seeded();
+    const idsA = new Set(threadsA.map((c) => c.id));
+    for (const who of [ORG_B, ORG_C]) {
+      const page = (
+        await as(t, { ...who, role: "admin" }).query(api.v1.whatsapp.listConversations, {
+          paginationOpts: { numItems: 100, cursor: null },
+        })
+      ).page;
+      expect(page.some((c) => idsA.has(c.id))).toBe(false);
+    }
+    expect(await conversations(t, ORG_B)).toHaveLength(1);
+    expect(await conversations(t, ORG_C)).toEqual([]);
+  });
+
+  it.each(["viewer", "editor", "admin", "org:admin"])(
+    "returns NOT_FOUND for another org's conversation and messages (role %s)",
+    async (role) => {
+      const { t, threadsA } = await seeded();
+      for (const who of [ORG_B, ORG_C]) {
+        const other = as(t, { ...who, role });
+        for (const thread of threadsA) {
+          await expectMarketingError(
+            other.query(api.v1.whatsapp.getConversation, { conversationId: thread.id }),
+            "NOT_FOUND",
+          );
+          await expectMarketingError(
+            other.query(api.v1.whatsapp.listMessages, { conversationId: thread.id, ...PAGE }),
+            "NOT_FOUND",
+          );
+        }
+      }
+    },
+  );
+
+  it("returns NOT_FOUND for malformed ids and ids of other tables", async () => {
+    const { t, numberA } = await seeded();
+    const [message] = await table(t, "whatsappMessages");
+    const viewerA = as(t, { ...ORG_A, role: "viewer" });
+    for (const conversationId of ["not-an-id", message!._id, numberA]) {
+      await expectMarketingError(
+        viewerA.query(api.v1.whatsapp.getConversation, { conversationId }),
+        "NOT_FOUND",
+      );
+      await expectMarketingError(
+        viewerA.query(api.v1.whatsapp.listMessages, { conversationId, ...PAGE }),
+        "NOT_FOUND",
+      );
+    }
+  });
+
+  it("refuses unauthenticated callers", async () => {
+    const { t, threadsA } = await seeded();
+    const conversationId = threadsA[0]!.id;
+    await expectMarketingError(t.query(api.v1.whatsapp.listConversations, PAGE), "UNAUTHENTICATED");
+    await expectMarketingError(
+      t.query(api.v1.whatsapp.getConversation, { conversationId }),
+      "UNAUTHENTICATED",
+    );
+    await expectMarketingError(
+      t.query(api.v1.whatsapp.listMessages, { conversationId, ...PAGE }),
+      "UNAUTHENTICATED",
+    );
+  });
+
+  it("accepts Clerk's org:viewer and refuses org:member and unknown roles", async () => {
+    const { t } = await seeded();
+    const read = (role: string) =>
+      as(t, { ...ORG_A, role }).query(api.v1.whatsapp.listConversations, PAGE);
+    expect((await read("org:viewer")).page).toHaveLength(2);
+    await expectMarketingError(read("org:member"), "INVALID_TOKEN_CLAIMS");
+    await expectMarketingError(read("owner"), "INVALID_TOKEN_CLAIMS");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Replay protection (hardening step 1)
+// ---------------------------------------------------------------------------
+
+describe("exact signed replays", () => {
+  async function counts(t: Backend) {
+    return {
+      events: (await table(t, "whatsappWebhookEvents")).length,
+      conversations: (await table(t, "whatsappConversations")).length,
+      messages: (await table(t, "whatsappMessages")).length,
+    };
+  }
+
+  /** The exact bytes and signature Meta would send again on a retry. */
+  async function signed(payload: unknown) {
+    const rawBody = JSON.stringify(payload);
+    return { rawBody, signature: await signBody(rawBody) };
+  }
+
+  it("changes no event, conversation or message when the same bytes arrive again", async () => {
+    const { t } = await setup();
+    const replay = await signed(
+      delivery(entry({ messages: [{ id: "wamid.replay", text: "only once", name: "Ana" }] })),
+    );
+    expect((await postDelivery(t, null, replay)).status).toBe(200);
+    await processAll(t);
+    const before = {
+      conversations: await table(t, "whatsappConversations"),
+      messages: await table(t, "whatsappMessages"),
+    };
+
+    for (let i = 0; i < 3; i++) {
+      expect((await postDelivery(t, null, replay)).status).toBe(200);
+    }
+    await processAll(t);
+
+    expect(await counts(t)).toEqual({ events: 1, conversations: 1, messages: 1 });
+    expect(await table(t, "whatsappConversations")).toEqual(before.conversations);
+    expect(await table(t, "whatsappMessages")).toEqual(before.messages);
+  });
+
+  it("stores only the new message when a retry is re-batched with new events", async () => {
+    const { t } = await setup();
+    await postDelivery(t, delivery(entry({ messages: [{ id: "wamid.first" }] })));
+    await processAll(t);
+    await postDelivery(
+      t,
+      delivery(entry({ messages: [{ id: "wamid.first" }, { id: "wamid.second" }] })),
+    );
+    await processAll(t);
+    expect(await counts(t)).toEqual({ events: 2, conversations: 1, messages: 2 });
+  });
+
+  it("keeps replays of a two-org delivery separate per org", async () => {
+    const { t } = await setup();
+    const replay = await signed(
+      delivery(
+        entry({ messages: [{ id: "wamid.forA" }] }),
+        entry({ wabaId: WABA_B, phoneNumberId: PHONE_B, messages: [{ id: "wamid.forB" }] }),
+      ),
+    );
+    await postDelivery(t, null, replay);
+    await postDelivery(t, null, replay);
+    await processAll(t);
+    await postDelivery(t, null, replay);
+    await processAll(t);
+    expect(await counts(t)).toEqual({ events: 2, conversations: 2, messages: 2 });
+    expect(await conversations(t, ORG_A)).toHaveLength(1);
+    expect(await conversations(t, ORG_B)).toHaveLength(1);
+  });
+
+  it("leaves an applied status untouched when it is replayed", async () => {
+    const { t, orgA, numberA } = await setup();
+    const id = await seedOutbound(t, orgA, numberA, "wamid.out-replay");
+    const replay = await signed(
+      delivery(entry({ statuses: [{ id: "wamid.out-replay", status: "read" }] })),
+    );
+    await postDelivery(t, null, replay);
+    await processAll(t);
+    const applied = await t.run(async (ctx) => await ctx.db.get(id));
+    await postDelivery(t, null, replay);
+    await processAll(t);
+    expect(await t.run(async (ctx) => await ctx.db.get(id))).toEqual(applied);
+    expect(await table(t, "whatsappWebhookEvents")).toHaveLength(1);
+  });
+
+  it("stores one of each when pending events are processed twice", async () => {
+    const { t } = await setup();
+    await postDelivery(t, delivery(entry({ messages: [{ id: "wamid.twice-processed" }] })));
+    const eventIds = (await table(t, "whatsappWebhookEvents")).map((e) => e._id);
+    // A manual run before the scheduled one, then the scheduled one.
+    await t.mutation(internal.whatsapp.processing.processEvents, { eventIds });
+    await processAll(t);
+    expect(await counts(t)).toEqual({ events: 1, conversations: 1, messages: 1 });
   });
 });
