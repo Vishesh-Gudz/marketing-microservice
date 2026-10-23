@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import { internalMutation, type DatabaseReader } from "../_generated/server";
 import { AUDIT_ACTIONS, writeAudit } from "../lib/audit";
+import { requireOperatorSubject } from "./config";
 import { isNumericId } from "./payload";
 
 /**
@@ -12,8 +13,11 @@ import { isNumericId } from "./payload";
  * number that another org holds active; the webhook additionally fails closed if it ever finds
  * more than one, or a WABA id that differs from the registered one.
  *
- * Internal only: rows are created by the connection flow (Stage 3, server-verified assets) and
- * by tests; no public function accepts an org id or a phone_number_id to route.
+ * Internal only: no public function accepts an org id or a phone_number_id to route. Today an
+ * operator runs `register` / `disconnect` (Convex dashboard, or a deploy key) and must pass an
+ * `operator:<name>` actorSubject, which is recorded but NOT verified by this application. The
+ * connection flow (Stage 3, server-verified assets) will need its own entry point that records
+ * its authenticated subject.
  */
 
 async function activeRows(db: DatabaseReader, phoneNumberId: string) {
@@ -72,6 +76,7 @@ export const register = internalMutation({
     }),
   ),
   handler: async (ctx, args) => {
+    requireOperatorSubject(args.actorSubject);
     if (!isNumericId(args.wabaId) || !isNumericId(args.phoneNumberId)) {
       return { ok: false as const, reason: "invalid_id" as const };
     }
@@ -142,6 +147,7 @@ export const disconnect = internalMutation({
   args: { numberId: v.id("whatsappPhoneNumbers"), actorSubject: v.string() },
   returns: v.boolean(),
   handler: async (ctx, { numberId, actorSubject }) => {
+    requireOperatorSubject(actorSubject);
     const row = await ctx.db.get(numberId);
     if (row === null || row.status !== "active") return false;
     const now = Date.now();

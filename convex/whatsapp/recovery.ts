@@ -3,11 +3,10 @@ import { internal } from "../_generated/api";
 import type { Doc } from "../_generated/dataModel";
 import { internalMutation, type DatabaseReader } from "../_generated/server";
 import { AUDIT_ACTIONS, writeAudit } from "../lib/audit";
-import { apiError } from "../lib/errors";
 import {
   MAX_RECOVERY_ATTEMPTS,
-  OPERATOR_SUBJECT,
   RECOVERY_BATCH_SIZE,
+  requireOperatorSubject,
   RETRY_GIVE_UP_AFTER_MS,
   STUCK_EVENT_AFTER_MS,
 } from "./config";
@@ -114,11 +113,7 @@ export const requeueFailedEvent = internalMutation({
   args: { eventId: v.id("whatsappWebhookEvents"), actorSubject: v.string() },
   returns: v.boolean(),
   handler: async (ctx, { eventId, actorSubject }) => {
-    if (!OPERATOR_SUBJECT.test(actorSubject)) {
-      throw apiError("INVALID_ARGUMENT", "actorSubject must be operator:<name>.", {
-        field: "actorSubject",
-      });
-    }
+    requireOperatorSubject(actorSubject);
     const row = await ctx.db.get(eventId);
     if (row === null || row.status !== "failed" || row.event === undefined) return false;
     const now = Date.now();

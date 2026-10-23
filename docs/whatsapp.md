@@ -73,9 +73,11 @@ per deployment with `npx convex env set` or the Convex dashboard; never in sourc
 5. Send one test message and check the event (`processed`), the conversation and the message in
    the org's data.
 
-`actorSubject` for register and disconnect is free text, recorded as the audit subject (and as
-`registeredBySubject`). Like requeue's, it is not verified; unlike requeue's, it is not checked
-for the `operator:` prefix, so use `operator:<name>` by convention.
+`actorSubject` for register and disconnect follows the same rule as requeue's (risk 3): it must
+be `operator:<name>` (letters, digits, `.`, `_`, `@`, `-`; at most 64), otherwise the call fails
+with `INVALID_ARGUMENT` and changes nothing. It is recorded as the audit subject (and as
+`registeredBySubject`) but is a label typed by the operator, **not verified by this
+application**: the check only keeps it apart from authenticated users and system jobs.
 
 ## Data
 

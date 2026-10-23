@@ -1,3 +1,5 @@
+import { apiError } from "../lib/errors";
+
 /**
  * WhatsApp Cloud API inbox configuration (ADR 0013, docs/whatsapp.md).
  *
@@ -56,6 +58,18 @@ export const RECOVERY_BATCH_SIZE = 100;
  * the operator, not verified by this application, so it gets its own namespace.
  */
 export const OPERATOR_SUBJECT = /^operator:[A-Za-z0-9._@-]{1,64}$/;
+
+/**
+ * Refuses (INVALID_ARGUMENT) an operator-supplied `actorSubject` that is not `operator:<name>`.
+ * This only standardizes the label: it does not authenticate who typed it.
+ */
+export function requireOperatorSubject(actorSubject: string): void {
+  if (!OPERATOR_SUBJECT.test(actorSubject)) {
+    throw apiError("INVALID_ARGUMENT", "actorSubject must be operator:<name>.", {
+      field: "actorSubject",
+    });
+  }
+}
 
 /**
  * Webhook events that are no longer pending (`processed`, `ignored`, `unmatched`, `failed`) are

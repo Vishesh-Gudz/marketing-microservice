@@ -37,7 +37,9 @@ check.
    webhook also requires exactly one active row and a matching WABA id, otherwise it drops the
    change (still 200, so Meta does not retry forever). Events timestamped before the number's
    current activation (`activatedAt`, set on registration and re-activation) are dropped too,
-   so a reassigned number's late retries never reach the new owner.
+   so a reassigned number's late retries never reach the new owner. Numbers are registered and
+   disconnected by internal functions that an operator runs with an `operator:<name>` label,
+   validated like requeue's but not authenticated.
 4. **Idempotent, asynchronous ingestion.** One fast mutation stores each event once per org
    under a dedupe key (`message:<wamid>`, `status:<wamid>:<status>`) and schedules processing in
    batches of 100. Processing applies only `pending` events in the same transaction that marks

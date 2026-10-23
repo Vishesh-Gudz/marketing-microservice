@@ -67,7 +67,7 @@ async function register(t: Backend, orgId: Id<"organizations">, wabaId: string, 
     wabaId,
     phoneNumberId: phone,
     displayPhoneNumber: `+${phone.slice(-6)}`,
-    actorSubject: "test:setup",
+    actorSubject: "operator:test-setup",
   });
   if (!result.ok) throw new Error(`register failed: ${result.reason}`);
   return result.numberId;
@@ -509,7 +509,7 @@ describe("tenant routing and isolation", () => {
     await processAll(t);
     await t.mutation(internal.whatsapp.phoneNumbers.disconnect, {
       numberId: numberA,
-      actorSubject: "test:admin",
+      actorSubject: "operator:test-admin",
     });
 
     await postDelivery(t, delivery(entry({ messages: [{ id: "wamid.after1" }] })));
@@ -560,7 +560,7 @@ describe("tenant routing and isolation", () => {
         orgId: orgB,
         wabaId: WABA_A,
         phoneNumberId: PHONE_A,
-        actorSubject: "test",
+        actorSubject: "operator:test",
       }),
     ).toEqual({ ok: false, reason: "in_use" });
   });
@@ -572,7 +572,7 @@ describe("tenant routing and isolation", () => {
         orgId: orgA,
         wabaId: "waba",
         phoneNumberId: PHONE_A,
-        actorSubject: "test",
+        actorSubject: "operator:test",
       }),
     ).toEqual({ ok: false, reason: "invalid_id" });
   });
@@ -965,7 +965,10 @@ describe("number activation cutoff", () => {
     await processAll(t);
 
     vi.setSystemTime(ACTIVATED_AT + HOUR_MS);
-    await t.mutation(internal.whatsapp.phoneNumbers.disconnect, { numberId, actorSubject: "test" });
+    await t.mutation(internal.whatsapp.phoneNumbers.disconnect, {
+      numberId,
+      actorSubject: "operator:test",
+    });
     const reactivatedAt = ACTIVATED_AT + 2 * HOUR_MS;
     vi.setSystemTime(reactivatedAt);
     expect(await register(t, orgA, WABA_A, PHONE_A)).toBe(numberId);
@@ -1045,7 +1048,7 @@ describe("number activation cutoff", () => {
     vi.setSystemTime(ACTIVATED_AT + HOUR_MS);
     await t.mutation(internal.whatsapp.phoneNumbers.disconnect, {
       numberId: numberA,
-      actorSubject: "test",
+      actorSubject: "operator:test",
     });
     const movedAt = ACTIVATED_AT + 2 * HOUR_MS;
     vi.setSystemTime(movedAt);
@@ -1080,7 +1083,7 @@ describe("number activation cutoff", () => {
     const outboundA = await seedOutbound(t, orgA, numberA, "wamid.out-a");
     await t.mutation(internal.whatsapp.phoneNumbers.disconnect, {
       numberId: numberA,
-      actorSubject: "test",
+      actorSubject: "operator:test",
     });
     const movedAt = ACTIVATED_AT + HOUR_MS;
     vi.setSystemTime(movedAt);
@@ -2147,5 +2150,112 @@ describe("contact names from out-of-order messages", () => {
     const row = await conversation(t);
     expect(row).toMatchObject({ contactName: "Skewed", contactNameAt: Date.now() });
     expect(row.lastInboundAt).toBe(Date.now());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Operator subjects for number registration (same convention as requeue)
+// ---------------------------------------------------------------------------
+
+describe("operator subjects for register and disconnect", () => {
+  const NEW_PHONE = "200000000000009";
+  /** Empty, JWT-style, system-style, the old test style, unnamed, spaced, overlong, wrong case. */
+  const INVALID_SUBJECTS = [
+    "",
+    "user_2abc",
+    "system:connection-sweep",
+    "test:setup",
+    "operator:",
+    "operator:has space",
+    `operator:${"x".repeat(65)}`,
+    "Operator:alice",
+  ];
+
+  /** Every routing row and every number audit entry: what a refused call must leave as it was. */
+  async function routingState(t: Backend) {
+    return await t.run(async (ctx) => ({
+      numbers: await ctx.db.query("whatsappPhoneNumbers").collect(),
+      audits: (await ctx.db.query("auditLog").collect()).filter((entry) =>
+        entry.action.startsWith("whatsapp.number_"),
+      ),
+    }));
+  }
+
+  it("records a valid operator label on register and disconnect (a label, not an identity)", async () => {
+    const { t, orgA } = await setup();
+    const registeredBy = "operator:alice.ops_1@example-org";
+    const disconnectedBy = `operator:${"x".repeat(64)}`;
+    const result = await t.mutation(internal.whatsapp.phoneNumbers.register, {
+      orgId: orgA,
+      wabaId: WABA_A,
+      phoneNumberId: NEW_PHONE,
+      actorSubject: registeredBy,
+    });
+    if (!result.ok) throw new Error(`register failed: ${result.reason}`);
+    expect(
+      await t.mutation(internal.whatsapp.phoneNumbers.disconnect, {
+        numberId: result.numberId,
+        actorSubject: disconnectedBy,
+      }),
+    ).toBe(true);
+
+    const { numbers, audits } = await routingState(t);
+    expect(numbers.find((n) => n._id === result.numberId)).toMatchObject({
+      registeredBySubject: registeredBy,
+      status: "disconnected",
+    });
+    expect(
+      audits
+        .filter((entry) => entry.targetId === result.numberId)
+        .map((entry) => [entry.action, entry.subject, entry.orgId]),
+    ).toEqual([
+      ["whatsapp.number_registered", registeredBy, orgA],
+      ["whatsapp.number_disconnected", disconnectedBy, orgA],
+    ]);
+  });
+
+  it("refuses register without an operator: subject and changes no routing or audit state", async () => {
+    const { t, orgA, orgB, numberA } = await setup();
+    await t.mutation(internal.whatsapp.phoneNumbers.disconnect, {
+      numberId: numberA,
+      actorSubject: "operator:test",
+    });
+    const before = await routingState(t);
+    // New number, re-activation, update of an active number, another org's number, bad ids:
+    // the subject is checked before anything else.
+    const attempts = [
+      { orgId: orgA, wabaId: WABA_A, phoneNumberId: NEW_PHONE },
+      { orgId: orgA, wabaId: WABA_A, phoneNumberId: PHONE_A },
+      { orgId: orgB, wabaId: WABA_B, phoneNumberId: PHONE_B },
+      { orgId: orgA, wabaId: WABA_B, phoneNumberId: PHONE_B },
+      { orgId: orgA, wabaId: "waba", phoneNumberId: PHONE_A },
+    ];
+    for (const actorSubject of INVALID_SUBJECTS) {
+      for (const attempt of attempts) {
+        await expectMarketingError(
+          t.mutation(internal.whatsapp.phoneNumbers.register, { ...attempt, actorSubject }),
+          "INVALID_ARGUMENT",
+        );
+      }
+    }
+    expect(await routingState(t)).toEqual(before);
+  });
+
+  it("refuses disconnect without an operator: subject; the number keeps routing", async () => {
+    const { t, numberA } = await setup();
+    const before = await routingState(t);
+    for (const actorSubject of INVALID_SUBJECTS) {
+      await expectMarketingError(
+        t.mutation(internal.whatsapp.phoneNumbers.disconnect, { numberId: numberA, actorSubject }),
+        "INVALID_ARGUMENT",
+      );
+    }
+    expect(await routingState(t)).toEqual(before);
+
+    await postDelivery(t, delivery(entry({ messages: [{ id: "wamid.still-routed" }] })));
+    await processAll(t);
+    expect((await table(t, "whatsappMessages")).map((m) => m.wamid)).toEqual([
+      "wamid.still-routed",
+    ]);
   });
 });
