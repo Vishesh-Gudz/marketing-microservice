@@ -39,6 +39,7 @@ import {
   signBody,
   signBytes,
   stubWhatsAppEnv,
+  type MessageInput,
 } from "./fakeWebhook.fixtures";
 
 // Webhook vertical slice: GET verification, signed POST deliveries, tenant routing through the
@@ -1882,5 +1883,269 @@ describe("webhook event retention", () => {
     await processAll(t);
     expect(await queuedPurges(t)).toEqual([]);
     expect(await wamids(t)).toEqual(["new.0", "new.1", "new.2"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Parser and webhook edge cases (hardening step 5)
+// ---------------------------------------------------------------------------
+
+describe("other subscribed fields beside messages", () => {
+  /** Adds changes for other fields around the entry's `messages` change. */
+  function withOtherFields(
+    entryBody: Record<string, unknown>,
+    before: unknown[],
+    after: unknown[] = [],
+  ) {
+    const changes = entryBody.changes as unknown[];
+    entryBody.changes = [...before, ...changes, ...after];
+    return entryBody;
+  }
+
+  it("accepts a delivery mixing messages with other fields of any value shape; stores only the messages", async () => {
+    const { t } = await setup();
+    const payload = delivery(
+      withOtherFields(
+        entry({
+          messages: [
+            { id: "wamid.mixed.1", text: "first" },
+            { id: "wamid.mixed.2", from: CUSTOMER_2, text: "second" },
+          ],
+        }),
+        [
+          { field: "message_template_quality_update", value: null },
+          { field: "phone_number_name_update", value: "renamed" },
+        ],
+        [{ field: "account_update", value: [{ event: "x" }] }, { field: "security" }],
+      ),
+      { id: WABA_A, changes: [{ field: "message_template_status_update", value: 42 }] },
+    );
+
+    const response = await postDelivery(t, payload);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("EVENT_RECEIVED");
+    await processAll(t);
+    expect((await table(t, "whatsappWebhookEvents")).map((e) => [e.wamid, e.status])).toEqual([
+      ["wamid.mixed.1", "processed"],
+      ["wamid.mixed.2", "processed"],
+    ]);
+    expect((await table(t, "whatsappMessages")).map((m) => m.text)).toEqual(["first", "second"]);
+  });
+
+  it("acknowledges a delivery holding only other fields and stores nothing", async () => {
+    const { t } = await setup();
+    const payload = delivery({
+      id: WABA_A,
+      changes: [
+        { field: "message_template_status_update", value: "APPROVED" },
+        { field: "phone_number_quality_update" },
+      ],
+    });
+    expect((await postDelivery(t, payload)).status).toBe(200);
+    await processAll(t);
+    expect(await table(t, "whatsappWebhookEvents")).toEqual([]);
+  });
+
+  it("still rejects the whole delivery (400) when a messages change is malformed", async () => {
+    const { t } = await setup();
+    const payload = delivery(
+      entry({ messages: [{ id: "wamid.never", text: "valid on its own" }] }),
+      {
+        id: WABA_A,
+        changes: [
+          { field: "account_update", value: null },
+          { field: "messages", value: [] },
+        ],
+      },
+    );
+    expect((await postDelivery(t, payload)).status).toBe(400);
+    await processAll(t);
+    expect(await table(t, "whatsappWebhookEvents")).toEqual([]);
+    expect(await table(t, "whatsappMessages")).toEqual([]);
+  });
+});
+
+describe("Content-Length header", () => {
+  const body = JSON.stringify(
+    delivery(entry({ messages: [{ id: "wamid.length", text: "sized" }] })),
+  );
+  const size = new TextEncoder().encode(body).byteLength;
+
+  /** POSTs signed bytes with explicit Content-Length header(s). */
+  async function postWithLength(t: Backend, lengths: string[], raw = body) {
+    return await t.fetch(WHATSAPP_WEBHOOK_PATH, {
+      method: "POST",
+      headers: [
+        ["content-type", "application/json"],
+        ["x-hub-signature-256", await signBody(raw)],
+        ...lengths.map((length): [string, string] => ["content-length", length]),
+      ],
+      body: raw,
+    });
+  }
+
+  async function stored(t: Backend) {
+    await processAll(t);
+    return (await table(t, "whatsappWebhookEvents")).map((e) => e.wamid);
+  }
+
+  it.each([
+    ["letters", "abc"],
+    ["empty", ""],
+    ["negative", "-1"],
+    ["with a plus sign", "+12"],
+    ["an exponent", "1e3"],
+    ["hexadecimal", "0x10"],
+    ["a decimal", "12.5"],
+    ["digits with a space inside", "1 2"],
+  ])("rejects a Content-Length that is %s with 400 and stores nothing", async (_label, length) => {
+    const { t } = await setup();
+    expect((await postWithLength(t, [length])).status).toBe(400);
+    expect(await stored(t)).toEqual([]);
+  });
+
+  it("rejects a repeated Content-Length header with 400", async () => {
+    const { t } = await setup();
+    expect((await postWithLength(t, [String(size), String(size)])).status).toBe(400);
+    expect(await stored(t)).toEqual([]);
+  });
+
+  it.each([
+    ["the exact size", () => String(size)],
+    ["the exact size with leading zeros", () => `000${size}`],
+    ["exactly the limit", () => String(MAX_WEBHOOK_BODY_BYTES)],
+  ])("accepts a well-formed Content-Length of %s", async (_label, length) => {
+    const { t } = await setup();
+    expect((await postWithLength(t, [length()])).status).toBe(200);
+    expect(await stored(t)).toEqual(["wamid.length"]);
+  });
+
+  it.each([
+    ["one byte over the limit", String(MAX_WEBHOOK_BODY_BYTES + 1)],
+    ["far beyond any integer", "9".repeat(40)],
+  ])("refuses a declared size %s with 413", async (_label, length) => {
+    const { t } = await setup();
+    expect((await postWithLength(t, [length])).status).toBe(413);
+    expect(await stored(t)).toEqual([]);
+  });
+
+  it("refuses an actual body over the limit with 413 even when the header claims less", async () => {
+    const { t } = await setup();
+    const raw = `{"object":"whatsapp_business_account","pad":"${"x".repeat(MAX_WEBHOOK_BODY_BYTES)}"}`;
+    expect((await postWithLength(t, ["10"], raw)).status).toBe(413);
+    expect(await stored(t)).toEqual([]);
+  });
+});
+
+describe("contact names from out-of-order messages", () => {
+  /** Delivers and processes one message from CUSTOMER_1 per delivery, in the order given. */
+  async function send(t: Backend, ...items: MessageInput[]) {
+    for (const item of items) {
+      expect((await postDelivery(t, delivery(entry({ messages: [item] })))).status).toBe(200);
+      await processAll(t);
+    }
+  }
+
+  async function conversation(t: Backend) {
+    const [row] = await table(t, "whatsappConversations");
+    return row!;
+  }
+
+  it("keeps the newest name when an older message is processed later", async () => {
+    const { t } = await setup();
+    const base = nowSeconds() - 600;
+    await send(
+      t,
+      { id: "wamid.n2", name: "New", timestamp: base + 10 },
+      { id: "wamid.n1", name: "Old", timestamp: base },
+    );
+    expect(await conversation(t)).toMatchObject({
+      contactName: "New",
+      contactNameAt: (base + 10) * 1000,
+    });
+    const [listed] = await conversations(t, ORG_A);
+    expect(listed!.contactName).toBe("New");
+
+    await send(t, { id: "wamid.n3", name: "Newest", timestamp: base + 20 });
+    const row = await conversation(t);
+    const newest = (await table(t, "whatsappMessages")).find((m) => m.wamid === "wamid.n3")!;
+    // The name is dated by the same instant as the message and the service window.
+    expect(row).toMatchObject({ contactName: "Newest", contactNameAt: newest.platformAt });
+    expect(row.lastInboundAt).toBe(newest.platformAt);
+  });
+
+  it("lets a message from the same second replace the name, but not one a second older", async () => {
+    const { t } = await setup();
+    const base = nowSeconds() - 600;
+    await send(t, { id: "wamid.s1", name: "A", timestamp: base });
+    expect(await conversation(t)).toMatchObject({ contactName: "A", contactNameAt: base * 1000 });
+    await send(t, { id: "wamid.s2", name: "B", timestamp: base });
+    expect(await conversation(t)).toMatchObject({ contactName: "B", contactNameAt: base * 1000 });
+    await send(t, { id: "wamid.s0", name: "C", timestamp: base - 1 });
+    expect(await conversation(t)).toMatchObject({ contactName: "B", contactNameAt: base * 1000 });
+  });
+
+  it("keeps the newest name when one delivery carries the older message after the newer one", async () => {
+    const { t } = await setup();
+    const base = nowSeconds() - 600;
+    const payload = delivery(
+      entry({ messages: [{ id: "wamid.b2", name: "New", timestamp: base + 10 }] }),
+      entry({ messages: [{ id: "wamid.b1", name: "Old", timestamp: base }] }),
+    );
+    expect((await postDelivery(t, payload)).status).toBe(200);
+    await processAll(t);
+    expect(await conversation(t)).toMatchObject({ contactName: "New" });
+    expect(await table(t, "whatsappMessages")).toHaveLength(2);
+  });
+
+  it("dates a name by its own message: nameless messages neither clear nor date it", async () => {
+    const { t } = await setup();
+    const base = nowSeconds() - 600;
+    await send(t, { id: "wamid.u1", timestamp: base + 20 });
+    expect((await conversation(t)).contactName).toBeUndefined();
+    await send(t, { id: "wamid.u2", name: "Old", timestamp: base }); // fills the empty name
+    expect(await conversation(t)).toMatchObject({ contactName: "Old", contactNameAt: base * 1000 });
+    // Newer than "Old", though older than the latest inbound message.
+    await send(t, { id: "wamid.u3", name: "Mid", timestamp: base + 10 });
+    await send(t, { id: "wamid.u4", name: "Stale", timestamp: base + 5 });
+    await send(t, { id: "wamid.u5", timestamp: base + 30 });
+    expect(await conversation(t)).toMatchObject({
+      contactName: "Mid",
+      contactNameAt: (base + 10) * 1000,
+      lastInboundAt: (base + 30) * 1000,
+    });
+  });
+
+  it("dates names stored before contactNameAt existed by the latest inbound message", async () => {
+    const { t, orgA, numberA } = await setup();
+    const base = nowSeconds() - 600;
+    await t.run(async (ctx) => {
+      await ctx.db.insert("whatsappConversations", {
+        orgId: orgA,
+        numberId: numberA,
+        contactWaId: CUSTOMER_1,
+        contactName: "Legacy",
+        lastInboundAt: (base + 10) * 1000,
+        lastMessageAt: (base + 10) * 1000,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+    await send(t, { id: "wamid.l1", name: "Older", timestamp: base + 9 });
+    expect(await conversation(t)).toMatchObject({ contactName: "Legacy" });
+    expect((await conversation(t)).contactNameAt).toBeUndefined();
+    await send(t, { id: "wamid.l2", name: "Same", timestamp: base + 10 });
+    expect(await conversation(t)).toMatchObject({
+      contactName: "Same",
+      contactNameAt: (base + 10) * 1000,
+    });
+  });
+
+  it("dates a name from a future-dated message by its receipt, like the service window", async () => {
+    const { t } = await setup();
+    await send(t, { id: "wamid.f1", name: "Skewed", timestamp: nowSeconds() + 3600 });
+    const row = await conversation(t);
+    expect(row).toMatchObject({ contactName: "Skewed", contactNameAt: Date.now() });
+    expect(row.lastInboundAt).toBe(Date.now());
   });
 });

@@ -23,6 +23,10 @@ available.
    delivery (400). Invalid individual messages / statuses are skipped and counted, so one
    unexpected item cannot block a batch through endless Meta retries. Only allowlisted fields
    are copied; payload organization ids are ignored. Size limits: 3 MiB body, 1000 events.
+   Changes for subscribed fields other than `messages` are ignored whatever their value, and a
+   malformed Content-Length header is a 400. A contact name is replaced only by one from a
+   message at the same platform second or later (`contactNameAt`), since Meta does not
+   guarantee order.
 3. **Tenant = registered phone number.** `whatsappPhoneNumbers` maps a Meta `phone_number_id`
    to one org. Its global index `by_phone_number_status` is an approved global index
    (convex/schema.test.ts): the webhook cannot be tenant-authenticated, so the org must be

@@ -10,7 +10,8 @@ import { SIGNATURE_HEADER, timingSafeEqualString, verifyWebhookSignature } from 
  * GET  verification handshake: echoes `hub.challenge` only for `hub.mode=subscribe` and the
  *      configured verify token (constant-time compare). Unconfigured: always 403.
  * POST event delivery, in this order:
- *      app secret configured (else 503, so Meta retries once it is) -> body size (413) ->
+ *      app secret configured (else 503, so Meta retries once it is) -> well-formed
+ *      Content-Length if present (400) -> declared and actual body size (413) ->
  *      HMAC-SHA256 over the raw bytes (401) -> strict UTF-8 + JSON + envelope parse (400) ->
  *      one ingest mutation (500 on failure: Meta retries; ingestion is idempotent) -> 200.
  *
@@ -20,6 +21,9 @@ import { SIGNATURE_HEADER, timingSafeEqualString, verifyWebhookSignature } from 
 
 /** Meta sends a numeric challenge; anything outside this shape is never reflected. */
 const CHALLENGE = /^[A-Za-z0-9_-]{1,128}$/;
+
+/** A Content-Length value is one or more digits (RFC 9110); anything else is malformed. */
+const CONTENT_LENGTH = /^\d+$/;
 
 function plain(status: number, body: string): Response {
   return new Response(body, {
@@ -48,9 +52,11 @@ export async function handleWebhookDelivery(ctx: ActionCtx, request: Request): P
   const appSecret = configuredSecret(process.env[WHATSAPP_ENV.appSecret]);
   if (appSecret === null) return plain(503, "Unavailable");
 
+  // A repeated header arrives joined ("10, 10") and is treated as malformed too.
   const declared = request.headers.get("content-length");
-  if (declared !== null && !(Number(declared) <= MAX_WEBHOOK_BODY_BYTES)) {
-    return plain(413, "Payload Too Large");
+  if (declared !== null) {
+    if (!CONTENT_LENGTH.test(declared)) return plain(400, "Bad Request");
+    if (Number(declared) > MAX_WEBHOOK_BODY_BYTES) return plain(413, "Payload Too Large");
   }
   const raw = await request.arrayBuffer();
   if (raw.byteLength > MAX_WEBHOOK_BODY_BYTES) return plain(413, "Payload Too Large");

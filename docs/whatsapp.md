@@ -15,13 +15,20 @@ URL: `<CONVEX_SITE_URL>/whatsapp/webhook`.
 | GET, valid handshake     | 200, body = `hub.challenge`                                            |
 | GET, anything else       | 403 (also when `WHATSAPP_WEBHOOK_VERIFY_TOKEN` is unset)               |
 | POST, secret not set     | 503 (Meta retries later)                                               |
-| POST, body > 3 MiB       | 413                                                                    |
+| POST, bad Content-Length | 400 (not digits only, or repeated)                                     |
+| POST, body > 3 MiB       | 413 (declared in Content-Length or actual)                             |
 | POST, bad signature      | 401                                                                    |
 | POST, malformed envelope | 400                                                                    |
 | POST, ingestion failure  | 500 (Meta retries; ingestion is idempotent)                            |
 | POST, valid              | 200 `EVENT_RECEIVED`, also for numbers no org has registered (dropped) |
 
 Processing is asynchronous: the POST stores events and schedules their processing.
+
+Only `messages` changes are read. Changes for other subscribed fields (template, quality,
+account updates, …) are acknowledged and ignored whatever their `value` holds, so they never
+reject the messages delivered beside them; a malformed `messages` change still rejects the whole
+delivery (400). The Content-Length check is tested in-process only: whether Convex's HTTP front
+end passes a malformed header through to the action at all is unverified.
 
 ## Configuration (Convex environment variables)
 
@@ -39,7 +46,7 @@ per deployment with `npx convex env set`; never in source files or `.env.local`.
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `whatsappPhoneNumbers`  | phone_number_id → org routing (WABA id, status, activation time). Global lookup index.                                                                   |
 | `whatsappWebhookEvents` | One row per received event (dedupe key; body cleared once applied; recovery state). Global recovery index. Deleted 30 days after receipt unless pending. |
-| `whatsappConversations` | One thread per (business number, customer wa_id); last inbound time.                                                                                     |
+| `whatsappConversations` | One thread per (business number, customer wa_id); last inbound time; contact name from the newest message that carried one.                              |
 | `whatsappMessages`      | Inbound and outbound messages; delivery status and timestamps.                                                                                           |
 
 Phone numbers are registered only by internal functions (the Embedded Signup flow, later; tests

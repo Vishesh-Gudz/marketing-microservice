@@ -84,6 +84,8 @@ export const whatsappTables = {
     /** Customer's WhatsApp id. */
     contactWaId: v.string(),
     contactName: v.optional(v.string()),
+    /** Platform time of the message that supplied `contactName`; older ones never replace it. */
+    contactNameAt: v.optional(v.number()),
     /** Latest inbound customer message (platform time): opens the 24-hour service window. */
     lastInboundAt: v.optional(v.number()),
     lastMessageAt: v.number(),
