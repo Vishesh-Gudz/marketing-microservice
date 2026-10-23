@@ -3,8 +3,11 @@
 Multi-tenant WhatsApp inbox on the WhatsApp Cloud API. Decisions: [ADR 0013](adr/0013-whatsapp-inbox.md).
 
 **Status:** Stage 1, the inbound webhook slice, is implemented and tested in-process with signed
-fake deliveries. Embedded Signup (connecting a number), outbound replies, templates, quick
-replies and the dashboard are not implemented. Nothing has been verified against real Meta.
+fake deliveries. It was checked once against real Meta on 2026-10-23 (a Meta test app in
+Development mode): webhook verification and one inbound text message, stored end to end. The
+inbound hardening that followed (activation cutoff, stuck-event recovery, retention, parser and
+contact-name fixes) is tested in-process only. Embedded Signup (connecting a number), outbound
+replies, templates, quick replies and the dashboard are not implemented.
 
 ## Webhook
 
@@ -28,7 +31,9 @@ Only `messages` changes are read. Changes for other subscribed fields (template,
 account updates, …) are acknowledged and ignored whatever their `value` holds, so they never
 reject the messages delivered beside them; a malformed `messages` change still rejects the whole
 delivery (400). The Content-Length check is tested in-process only: whether Convex's HTTP front
-end passes a malformed header through to the action at all is unverified.
+end passes a malformed header through to the action at all is unverified. Only the `messages`
+field needs a subscription; Meta's dashboard has been seen to subscribe others automatically,
+and they are ignored.
 
 ## Configuration (Convex environment variables)
 
@@ -38,7 +43,39 @@ end passes a malformed header through to the action at all is unverified.
 | `WHATSAPP_WEBHOOK_VERIFY_TOKEN` | Operator-chosen verify token entered in the Meta app. |
 
 Both are secrets (8–512 characters, no whitespace) and are never logged or returned. Set them
-per deployment with `npx convex env set`; never in source files or `.env.local`.
+per deployment with `npx convex env set` or the Convex dashboard; never in source files or
+`.env.local`.
+
+- The verify token is used only for Meta's GET handshake, which carries it in the URL query
+  string. This application never logs it, but whether Convex's request logs keep query strings
+  is unverified: assume anyone who can read the deployment's logs may see it, and change it (in
+  Convex and in the Meta app's webhook settings together) if those logs are exposed.
+- Removing `WHATSAPP_APP_SECRET` stops ingestion: every POST gets 503 and nothing is stored.
+  Meta retries non-200 deliveries for a while (about 7 days, unverified), so deliveries during a
+  short stop are expected to arrive once the secret is back.
+
+## Setup (per deployment)
+
+1. Set both variables above.
+2. Deploy. An unsigned POST to the webhook then returns 401 if the app secret is set and well
+   formed (503: missing or invalid).
+3. Register the number to its org before Meta sends anything: deliveries for a number that is
+   not registered, and events from before its registration, are acknowledged and dropped. Run
+   the internal function `whatsapp/phoneNumbers:register` from the Convex dashboard with
+   `{ "orgId": "…", "wabaId": "…", "phoneNumberId": "…", "actorSubject": "operator:<name>" }`
+   (`displayPhoneNumber` optional). It refuses non-numeric ids (`invalid_id`), an unknown org
+   (`no_org`) and a number that another org has active (`in_use`).
+   `whatsapp/phoneNumbers:disconnect` (`{ "numberId": "…", "actorSubject": "operator:<name>" }`)
+   undoes it: history is kept, and later deliveries for the number are acknowledged and dropped.
+4. In the Meta app's WhatsApp webhook settings, enter the callback URL
+   `<CONVEX_SITE_URL>/whatsapp/webhook` and the verify token, verify and save, and subscribe the
+   `messages` field.
+5. Send one test message and check the event (`processed`), the conversation and the message in
+   the org's data.
+
+`actorSubject` for register and disconnect is free text, recorded as the audit subject (and as
+`registeredBySubject`). Like requeue's, it is not verified; unlike requeue's, it is not checked
+for the `operator:` prefix, so use `operator:<name>` by convention.
 
 ## Data
 
@@ -49,8 +86,9 @@ per deployment with `npx convex env set`; never in source files or `.env.local`.
 | `whatsappConversations` | One thread per (business number, customer wa_id); last inbound time; contact name from the newest message that carried one.                              |
 | `whatsappMessages`      | Inbound and outbound messages; delivery status and timestamps.                                                                                           |
 
-Phone numbers are registered only by internal functions (the Embedded Signup flow, later; tests
-today). No public function routes a number or accepts an org id.
+Phone numbers are registered only by internal functions: today an operator runs them (see
+Setup); later the Embedded Signup flow will. No public function routes a number or accepts an
+org id.
 
 ## Public API (read only so far)
 
@@ -60,7 +98,8 @@ today). No public function routes a number or accepts an org id.
 
 ## Open risks (Stage 1)
 
-Known gaps in the inbound slice, to be closed before customers depend on it:
+Known gaps in the inbound slice. Entries marked mitigated are addressed and list their remaining
+limits; the others must be closed before customers depend on the inbox:
 
 1. **Event retention (mitigated).** The `whatsapp event retention` cron (hourly,
    `convex/whatsapp/retention.ts`) deletes `whatsappWebhookEvents` rows that are no longer
@@ -158,7 +197,9 @@ Known gaps in the inbound slice, to be closed before customers depend on it:
    behind the org's JWT, which does not exist yet. Remaining limits:
    - No alert yet: `failed` events are only visible in the data (filter `status = "failed"`),
      and retention deletes them 30 days after receipt whether or not anyone looked.
-   - Each sweep examines at most 100 stuck events; a larger backlog takes several runs.
+   - Each sweep examines the 100 oldest stuck events. Events waiting on a queued retry keep
+     their place, so while 100 or more are waiting, newer stuck events are not retried until
+     those retries run or are given up (at most 24 hours).
    - The original batch's job is not tracked, so a retry can be scheduled while that batch is
      still queued. Both then run; processing is idempotent, so the event is applied once.
    - A failing job's error message is kept by Convex (function logs and the scheduled job's
@@ -188,11 +229,14 @@ Known gaps in the inbound slice, to be closed before customers depend on it:
 
 ## Real-account validation required
 
-Everything below is modeled on Meta's documentation and unverified:
+Checked once (2026-10-23, Meta test app in Development mode, one inbound text message, before
+the hardening steps): the verification handshake; the signature header and format over the
+exact body bytes; and, for a text message, `entry[].id` = the registered WABA id,
+`metadata.phone_number_id`, the text body and a timestamp in Unix seconds.
 
-- the signature header name and format, and that it covers the exact body bytes;
-- payload shapes (`entry[].id` = WABA id, `metadata.phone_number_id`, `contacts[].profile.name`,
-  `messages[]`, `statuses[]`, `errors[].code`) and timestamps in Unix seconds;
+Everything below is still modeled on Meta's documentation and unverified:
+
+- `contacts[].profile.name`, message types other than text, `statuses[]` and `errors[].code`;
 - status values (`sent`, `delivered`, `read`, `failed`) and their real ordering;
 - batch sizes, the 3 MB payload ceiling and Meta's retry schedule for non-200 responses;
 - whether a WABA id ever differs between webhook `entry[].id` and the registered value.

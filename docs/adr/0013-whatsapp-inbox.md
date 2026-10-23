@@ -1,17 +1,20 @@
 # ADR 0013 — WhatsApp inbox
 
-- Status: in progress. Stage 1 (inbound webhook slice) implemented and tested against signed
-  fake deliveries only. Embedded Signup, outbound sending and the dashboard are not built yet.
-  No real Meta interaction has happened; every payload shape is provisional.
-- Date: 2026-10-22
+- Status: in progress. Stage 1 (inbound webhook slice) implemented, with its hardening
+  (activation cutoff, stuck-event recovery, retention, parser and contact-name fixes) tested
+  against signed fake deliveries. Checked once against real Meta (a test app: webhook
+  verification and one inbound text message); every other payload shape is provisional.
+  Embedded Signup, outbound sending and the dashboard are not built yet.
+- Date: 2026-10-22 (updated 2026-10-23)
 
 ## Context
 
 Customers connect their own WhatsApp Business numbers (Meta Embedded Signup) and answer
 customers from a shared inbox. Meta delivers inbound messages and delivery statuses to one
 webhook URL per app, authenticated only by an HMAC signature with the app secret: the request
-says nothing trustworthy about which tenant it belongs to. No real WhatsApp Business account is
-available.
+says nothing trustworthy about which tenant it belongs to. No real WhatsApp Business account was
+available when these decisions were made; a Meta test app was used later for one end-to-end
+check.
 
 ## Decisions
 
@@ -67,4 +70,5 @@ available.
   after receipt unless still pending; a `failed` event not requeued by then is lost for good.
 - Open risks (event retention, unmatched-status replay, stuck-event recovery, number-transfer
   timing, maximum-size deliveries) are listed in [docs/whatsapp.md](../whatsapp.md#open-risks-stage-1).
-- See [docs/whatsapp.md](../whatsapp.md) for the setup checklist and real-account validation.
+- See [docs/whatsapp.md](../whatsapp.md) for the setup checklist (operator-run number
+  registration, whose `actorSubject` is unverified) and real-account validation.
