@@ -35,12 +35,12 @@ per deployment with `npx convex env set`; never in source files or `.env.local`.
 
 ## Data
 
-| Table                   | Holds                                                                 |
-| ----------------------- | --------------------------------------------------------------------- |
-| `whatsappPhoneNumbers`  | phone_number_id → org routing (WABA id, status). Global lookup index. |
-| `whatsappWebhookEvents` | One row per received event (dedupe key; body cleared once applied).   |
-| `whatsappConversations` | One thread per (business number, customer wa_id); last inbound time.  |
-| `whatsappMessages`      | Inbound and outbound messages; delivery status and timestamps.        |
+| Table                   | Holds                                                                                  |
+| ----------------------- | -------------------------------------------------------------------------------------- |
+| `whatsappPhoneNumbers`  | phone_number_id → org routing (WABA id, status, activation time). Global lookup index. |
+| `whatsappWebhookEvents` | One row per received event (dedupe key; body cleared once applied).                    |
+| `whatsappConversations` | One thread per (business number, customer wa_id); last inbound time.                   |
+| `whatsappMessages`      | Inbound and outbound messages; delivery status and timestamps.                         |
 
 Phone numbers are registered only by internal functions (the Embedded Signup flow, later; tests
 today). No public function routes a number or accepts an org id.
@@ -69,11 +69,21 @@ Known gaps in the inbound slice, to be closed before customers depend on it:
 3. **Stuck-event recovery.** A processing batch (up to 100 events) runs in one transaction. A
    non-transient error rolls the batch back and leaves its events `pending` with their bodies
    (message text included). There is no re-processing path, stale-pending detection or alert.
-4. **Number-transfer timing.** If org A disconnects a number and org B registers it while Meta
-   is still retrying an older delivery for A, that delivery is routed to B. Planned: record
-   when a number became active and drop events with an earlier platform timestamp. Deliveries
-   for a number that is not registered yet are acknowledged and dropped, so the connection
-   flow must register the number before subscribing the app to the WABA's webhooks.
+4. **Number-transfer timing (mitigated).** Each number records `activatedAt` when it is
+   registered or re-activated (updating an already active number keeps it). Ingestion drops
+   events whose platform timestamp is before that activation, so Meta's late retries for a
+   previous owner (another org, or the same org before a disconnect) are never stored for the
+   current owner. Rows registered before this existed use `createdAt`. Remaining limits:
+   - Meta timestamps are whole seconds, so the cutoff is the activation's second: an event in
+     that same second is accepted. There is no further grace, and no compensation for clock
+     skew between Meta and Convex.
+   - A status that happens after the move for the previous owner's outbound message (the
+     customer reads it later) reaches the new owner as an `unmatched` event: no content, but the
+     message id and the customer's WhatsApp id. It never changes the previous owner's data.
+   - Messages customers send after the move belong to the new owner, by design.
+   - Deliveries for a number that is not registered yet are acknowledged and dropped, so the
+     connection flow must register the number before subscribing the app to the WABA's
+     webhooks.
 5. **Maximum-size delivery.** A delivery at the limits (1000 events, close to 3 MiB) has not
    been tested against Convex transaction and argument limits; tests cover the 413 refusal and
    small batches only. If Convex ever rejects the ingest arguments, its error message (which may

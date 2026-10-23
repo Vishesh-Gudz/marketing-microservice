@@ -29,6 +29,12 @@ export const whatsappTables = {
     displayPhoneNumber: v.optional(v.string()),
     status: phoneNumberStatusValidator,
     registeredBySubject: v.string(),
+    /**
+     * When this org's current ownership began (registration or re-activation). Webhook events
+     * timestamped before it are dropped, so a moved number's late retries never reach the new
+     * owner. Absent on rows registered before it existed: `createdAt` is used instead.
+     */
+    activatedAt: v.optional(v.number()),
     disconnectedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),

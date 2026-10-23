@@ -40,6 +40,21 @@ export async function resolveWebhookNumber(
   return row.wabaId === change.wabaId ? row : null;
 }
 
+/**
+ * True when an event happened before the number's current activation, i.e. it belongs to a
+ * previous ownership (another org, or this org before a disconnect) and must not be stored.
+ * Meta timestamps have one-second resolution, so the cutoff is the activation's second: an
+ * event in that same second counts as at activation. Rows without `activatedAt` (registered
+ * before it existed) use `createdAt`.
+ */
+export function isBeforeActivation(
+  number: Pick<Doc<"whatsappPhoneNumbers">, "activatedAt" | "createdAt">,
+  timestampMs: number,
+): boolean {
+  const activatedAt = number.activatedAt ?? number.createdAt;
+  return timestampMs < Math.floor(activatedAt / 1000) * 1000;
+}
+
 /** Registers (or re-activates) a number for an org. Refuses numbers active in another org. */
 export const register = internalMutation({
   args: {
@@ -75,11 +90,15 @@ export const register = internalMutation({
         q.eq("orgId", args.orgId).eq("phoneNumberId", args.phoneNumberId),
       )
       .unique();
+    // A new or re-activated registration starts a new ownership; updating a number that is
+    // already active keeps its activation, so its own late deliveries are not dropped.
+    const activating = own === null || own.status !== "active";
     const fields = {
       wabaId: args.wabaId,
       displayPhoneNumber: args.displayPhoneNumber,
       status: "active" as const,
       registeredBySubject: args.actorSubject,
+      ...(activating ? { activatedAt: now } : {}),
       disconnectedAt: undefined,
       updatedAt: now,
     };
@@ -97,11 +116,12 @@ export const register = internalMutation({
           : {}),
         status: "active",
         registeredBySubject: args.actorSubject,
+        activatedAt: now,
         createdAt: now,
         updatedAt: now,
       });
     }
-    if (own === null || own.status !== "active") {
+    if (activating) {
       await writeAudit(
         ctx.db,
         { orgId: args.orgId, issuer: org.issuer, subject: args.actorSubject },

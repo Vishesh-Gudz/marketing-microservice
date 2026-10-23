@@ -24,11 +24,13 @@ available.
    unexpected item cannot block a batch through endless Meta retries. Only allowlisted fields
    are copied; payload organization ids are ignored. Size limits: 3 MiB body, 1000 events.
 3. **Tenant = registered phone number.** `whatsappPhoneNumbers` maps a Meta `phone_number_id`
-   to one org. Its global index `by_phone_number_status` is the fifth approved global index
+   to one org. Its global index `by_phone_number_status` is an approved global index
    (convex/schema.test.ts): the webhook cannot be tenant-authenticated, so the org must be
    derived server-side. At most one `active` row per number (enforced on register); the
    webhook also requires exactly one active row and a matching WABA id, otherwise it drops the
-   change (still 200, so Meta does not retry forever).
+   change (still 200, so Meta does not retry forever). Events timestamped before the number's
+   current activation (`activatedAt`, set on registration and re-activation) are dropped too,
+   so a reassigned number's late retries never reach the new owner.
 4. **Idempotent, asynchronous ingestion.** One fast mutation stores each event once per org
    under a dedupe key (`message:<wamid>`, `status:<wamid>:<status>`) and schedules processing in
    batches of 100. Processing applies only `pending` events in the same transaction that marks

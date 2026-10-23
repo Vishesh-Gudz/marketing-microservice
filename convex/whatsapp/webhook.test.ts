@@ -36,6 +36,7 @@ import {
 const ORG_A = { issuer: ISSUER_ERP, org: "42" };
 const ORG_B = { issuer: ISSUER_CRM, org: "77" };
 const PAGE = { paginationOpts: { numItems: 50, cursor: null } };
+const HOUR_MS = 60 * 60 * 1000;
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -63,8 +64,13 @@ async function setup() {
   const t = newBackend();
   const orgA = await seedOrg(t, ORG_A.issuer, ORG_A.org);
   const orgB = await seedOrg(t, ORG_B.issuer, ORG_B.org);
+  // Numbers are registered well before the deliveries a test sends: the activation cutoff
+  // drops events from before a number's registration.
+  const now = Date.now();
+  vi.setSystemTime(now - HOUR_MS);
   const numberA = await register(t, orgA, WABA_A, PHONE_A);
   const numberB = await register(t, orgB, WABA_B, PHONE_B);
+  vi.setSystemTime(now);
   return { t, orgA, orgB, numberA, numberB };
 }
 
@@ -879,5 +885,211 @@ describe("exact signed replays", () => {
     await t.mutation(internal.whatsapp.processing.processEvents, { eventIds });
     await processAll(t);
     expect(await counts(t)).toEqual({ events: 1, conversations: 1, messages: 1 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Number activation cutoff (hardening step 2)
+// ---------------------------------------------------------------------------
+
+describe("number activation cutoff", () => {
+  /** Activation instant used by these tests: mid-second, as a real registration would be. */
+  const ACTIVATED_AT = Date.UTC(2026, 9, 23, 12, 0, 0, 700);
+  const ACTIVATED_S = Math.floor(ACTIVATED_AT / 1000);
+
+  async function orgsAt(time: number) {
+    vi.setSystemTime(time);
+    const t = newBackend();
+    const orgA = await seedOrg(t, ORG_A.issuer, ORG_A.org);
+    const orgB = await seedOrg(t, ORG_B.issuer, ORG_B.org);
+    return { t, orgA, orgB };
+  }
+
+  async function wamidsOf(t: Backend, orgId: Id<"organizations">) {
+    return (await table(t, "whatsappMessages"))
+      .filter((m) => m.orgId === orgId)
+      .map((m) => m.wamid)
+      .sort();
+  }
+
+  async function numberRow(t: Backend, id: Id<"whatsappPhoneNumbers">) {
+    return (await t.run(async (ctx) => await ctx.db.get(id)))!;
+  }
+
+  it("drops events from before activation and keeps those at and after it", async () => {
+    const { t, orgA } = await orgsAt(ACTIVATED_AT);
+    const numberId = await register(t, orgA, WABA_A, PHONE_A);
+    expect((await numberRow(t, numberId)).activatedAt).toBe(ACTIVATED_AT);
+
+    await postDelivery(
+      t,
+      delivery(
+        entry({
+          messages: [
+            { id: "wamid.before", timestamp: ACTIVATED_S - 1 },
+            { id: "wamid.at", timestamp: ACTIVATED_S },
+            { id: "wamid.after", timestamp: ACTIVATED_S + 60 },
+          ],
+          statuses: [{ id: "wamid.status-before", status: "sent", timestamp: ACTIVATED_S - 1 }],
+        }),
+      ),
+    );
+    await processAll(t);
+    expect(await wamidsOf(t, orgA)).toEqual(["wamid.after", "wamid.at"]);
+    expect((await table(t, "whatsappWebhookEvents")).map((e) => e.wamid).sort()).toEqual([
+      "wamid.after",
+      "wamid.at",
+    ]);
+  });
+
+  it("moves the cutoff on re-activation: the disconnected gap is dropped, history is kept", async () => {
+    const { t, orgA } = await orgsAt(ACTIVATED_AT);
+    const numberId = await register(t, orgA, WABA_A, PHONE_A);
+    await postDelivery(
+      t,
+      delivery(entry({ messages: [{ id: "wamid.first", timestamp: ACTIVATED_S + 10 }] })),
+    );
+    await processAll(t);
+
+    vi.setSystemTime(ACTIVATED_AT + HOUR_MS);
+    await t.mutation(internal.whatsapp.phoneNumbers.disconnect, { numberId, actorSubject: "test" });
+    const reactivatedAt = ACTIVATED_AT + 2 * HOUR_MS;
+    vi.setSystemTime(reactivatedAt);
+    expect(await register(t, orgA, WABA_A, PHONE_A)).toBe(numberId);
+    expect((await numberRow(t, numberId)).activatedAt).toBe(reactivatedAt);
+
+    const reactivatedS = Math.floor(reactivatedAt / 1000);
+    await postDelivery(
+      t,
+      delivery(
+        entry({
+          messages: [
+            { id: "wamid.first", timestamp: ACTIVATED_S + 10 }, // late retry of the first
+            { id: "wamid.gap", timestamp: reactivatedS - 1800 }, // sent while disconnected
+            { id: "wamid.back", timestamp: reactivatedS + 10 },
+          ],
+        }),
+      ),
+    );
+    await processAll(t);
+    expect(await wamidsOf(t, orgA)).toEqual(["wamid.back", "wamid.first"]);
+    expect(await table(t, "whatsappConversations")).toHaveLength(1);
+  });
+
+  it("keeps the activation when an already active number is registered again", async () => {
+    const { t, orgA } = await orgsAt(ACTIVATED_AT);
+    const numberId = await register(t, orgA, WABA_A, PHONE_A);
+    vi.setSystemTime(ACTIVATED_AT + HOUR_MS);
+    expect(await register(t, orgA, WABA_A, PHONE_A)).toBe(numberId);
+    expect((await numberRow(t, numberId)).activatedAt).toBe(ACTIVATED_AT);
+
+    await postDelivery(
+      t,
+      delivery(entry({ messages: [{ id: "wamid.between", timestamp: ACTIVATED_S + 1800 }] })),
+    );
+    await processAll(t);
+    expect(await wamidsOf(t, orgA)).toEqual(["wamid.between"]);
+  });
+
+  it("falls back to createdAt for numbers registered before activatedAt existed", async () => {
+    const { t, orgA } = await orgsAt(ACTIVATED_AT);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("whatsappPhoneNumbers", {
+        orgId: orgA,
+        wabaId: WABA_A,
+        phoneNumberId: PHONE_A,
+        status: "active",
+        registeredBySubject: "legacy",
+        createdAt: ACTIVATED_AT,
+        updatedAt: ACTIVATED_AT,
+      });
+    });
+    await postDelivery(
+      t,
+      delivery(
+        entry({
+          messages: [
+            { id: "wamid.legacy-before", timestamp: ACTIVATED_S - 1 },
+            { id: "wamid.legacy-at", timestamp: ACTIVATED_S },
+            { id: "wamid.legacy-after", timestamp: ACTIVATED_S + 1 },
+          ],
+        }),
+      ),
+    );
+    await processAll(t);
+    expect(await wamidsOf(t, orgA)).toEqual(["wamid.legacy-after", "wamid.legacy-at"]);
+  });
+
+  it("never gives the new owner a reassigned number's earlier deliveries", async () => {
+    const { t, orgA, orgB } = await orgsAt(ACTIVATED_AT);
+    const numberA = await register(t, orgA, WABA_A, PHONE_A);
+    const forA = delivery(
+      entry({ messages: [{ id: "wamid.for-a", text: "for A", timestamp: ACTIVATED_S + 10 }] }),
+    );
+    await postDelivery(t, forA);
+    await processAll(t);
+
+    vi.setSystemTime(ACTIVATED_AT + HOUR_MS);
+    await t.mutation(internal.whatsapp.phoneNumbers.disconnect, {
+      numberId: numberA,
+      actorSubject: "test",
+    });
+    const movedAt = ACTIVATED_AT + 2 * HOUR_MS;
+    vi.setSystemTime(movedAt);
+    const numberB = await register(t, orgB, WABA_A, PHONE_A);
+    expect(numberB).not.toBe(numberA);
+
+    const movedS = Math.floor(movedAt / 1000);
+    await postDelivery(t, forA); // Meta's late retry of A's message
+    await postDelivery(
+      t,
+      delivery(
+        entry({
+          messages: [
+            { id: "wamid.unowned", timestamp: movedS - 1800 }, // sent while nobody owned it
+            { id: "wamid.for-b", text: "for B", timestamp: movedS + 5 },
+          ],
+        }),
+      ),
+    );
+    await processAll(t);
+
+    expect(await wamidsOf(t, orgA)).toEqual(["wamid.for-a"]);
+    expect(await wamidsOf(t, orgB)).toEqual(["wamid.for-b"]);
+    expect((await table(t, "whatsappConversations")).map((c) => c.orgId).sort()).toEqual(
+      [orgA, orgB].sort(),
+    );
+  });
+
+  it("documents the limit: a later status for the old owner's message reaches the new owner as unmatched", async () => {
+    const { t, orgA, orgB } = await orgsAt(ACTIVATED_AT);
+    const numberA = await register(t, orgA, WABA_A, PHONE_A);
+    const outboundA = await seedOutbound(t, orgA, numberA, "wamid.out-a");
+    await t.mutation(internal.whatsapp.phoneNumbers.disconnect, {
+      numberId: numberA,
+      actorSubject: "test",
+    });
+    const movedAt = ACTIVATED_AT + HOUR_MS;
+    vi.setSystemTime(movedAt);
+    await register(t, orgB, WABA_A, PHONE_A);
+
+    // The customer reads A's message after the move: the status is newer than B's activation.
+    await postDelivery(
+      t,
+      delivery(
+        entry({
+          statuses: [
+            { id: "wamid.out-a", status: "read", timestamp: Math.floor(movedAt / 1000) + 60 },
+          ],
+        }),
+      ),
+    );
+    await processAll(t);
+
+    const [event] = await table(t, "whatsappWebhookEvents");
+    expect(event).toMatchObject({ orgId: orgB, status: "unmatched", kind: "status" });
+    // A's message is never touched from B's side, and B gets no message or conversation.
+    expect(await t.run(async (ctx) => (await ctx.db.get(outboundA))!.status)).toBe("submitted");
+    expect(await wamidsOf(t, orgB)).toEqual([]);
   });
 });
