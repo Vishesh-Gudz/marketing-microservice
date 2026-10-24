@@ -8,8 +8,11 @@ Development mode): webhook verification and one inbound text message, stored end
 inbound hardening that followed (activation cutoff, stuck-event recovery, retention, parser and
 contact-name fixes) is tested in-process only. The server side of Embedded Signup (connecting a
 number, [ADR 0014](adr/0014-whatsapp-connections.md)) is implemented and tested in-process
-against a fake Graph only, and its connect page (`/whatsapp`, B3) against a fake Meta SDK only;
-neither has run against Meta. Outbound replies, templates, quick replies and the inbox UI are not
+against a fake Graph only, and its connect page (`/whatsapp/settings`, B3) against a fake Meta
+SDK only; neither has run against Meta. Sending (text replies and approved templates,
+[ADR 0015](adr/0015-whatsapp-messaging.md)) and the dashboard inbox are implemented and tested
+in-process against the fake Graph and the dashboard harness only; nothing has been sent through
+Meta. Media messages, quoted replies, read receipts and messages to new contacts are not
 implemented.
 
 ## Webhook
@@ -96,7 +99,7 @@ application**: the check only keeps it apart from authenticated users and system
 | `whatsappPhoneNumbers`     | phone_number_id → org routing (WABA id, status, activation time, source, connected WABA, Meta registration). Global lookup index.                        |
 | `whatsappWebhookEvents`    | One row per received event (dedupe key; body cleared once applied; recovery state). Global recovery index. Deleted 30 days after receipt unless pending. |
 | `whatsappConversations`    | One thread per (business number, customer wa_id); last inbound time; contact name from the newest message that carried one.                              |
-| `whatsappMessages`         | Inbound and outbound messages; delivery status and timestamps.                                                                                           |
+| `whatsappMessages`         | Inbound and outbound messages; delivery status, timestamps. Outbound: sender, `clientMessageId` (org-first index), template, failure reason.             |
 
 Phone numbers are routed only by internal functions: an operator runs them (see Setup), or the
 Embedded Signup action does, for a number it verified with Meta. No public function accepts an
@@ -105,7 +108,7 @@ org id.
 ## Connecting a number (Embedded Signup, ADR 0014)
 
 Tested against a fake Graph and (the page) a fake Meta SDK only, never against Meta. Admins start
-it on `/whatsapp` ([dashboard.md](dashboard.md#whatsapp-embedded-signup)). A WhatsApp connection is provider `whatsapp`, keyed by the WABA id, with the
+it on `/whatsapp/settings` ([dashboard.md](dashboard.md#whatsapp-embedded-signup)). A WhatsApp connection is provider `whatsapp`, keyed by the WABA id, with the
 business token and the registration PIN stored encrypted (connection credential, AAD
 `orgId|whatsapp|wabaId|v1`). The generic connection endpoints refuse WhatsApp connections
 (`whatsapp_connection`).
@@ -297,11 +300,86 @@ whether Meta removes our webhook subscription itself; and whether re-adding the 
 once. Not handled: `PARTNER_APP_UNINSTALLED`, `ACCOUNT_OFFBOARDED`, `ACCOUNT_DELETED` and the
 other `account_update` events.
 
+## Sending messages (ADR 0015)
+
+Tested against the fake Graph only (`convex/whatsapp/fakeGraph.fixtures.ts`); nothing has been
+sent through Meta. Editors and admins send from a conversation's page
+([dashboard.md](dashboard.md#whatsapp-inbox)), in an existing conversation only: a text reply
+(at most 4096 characters) while the customer's 24-hour window is open, an approved template at
+any time. Code: `convex/whatsapp/outbound.ts` and `convex/whatsapp/templates.ts`.
+
+**Which numbers send.** Only a number connected through Embedded Signup, with the org's own
+token from that number's connection (and `appsecret_proof`). The number is checked before
+anything is stored and again when the delivery runs; a send that is no longer possible then is
+`failed`, with the refusal as its `failureReason`. Refusals (`CONFLICT`, `details.reason`):
+
+| `reason`                   | When                                                                     |
+| -------------------------- | ------------------------------------------------------------------------ |
+| `number_cannot_send`       | The number was registered by an operator: no token is stored for it.     |
+| `number_unavailable`       | The number or its account is no longer active (disconnected or removed). |
+| `reconnect_required`       | The number's connection is not active (for example, a refused token).    |
+| `number_not_ready`         | The number is not registered with Meta yet (setup not finished).         |
+| `service_window_closed`    | Text only: the customer last wrote more than 24 hours ago.               |
+| `template_unavailable`     | Templates: no APPROVED template with this name and language.             |
+| `template_unsupported`     | Templates: one this app cannot send yet (see below).                     |
+| `client_message_id_reused` | The `clientMessageId` already belongs to another message.                |
+
+**Sent once, never repeated.** The browser makes a `clientMessageId` for each message (8-64
+letters, digits, `-` or `_`); the same id again returns the stored message instead of a second
+send. The message is stored `pending` with the sender's subject, and one delivery is scheduled.
+The delivery claims it once (`sendAttemptedAt`), makes ONE Meta call (`POST /{phone}/messages`,
+`to` = `+` and the customer's `wa_id`) and records the answer. Meta has no idempotency key, so a
+send whose answer is lost is never repeated automatically; the page asks to check with the
+customer first.
+
+| Status                      | Meaning                                                                                                                   |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `pending`                   | Stored; no answer from Meta recorded yet.                                                                                 |
+| `submitted`                 | Meta accepted it; its wamid is stored and status webhooks can reach it.                                                   |
+| `sent`, `delivered`, `read` | From status webhooks; a message only moves forward.                                                                       |
+| `failed`                    | Meta refused it (`errorCode`, `failureReason` `meta_<code>`), a `failed` status came, or it was never sent.               |
+| `unknown`                   | No usable answer (timeout, network, 5xx, unreadable), or none recorded within 5 minutes: it may have been sent. No wamid. |
+
+A refused token (190, 102 or HTTP 401) also moves the connection to `needs_reauth`, through the
+same path as the other providers. A status webhook that arrives before the send result is
+applied when the result is recorded (Open risks, risk 2).
+
+**Watchdog.** Convex does not retry a failed action, so each queued message also schedules
+`settleStuckSend` 5 minutes later (`STUCK_SEND_AFTER_MS`). A message still `pending` then
+becomes `unknown` (`no_result`) when its delivery claimed it, since Meta may have it, or
+`failed` (`not_sent`) when nothing claimed it; a late delivery then finds it no longer pending.
+A real result recorded after the watchdog's `unknown` still replaces it.
+
+**Templates.** `listTemplates` reads the WABA's templates from Meta each time (100 per page, at
+most 5 pages; `complete: false` beyond that) and returns the APPROVED ones with their variables.
+Supported: a TEXT header or none, the BODY with positional (`{{1}}`, ...) or NAMED placeholders,
+a FOOTER, and QUICK_REPLY, PHONE_NUMBER or URL buttons (a URL may end in one variable). Listed
+with a reason and not sendable: media and location headers, carousel and limited-time-offer
+components, authentication templates, other buttons, and placeholders that break Meta's rules.
+`sendTemplate` reads the template again and checks every value before anything is stored
+(`INVALID_ARGUMENT` with `details.field` `variables.<component>.<name>` and `details.reason`
+`missing_value`, `unexpected_value`, `blank_value`, `too_long`, `header_too_long` or
+`body_too_long`): no value may be blank, a filled-in header is at most 60 characters and a body
+at most 1024, a URL value at most 2000. The message keeps the template's name, language, the
+exact components sent and the text the customer reads (`text`). Then it is sent like a text
+reply.
+
+**Logs.** Nothing here logs. A failure keeps only Meta's numeric code and a reason code
+(`meta_<code>`, `http_<status>`, `timeout`, ...), never Meta's text; the token travels only in
+the `Authorization` header.
+
 ## Public API
 
 Inbox: `v1/whatsapp:listConversations` (`{ paginationOpts }`), `v1/whatsapp:getConversation`
 (`{ conversationId }`), `v1/whatsapp:listMessages` (`{ conversationId, paginationOpts }`). All
 `orgQuery` (viewer). Another org's conversation is `NOT_FOUND`.
+
+Sending (editors and admins, "Sending messages"): `v1/whatsapp:sendText`
+(`{ conversationId, text, clientMessageId }`, mutation), `v1/whatsapp:listTemplates`
+(`{ conversationId }`, action; returns `{ templates, complete }`) and `v1/whatsapp:sendTemplate`
+(action; `{ conversationId, templateName, language, variables, clientMessageId }`, where
+`variables` is a list of `{ component, name, value }` and `component` is `header`, `body` or
+`button`). Both senders return the stored message. Another org's conversation is `NOT_FOUND`.
 
 Connections: `v1/whatsapp:getSignupConfig` (`{}`, admin), `v1/whatsapp:completeSignup`
 (`{ code, wabaId, phoneNumberId }`, admin action), `v1/whatsapp:retrySetup` (`{ accountId }`,
@@ -361,8 +439,9 @@ limits; the others must be closed before customers depend on the inbox:
      after its 30th day is deleted by the next hourly run.
    - No alert for `failed` events (risk 3): one nobody notices within 30 days is deleted, and
      its message is lost for good.
-   - Nothing reads `unmatched` rows today. The planned unmatched-status replay (risk 2) must
-     apply them well within 30 days; it is meant to run when the send result is recorded.
+   - `unmatched` rows are read only when a send result is recorded (risk 2), normally seconds
+     after they arrived. Statuses for messages this app did not send, or for a send left
+     `unknown`, stay `unmatched` and are deleted after 30 days.
    - At most 4,200 rows are deleted per hour (21 runs of 200), about 100,000 a day. A sustained
      volume above that lets the backlog of expired rows grow until volume drops.
    - Rows kept for a queued retry count against a run's 200 rows; they could only build up if
@@ -372,10 +451,16 @@ limits; the others must be closed before customers depend on the inbox:
    - Retention and deletion of stored message text and contact names (`whatsappMessages`,
      `whatsappConversations`) are not defined, and there is no per-org data deletion.
 
-2. **Unmatched-status replay.** A status for a message the org does not know yet is stored as
-   `unmatched` and nothing applies it later. Once outbound sending exists, a `sent` webhook that
-   arrives before the send result is recorded would be lost. Planned: an org-first
-   `(orgId, wamid)` index on events and a replay when the send result is written.
+2. **Unmatched-status replay (mitigated).** A status for a message the org does not know yet is
+   stored as `unmatched`. When a send result is recorded (`recordSendResult`,
+   `convex/whatsapp/outbound.ts`), the statuses already stored for its wamid are looked up by
+   their dedupe keys (`status:<wamid>:<status>`, through the org-first index `by_org_dedupe`; no
+   new index), applied in the same transaction and marked `processed` (`ignored` when they
+   change nothing). Limits:
+   - A send left `unknown` has no wamid, so no status ever reaches it.
+   - Statuses for messages this app did not send stay `unmatched` (risk 1).
+   - Whether Meta ever sends a status before the send call returns is unverified; the replay is
+     tested in-process only.
 3. **Stuck-event recovery (mitigated).** A processing batch (up to 100 events) runs in one
    transaction, so one event that keeps throwing rolls back its whole batch. The
    `whatsapp stuck event recovery` cron (every 5 minutes, `convex/whatsapp/recovery.ts`) finds
@@ -461,4 +546,54 @@ Everything below is still modeled on Meta's documentation and unverified:
   refused business token (190 / 102 / 401 assumed), when a 133016 limit clears, and whether
   re-subscribing an already subscribed WABA is harmless;
 - partner removal (never seen): who receives `PARTNER_REMOVED`, its real shape, and what
-  `GET /{waba}` answers with the customer's token afterwards ("Partner removal").
+  `GET /{waba}` answers with the customer's token afterwards ("Partner removal");
+- sending (never run, below): `to` as `+` and the webhook `wa_id`, the send answer's shape,
+  statuses that arrive before the send result, where 131047 is reported (send answer or
+  `failed` status), the template listing with the business token, URL button values sent
+  without `parameter_name` in NAMED templates, and line breaks in template values.
+
+### Live check: sending (ADR 0015)
+
+Not run yet. A run needs its own approval and test assets only: a number connected through
+Embedded Signup on a non-production deployment (an operator-managed number cannot send), a test
+recipient's phone, and templates made for the test in WhatsApp Manager. Read message and event
+rows in the Convex dashboard's data view, and record each step's outcome here. Wait at least
+6 seconds between two sends to the same phone (Meta's pair rate limit, 131056).
+
+Before: from the test phone, write to the business number, so the conversation exists and its
+reply window is open. Have APPROVED templates ready: one POSITIONAL with body variables, one
+NAMED, one with a TEXT header variable, one with a URL button ending in a variable, and one with
+nothing to fill in.
+
+1. **Text reply.** Reply from the conversation page. Expect `pending`, then `submitted` with a
+   wamid, then `sent`, `delivered` and `read` as the phone receives and opens it. Checks the
+   recipient format, the answer's shape (`messages[0].id`) and the real status order.
+2. **Early statuses.** The reply must reach `sent` or later either way. To tell whether the
+   status came before the send result (and the replay applied it), compare the
+   `status:<wamid>:sent` event's `receivedAt` with the time of the `recordSendResult` run in the
+   Convex dashboard's function logs (runs and times only). Note which happened.
+3. **Repeated or late statuses.** A status Meta delivers again, or a `delivered` after `read`,
+   changes nothing.
+4. **Templates.** Open "Choose a template": the approved templates are listed (this checks the
+   listing with the business token), unsupported ones with their reason. Send each prepared
+   template with distinct values. Expect `submitted` and statuses, and on the phone each value
+   in its place: positional in order, named by name, the header, and the URL button opening the
+   link with its value (this checks the button value without `parameter_name` in a NAMED
+   template).
+5. **Line breaks in values (optional).** The page's fields take one line, but `sendTemplate`
+   accepts any text and Meta documents no rule for line breaks, tabs or repeated spaces. Send
+   one such value through the API once and record whether Meta refuses it (132000 / 132018) or
+   delivers it.
+6. **Window closed.** More than 24 hours after the customer's last message the page offers only
+   templates, and `sendText` is refused (`service_window_closed`) without a Meta call. Meta's
+   own 131047 shows only when the window closes between queuing and delivery; record where it
+   appears if it ever does.
+7. **Failures in fixed words.** For any send that fails, the page shows the fixed text for its
+   code, and the row keeps only `errorCode` and `failureReason`.
+8. **Isolation and roles.** A member of another org opening the conversation's URL gets the
+   not-found page; a viewer of the same org sees the thread without the composer.
+9. **Logs.** The deployment's logs for the run show no message text, template value, token,
+   phone number or customer id.
+
+Covered in-process only: `unknown` (Meta never answering), the watchdog, a refused token moving
+the connection to `needs_reauth`, and a repeated `clientMessageId`.
