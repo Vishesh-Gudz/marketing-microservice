@@ -123,6 +123,13 @@ export function lastArgs(name: string): Record<string, unknown> | undefined {
   return calls.at(-1)?.[1] as Record<string, unknown> | undefined;
 }
 
+/** Arguments of every call to a query ("skip" when skipped), by public function name. */
+export function allArgs(name: string): (Record<string, unknown> | "skip" | undefined)[] {
+  return useQueryMock.mock.calls
+    .filter(([ref]) => getFunctionName(ref) === name)
+    .map(([, args]) => args);
+}
+
 export function resetHarness() {
   queryResults.clear();
   stableResults.clear();
