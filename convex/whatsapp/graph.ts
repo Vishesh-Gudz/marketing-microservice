@@ -3,8 +3,9 @@ import { GRAPH_ORIGIN } from "../providers/meta/config";
 import { SIGNUP_TIMEOUT_MS, WHATSAPP_GRAPH_API_VERSION } from "./config";
 
 /**
- * Minimal Graph client for WhatsApp onboarding (ADR 0014). Same rules as the Meta Ads client
- * (convex/providers/meta/client.ts), kept separate so neither integration changes the other:
+ * Minimal Graph client for WhatsApp onboarding (ADR 0014) and messaging. Same rules as the Meta
+ * Ads client (convex/providers/meta/client.ts), kept separate so neither integration changes the
+ * other:
  *
  * - Plain `fetch` (the runtime's global, resolved per call; tests stub it), no retries.
  * - Results never carry a URL, header, token or failure body: a failure is only its kind, the
@@ -17,7 +18,10 @@ import { SIGNUP_TIMEOUT_MS, WHATSAPP_GRAPH_API_VERSION } from "./config";
  *
  * Endpoints (Meta docs, 2026-10-24): Embedded Signup "Onboarding customers as a Tech Provider"
  * (code exchange, POST /{waba}/subscribed_apps, POST /{phone}/register), "Manage accounts"
- * (debug_token granular_scopes -> shared WABA ids), "Phone numbers" (GET /{waba}/phone_numbers).
+ * (debug_token granular_scopes -> shared WABA ids), "Phone numbers" (GET /{waba}/phone_numbers),
+ * "Send messages" (POST /{phone}/messages) and "Template management"
+ * (GET /{waba}/message_templates). A message's recipient and content travel only in the JSON
+ * body, never in a URL.
  */
 
 export type GraphFailure = {
@@ -33,6 +37,10 @@ export type MetaApp = { appId: string; appSecret: string };
 
 const NODE_ID = /^\d{1,32}$/;
 const MAX_NUMBER_PAGES = 5;
+/** Template pages of 100 followed per listing; `complete` is false when more were left. */
+export const MAX_TEMPLATE_PAGES = 5;
+/** wamid values are opaque printable-ASCII tokens (same rule as the webhook parser). */
+const WAMID = /^[\x21-\x7e]{1,256}$/;
 
 function graphUrl(path: string, params: Record<string, string>): string {
   const query = new URLSearchParams(params).toString();
@@ -89,7 +97,7 @@ async function withToken(
   path: string,
   params: Record<string, string>,
   auth: { accessToken: string; appSecret: string },
-  json?: Record<string, string>,
+  json?: Record<string, unknown>,
 ): Promise<GraphOutcome> {
   const proof = await appSecretProof(auth.appSecret, auth.accessToken);
   return await send(graphUrl(path, { ...params, appsecret_proof: proof }), {
@@ -207,6 +215,108 @@ export async function registerPhoneNumber(
     messaging_product: "whatsapp",
     pin,
   });
+}
+
+/** A text value for a template placeholder; `parameter_name` for NAMED templates only. */
+export type TemplateParameter = { type: "text"; text: string; parameter_name?: string };
+
+/** The values of one template component (only text parameters are sent by this app). */
+export type TemplateComponentValues =
+  | { type: "header" | "body"; parameters: TemplateParameter[] }
+  | { type: "button"; sub_type: "url"; index: string; parameters: TemplateParameter[] };
+
+/**
+ * One outbound message, as Meta documents the request body ("Send messages"; text body up to
+ * 4096 characters). `to` is the recipient with "+" and country code: without "+", Meta prepends
+ * the business number's own country code. `messaging_product` and `recipient_type` are added
+ * by sendMessage.
+ */
+export type OutboundMessage =
+  | { to: string; type: "text"; text: { body: string; preview_url?: boolean } }
+  | {
+      to: string;
+      type: "template";
+      template: {
+        name: string;
+        language: { code: string };
+        components?: TemplateComponentValues[];
+      };
+    };
+
+export type SendOutcome = { ok: true; wamid: string } | { ok: false; failure: GraphFailure };
+
+/**
+ * Sends one message from the business number (POST /{phone-number-id}/messages). `ok` means Meta
+ * accepted it and returned its wamid; delivery is reported later by status webhooks. A 200
+ * without a usable wamid is `invalid_json`. Meta documents no idempotency key: a call whose
+ * outcome is unknown (timeout, network, invalid answer) must never be repeated automatically,
+ * since the message may have gone out.
+ */
+export async function sendMessage(
+  phoneNumberId: string,
+  message: OutboundMessage,
+  auth: { accessToken: string; appSecret: string },
+): Promise<SendOutcome> {
+  const result = await withToken("POST", nodePath(phoneNumberId, "messages"), {}, auth, {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    ...message,
+  });
+  if (!result.ok) return result;
+  const messages = (result.body as { messages?: unknown } | null)?.messages;
+  const wamid = Array.isArray(messages)
+    ? (messages[0] as { id?: unknown } | null | undefined)?.id
+    : undefined;
+  return typeof wamid === "string" && WAMID.test(wamid)
+    ? { ok: true, wamid }
+    : { ok: false, failure: { kind: "invalid_json", status: 200 } };
+}
+
+/**
+ * The WABA's message templates, of every status, as Meta returns them (objects only; read by
+ * convex/whatsapp/templates.ts). Follows at most MAX_TEMPLATE_PAGES cursor pages of 100;
+ * `complete` is false when Meta had more.
+ */
+export async function listMessageTemplates(
+  wabaId: string,
+  auth: { accessToken: string; appSecret: string },
+): Promise<
+  | { ok: true; templates: Record<string, unknown>[]; complete: boolean }
+  | { ok: false; failure: GraphFailure }
+> {
+  const templates: Record<string, unknown>[] = [];
+  let after: string | undefined;
+  for (let page = 0; page < MAX_TEMPLATE_PAGES; page++) {
+    const result = await withToken(
+      "GET",
+      nodePath(wabaId, "message_templates"),
+      {
+        fields: "id,name,language,status,category,parameter_format,components",
+        limit: "100",
+        ...(after !== undefined ? { after } : {}),
+      },
+      auth,
+    );
+    if (!result.ok) return result;
+    const body = result.body as {
+      data?: unknown;
+      paging?: { cursors?: { after?: unknown }; next?: unknown };
+    };
+    if (!Array.isArray(body.data)) {
+      return { ok: false, failure: { kind: "invalid_json", status: 200 } };
+    }
+    for (const item of body.data) {
+      if (typeof item === "object" && item !== null && !Array.isArray(item)) {
+        templates.push(item as Record<string, unknown>);
+      }
+    }
+    const next = body.paging?.cursors?.after;
+    if (body.paging?.next === undefined || typeof next !== "string") {
+      return { ok: true, templates, complete: true };
+    }
+    after = next;
+  }
+  return { ok: true, templates, complete: false };
 }
 
 /** Meta's documented success body for subscribe / register: `{"success": true}`. */
