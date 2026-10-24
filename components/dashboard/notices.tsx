@@ -140,7 +140,7 @@ export function ReauthBanner() {
       {broken.some((c) => c.provider === "whatsapp") && (
         <>
           {" "}
-          <Link href="/whatsapp" className="font-medium underline underline-offset-4">
+          <Link href="/whatsapp/settings" className="font-medium underline underline-offset-4">
             Reconnect WhatsApp
           </Link>
         </>

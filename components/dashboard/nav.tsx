@@ -27,7 +27,7 @@ export const NAV_ITEMS = [
   { href: "/social", label: "Organic", icon: Camera },
   // Standalone SaaS: members, invitations and roles (Clerk organization profile, D9).
   { href: "/organization", label: "Organization", icon: Building2 },
-  // WhatsApp (ADR 0014): connect a WhatsApp Business number and follow its setup.
+  // WhatsApp: the inbox (ADR 0013); /whatsapp/settings connects a number (ADR 0014).
   { href: "/whatsapp", label: "WhatsApp", icon: MessageCircle },
   // Google Ads connection management (connect, choose the account, follow its sync).
   { href: "/connections", label: "Connections", icon: Plug },
