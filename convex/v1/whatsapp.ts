@@ -5,10 +5,10 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { DatabaseReader } from "../_generated/server";
 import { clampPagination, mapPage, paginatedDto } from "../lib/dto";
 import { apiError } from "../lib/errors";
-import { getOwned, orgAdminAction, orgMutation, orgQuery } from "../lib/tenancy";
+import { getOwned, orgAction, orgAdminAction, orgMutation, orgQuery } from "../lib/tenancy";
 import { setupProgress } from "../whatsapp/accounts";
 import { runCleanup } from "../whatsapp/offboarding";
-import { queueText } from "../whatsapp/outbound";
+import { listTemplatesFor, queueText, sendTemplateFor } from "../whatsapp/outbound";
 import {
   EMBEDDED_SIGNUP_VERSION,
   signupAppConfig,
@@ -21,13 +21,16 @@ import {
   toWhatsappConversationDto,
   toWhatsappDisconnectResultDto,
   toWhatsappMessageDto,
+  toWhatsappTemplateDto,
   whatsappAccountDto,
   whatsappConversationDto,
   whatsappDisconnectResultDto,
   whatsappMessageDto,
   whatsappSetupResultDto,
   whatsappSignupConfigDto,
+  whatsappTemplateListDto,
   type WhatsappDisconnectResultDto,
+  type WhatsappMessageDto,
   type WhatsappSetupResultDto,
 } from "./dto/whatsapp";
 
@@ -212,6 +215,51 @@ export const sendText = orgMutation({
   handler: async (ctx, args) => {
     const conversation = await getOwned(ctx, "whatsappConversations", args.conversationId);
     return toWhatsappMessageDto(await queueText(ctx, ctx.tenant, conversation, args));
+  },
+});
+
+/**
+ * Editors and admins: the APPROVED message templates of the WhatsApp Business Account behind
+ * one of the caller's conversations, read from Meta with that number's own connection. Templates
+ * this app cannot send yet are included with `supported: false`. Refused like sendText when the
+ * number cannot send; PROVIDER_ERROR (`reason`) when Meta does not answer.
+ */
+export const listTemplates = orgAction({
+  minRole: "editor",
+  args: { conversationId: v.string() },
+  returns: whatsappTemplateListDto,
+  handler: async (ctx, { conversationId }) => {
+    const { templates, complete } = await listTemplatesFor(ctx, ctx.tenant, conversationId);
+    return { templates: templates.map(toWhatsappTemplateDto), complete };
+  },
+});
+
+/**
+ * Editors and admins: sends an APPROVED template in one of the caller's conversations, whether or
+ * not the customer's 24-hour window is open. `variables` fill every placeholder (`component` and
+ * `name` as listTemplates reports them). The template is read from Meta and the values checked
+ * against it before anything is stored: INVALID_ARGUMENT (`field`, `reason`) for wrong values,
+ * CONFLICT `template_unavailable` / `template_unsupported`. Then like sendText: the stored message
+ * is `pending` until Meta answers; `clientMessageId` makes a repeated call return it.
+ */
+export const sendTemplate = orgAction({
+  minRole: "editor",
+  args: {
+    conversationId: v.string(),
+    templateName: v.string(),
+    language: v.string(),
+    variables: v.array(
+      v.object({
+        component: v.union(v.literal("header"), v.literal("body"), v.literal("button")),
+        name: v.string(),
+        value: v.string(),
+      }),
+    ),
+    clientMessageId: v.string(),
+  },
+  returns: whatsappMessageDto,
+  handler: async (ctx, args): Promise<WhatsappMessageDto> => {
+    return toWhatsappMessageDto(await sendTemplateFor(ctx, ctx.tenant, args));
   },
 });
 

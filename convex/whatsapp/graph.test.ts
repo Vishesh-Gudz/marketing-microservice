@@ -102,7 +102,18 @@ describe("sendMessage", () => {
 
   it("sends a template with its parameters in the JSON body", async () => {
     const fake = await setup();
-    fake.addTemplate(WABA_A, template());
+    fake.addTemplate(
+      WABA_A,
+      template({
+        components: [
+          { type: "BODY", text: "Your order {{1}} has shipped." },
+          {
+            type: "BUTTONS",
+            buttons: [{ type: "URL", text: "Track", url: "https://example.com/track/{{1}}" }],
+          },
+        ],
+      }),
+    );
     const message: OutboundMessage = {
       to: CUSTOMER,
       type: "template",

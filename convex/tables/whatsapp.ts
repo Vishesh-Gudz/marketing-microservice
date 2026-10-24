@@ -6,6 +6,7 @@ import {
   messageStatusValidator,
   messageTypeValidator,
   onboardingTypeValidator,
+  outboundTemplateValidator,
   phoneNumberSourceValidator,
   phoneNumberStatusValidator,
   webhookEventStatusValidator,
@@ -216,6 +217,11 @@ export const whatsappTables = {
     sendAttemptedAt: v.optional(v.number()),
     /** Outbound only, failed or unknown: a sanitized reason code ("meta_131047", "timeout"). */
     failureReason: v.optional(v.string()),
+    /**
+     * Outbound templates only: the approved template and the values sent. `text` holds what the
+     * customer reads (header, body and footer, filled in).
+     */
+    template: v.optional(outboundTemplateValidator),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

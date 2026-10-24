@@ -153,6 +153,62 @@ function routeOf(method: string, path: string): FakeRoute | "unknown" {
   return "unknown";
 }
 
+/** The distinct `{{...}}` placeholders of a template text. */
+function fakePlaceholders(text: unknown): string[] {
+  if (typeof text !== "string") return [];
+  return [...new Set([...text.matchAll(/\{\{([^{}]*)\}\}/g)].map((m) => m[1]!))];
+}
+
+/**
+ * Meta's documented parameter rules for a template send, as the fake checks them: per header and
+ * body, positional templates take one text value per placeholder (no `parameter_name`), NAMED
+ * ones take exactly their placeholder names; a URL button whose URL has a placeholder takes one
+ * value under its index. Anything else is 132000 (parameter count mismatch).
+ */
+function templateParametersMatch(template: FakeTemplate, sent: unknown): boolean {
+  const given = Array.isArray(sent) ? (sent as Record<string, unknown>[]) : [];
+  const paramsOf = (match: (c: Record<string, unknown>) => boolean) => {
+    const found = given.filter(match);
+    if (found.length > 1) return null;
+    return (found[0]?.parameters ?? []) as Record<string, unknown>[];
+  };
+  for (const kind of ["HEADER", "BODY"] as const) {
+    const component = template.components.find((c) => (c as { type?: unknown }).type === kind) as
+      { text?: unknown } | undefined;
+    const names = fakePlaceholders(component?.text);
+    const params = paramsOf((c) => c.type === kind.toLowerCase());
+    if (params === null || params.length !== names.length) return false;
+    if (params.some((p) => p.type !== "text" || typeof p.text !== "string" || p.text === "")) {
+      return false;
+    }
+    const sentNames = params.map((p) => p.parameter_name);
+    if (template.parameter_format === "NAMED") {
+      if ([...sentNames].sort().join() !== [...names].sort().join()) return false;
+    } else if (sentNames.some((n) => n !== undefined)) {
+      return false;
+    }
+  }
+  const buttons = (
+    template.components.find((c) => (c as { type?: unknown }).type === "BUTTONS") as
+      { buttons?: { type?: unknown; url?: unknown }[] } | undefined
+  )?.buttons;
+  const dynamic = (buttons ?? [])
+    .map((b, i) => (b.type === "URL" && fakePlaceholders(b.url).length > 0 ? String(i) : null))
+    .filter((i) => i !== null);
+  const sentButtons = given.filter((c) => c.type === "button");
+  if (sentButtons.length !== dynamic.length) return false;
+  return sentButtons.every((c) => {
+    const params = (c.parameters ?? []) as Record<string, unknown>[];
+    return (
+      c.sub_type === "url" &&
+      dynamic.includes(String(c.index)) &&
+      params.length === 1 &&
+      params[0]!.type === "text" &&
+      typeof params[0]!.text === "string"
+    );
+  });
+}
+
 export function createFakeWhatsAppGraph(): FakeWhatsAppGraph {
   const codes = new Map<string, FakeSignup>();
   const tokens = new Map<string, FakeSignup>();
@@ -295,12 +351,18 @@ export function createFakeWhatsAppGraph(): FakeWhatsAppGraph {
             return json(400, graphError(100).body);
           }
         } else if (body.type === "template") {
-          const t = (body.template ?? {}) as { name?: unknown; language?: { code?: unknown } };
-          const approved = (templates.get(waba.id) ?? []).some(
-            (row) =>
-              row.name === t.name && row.language === t.language?.code && row.status === "APPROVED",
+          const t = (body.template ?? {}) as {
+            name?: unknown;
+            language?: { code?: unknown };
+            components?: unknown;
+          };
+          const row = (templates.get(waba.id) ?? []).find(
+            (r) => r.name === t.name && r.language === t.language?.code && r.status === "APPROVED",
           );
-          if (!approved) return json(400, graphError(132001).body);
+          if (row === undefined) return json(400, graphError(132001).body);
+          if (!templateParametersMatch(row, t.components)) {
+            return json(400, graphError(132000).body);
+          }
         } else {
           return json(400, graphError(100).body);
         }

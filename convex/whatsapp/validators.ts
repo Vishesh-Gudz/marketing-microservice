@@ -106,3 +106,34 @@ export const messageStatusValidator = literalUnion(MESSAGE_STATUSES);
 export const MESSAGE_TYPES = [...INBOUND_MESSAGE_TYPES, "template"] as const;
 export type MessageType = (typeof MESSAGE_TYPES)[number];
 export const messageTypeValidator = literalUnion(MESSAGE_TYPES);
+
+/** One text value sent for a template placeholder (convex/whatsapp/graph.ts TemplateParameter). */
+const templateParameterValidator = v.object({
+  type: v.literal("text"),
+  text: v.string(),
+  parameter_name: v.optional(v.string()),
+});
+
+/**
+ * An outbound template message as sent (convex/whatsapp/templates.ts checkValues): its name,
+ * language and the exact `components` values, checked against the approved template when the
+ * user sent it.
+ */
+export const outboundTemplateValidator = v.object({
+  name: v.string(),
+  language: v.string(),
+  components: v.array(
+    v.union(
+      v.object({
+        type: v.union(v.literal("header"), v.literal("body")),
+        parameters: v.array(templateParameterValidator),
+      }),
+      v.object({
+        type: v.literal("button"),
+        sub_type: v.literal("url"),
+        index: v.string(),
+        parameters: v.array(templateParameterValidator),
+      }),
+    ),
+  ),
+});

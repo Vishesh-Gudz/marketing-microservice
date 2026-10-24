@@ -187,6 +187,7 @@ import type * as whatsapp_retention from "../whatsapp/retention.js";
 import type * as whatsapp_signature from "../whatsapp/signature.js";
 import type * as whatsapp_signup from "../whatsapp/signup.js";
 import type * as whatsapp_status from "../whatsapp/status.js";
+import type * as whatsapp_templates from "../whatsapp/templates.js";
 import type * as whatsapp_validators from "../whatsapp/validators.js";
 import type * as whatsapp_webhook from "../whatsapp/webhook.js";
 import type * as whatsapp_window from "../whatsapp/window.js";
@@ -377,6 +378,7 @@ declare const fullApi: ApiFromModules<{
   "whatsapp/signature": typeof whatsapp_signature;
   "whatsapp/signup": typeof whatsapp_signup;
   "whatsapp/status": typeof whatsapp_status;
+  "whatsapp/templates": typeof whatsapp_templates;
   "whatsapp/validators": typeof whatsapp_validators;
   "whatsapp/webhook": typeof whatsapp_webhook;
   "whatsapp/window": typeof whatsapp_window;

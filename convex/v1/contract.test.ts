@@ -117,7 +117,9 @@ describe("public API contract", () => {
       "v1/whatsapp:listAccounts",
       "v1/whatsapp:listConversations",
       "v1/whatsapp:listMessages",
+      "v1/whatsapp:listTemplates",
       "v1/whatsapp:retrySetup",
+      "v1/whatsapp:sendTemplate",
       "v1/whatsapp:sendText",
     ]);
   });
