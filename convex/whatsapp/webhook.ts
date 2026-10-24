@@ -1,6 +1,7 @@
 import { internal } from "../_generated/api";
 import type { ActionCtx } from "../_generated/server";
 import { configuredSecret, MAX_WEBHOOK_BODY_BYTES, WHATSAPP_ENV } from "./config";
+import { handlePartnerRemovals } from "./partnerRemoval";
 import { parseWebhookPayload } from "./payload";
 import { SIGNATURE_HEADER, timingSafeEqualString, verifyWebhookSignature } from "./signature";
 
@@ -13,7 +14,9 @@ import { SIGNATURE_HEADER, timingSafeEqualString, verifyWebhookSignature } from 
  *      app secret configured (else 503, so Meta retries once it is) -> well-formed
  *      Content-Length if present (400) -> declared and actual body size (413) ->
  *      HMAC-SHA256 over the raw bytes (401) -> strict UTF-8 + JSON + envelope parse (400) ->
- *      one ingest mutation (500 on failure: Meta retries; ingestion is idempotent) -> 200.
+ *      one ingest mutation (500 on failure: Meta retries; ingestion is idempotent) ->
+ *      partner removals, each confirmed with Meta before anything changes (ADR 0014 B4b,
+ *      convex/whatsapp/partnerRemoval.ts; 500 when a check must wait for Meta's retry) -> 200.
  *
  * Nothing here logs: not bodies, not headers, not signatures, not secrets (ESLint no-console).
  * Responses carry no detail beyond the status, so they reveal nothing about routing.
@@ -82,6 +85,16 @@ export async function handleWebhookDelivery(ctx: ActionCtx, request: Request): P
     } catch {
       // Not logged (the error could echo event fields). Meta retries non-200 deliveries and
       // ingestion is idempotent, so a transient failure loses nothing.
+      return plain(500, "Error");
+    }
+  }
+  if (parsed.delivery.partnerRemovals.length > 0) {
+    try {
+      const settled = await handlePartnerRemovals(ctx, parsed.delivery.partnerRemovals, appSecret);
+      if (!settled) return plain(500, "Error");
+    } catch {
+      // Not logged, as above. The messages beside it are stored once; Meta's retry repeats only
+      // what is not settled yet.
       return plain(500, "Error");
     }
   }

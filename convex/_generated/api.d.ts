@@ -177,6 +177,7 @@ import type * as whatsapp_config from "../whatsapp/config.js";
 import type * as whatsapp_graph from "../whatsapp/graph.js";
 import type * as whatsapp_ingest from "../whatsapp/ingest.js";
 import type * as whatsapp_offboarding from "../whatsapp/offboarding.js";
+import type * as whatsapp_partnerRemoval from "../whatsapp/partnerRemoval.js";
 import type * as whatsapp_payload from "../whatsapp/payload.js";
 import type * as whatsapp_phoneNumbers from "../whatsapp/phoneNumbers.js";
 import type * as whatsapp_processing from "../whatsapp/processing.js";
@@ -365,6 +366,7 @@ declare const fullApi: ApiFromModules<{
   "whatsapp/graph": typeof whatsapp_graph;
   "whatsapp/ingest": typeof whatsapp_ingest;
   "whatsapp/offboarding": typeof whatsapp_offboarding;
+  "whatsapp/partnerRemoval": typeof whatsapp_partnerRemoval;
   "whatsapp/payload": typeof whatsapp_payload;
   "whatsapp/phoneNumbers": typeof whatsapp_phoneNumbers;
   "whatsapp/processing": typeof whatsapp_processing;

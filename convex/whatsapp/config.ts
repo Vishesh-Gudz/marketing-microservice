@@ -78,6 +78,18 @@ export const OFFBOARDING_CLAIM_MS = 2 * SIGNUP_TIMEOUT_MS;
  */
 export const WHATSAPP_REVOKED_CREDENTIAL_GRACE_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Partner removal (ADR 0014 B4b, convex/whatsapp/partnerRemoval.ts): Graph errors read as "this
+ * token can no longer reach the WABA" when the webhook confirms a PARTNER_REMOVED: permission
+ * (10, 200), unknown alias (803), and 100 with subcode 33 (the object cannot be loaded due to
+ * missing permissions). ASSUMED: generic Graph codes, since Meta does not document what reading
+ * the WABA answers after a partner removal; to verify with a real removal.
+ */
+export const WABA_ACCESS_REFUSED_CODES: ReadonlySet<number> = new Set([10, 200, 803]);
+export const WABA_NOT_ACCESSIBLE = { code: 100, subcode: 33 } as const;
+/** WABAs checked with Meta per delivery; more are answered 500 and checked on Meta's retry. */
+export const MAX_PARTNER_REMOVAL_CHECKS = 10;
+
 const META_NUMERIC_ID = /^\d{1,32}$/;
 
 export type SignupAppConfig = { appId: string; appSecret: string; configId: string };

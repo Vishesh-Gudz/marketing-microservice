@@ -43,7 +43,10 @@ export const whatsappTables = {
       }),
     ),
     disconnectedAt: v.optional(v.number()),
-    /** The signed-in admin who disconnected the account (ADR 0014 B4). */
+    /**
+     * Who disconnected the account: the signed-in admin (ADR 0014 B4), or
+     * `system:whatsapp-webhook` when Meta confirmed a partner removal (B4b).
+     */
     disconnectedBySubject: v.optional(v.string()),
     /**
      * Meta cleanup after a disconnect (convex/whatsapp/offboarding.ts): unsubscribing our app
@@ -81,7 +84,9 @@ export const whatsappTables = {
     .index("by_org_connection", ["orgId", "connectionId"])
     // GLOBAL (approved exception): one org per WABA. Connecting must see whether ANOTHER org
     // has the WABA active (its webhook subscription and numbers would be shared otherwise);
-    // the row found is only compared, never returned or written.
+    // the row found is only compared there. A PARTNER_REMOVED webhook (B4b, authenticated as
+    // Meta, not as a tenant) resolves the one active row for its WABA; that org's account is
+    // written only after Meta refuses the org's own token, re-checked in the same transaction.
     .index("by_waba_status", ["wabaId", "status"]),
 
   /**

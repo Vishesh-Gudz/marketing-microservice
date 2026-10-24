@@ -35,8 +35,10 @@ const APPROVED_GLOBAL_INDEXES = [
   "oauthStates.by_nonce_hash",
   "syncAccounts.by_next_plan",
   // WhatsApp connections (ADR 0014): one org per WABA. Connecting checks whether another org
-  // has the WABA active; the row found is only compared, never returned or written. Covered by
-  // convex/whatsapp/accounts.test.ts.
+  // has the WABA active; the row found is only compared. Covered by
+  // convex/whatsapp/accounts.test.ts. A PARTNER_REMOVED webhook (B4b) resolves the one active
+  // row for its WABA and disconnects it only after Meta refuses that org's own token, re-checked
+  // in the writing transaction; covered by convex/whatsapp/partnerRemoval.test.ts.
   "whatsappBusinessAccounts.by_waba_status",
   // WhatsApp (ADR 0013): webhook deliveries are authenticated as Meta, not as a tenant, so the
   // org is resolved from the registered phone_number_id. Rows are re-verified (active, unique,
