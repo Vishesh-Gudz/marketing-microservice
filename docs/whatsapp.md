@@ -182,8 +182,8 @@ Limits (B2):
   registered number. A stored credential that cannot be read is never replaced: the signup is
   refused (`stored_pin_unavailable`). Whether re-subscribing is harmless at Meta is not
   documented.
-- No WhatsApp disconnect or token revocation yet (B4). If the connection is revoked, the stored
-  PIN is lost with its credential.
+- Disconnecting deletes the stored token and PIN once Meta's cleanup ends (see "Disconnecting
+  an account"); a later signup uses a new PIN. The token is not revoked at Meta.
 - Two calls carry secrets in their query string, as Meta documents them (server to server,
   HTTPS): the code exchange (`client_secret`, `code`) and `debug_token` (the business token).
   This application never logs a URL; whether anything between Convex and Meta records query
@@ -220,6 +220,42 @@ after `FINISH`, since Meta counts its final screen as finished); the signup vari
 reports for a WABA without a number, a WhatsApp Business app number (coexistence), a migration or
 API-access-only signup are refused in the browser with an explanation.
 
+## Disconnecting an account
+
+`v1/whatsapp:disconnectAccount` (`{ accountId }`, org admins, ADR 0014 B4). Tested against a fake
+Graph only; never run against Meta.
+
+1. **At once, in one transaction:** every active number of the account stops routing (from that
+   commit on, deliveries for it are acknowledged and dropped as unrouted), the connection is
+   revoked and the account becomes `disconnected`. Each change is audited
+   (`whatsapp.number_disconnected`, `connection.disconnected`). Events accepted before still
+   reach the conversations; conversations and messages are never deleted and stay visible.
+2. **Then the Meta cleanup:** our app is unsubscribed from the WABA's webhooks with the stored
+   token (`DELETE /{waba}/subscribed_apps`). It is skipped when the WABA is still used: another
+   org has it connected, or any org (this one included) has an active number on it, e.g. an
+   operator-managed one; unsubscribing would cut their webhooks too. One attempt runs at a time.
+   A Meta failure is retried after 1 min, 5 min, 30 min, 2 h and 6 h; a refused token (190 /
+   102 / 401) ends it. Repeating the disconnect never repeats a finished cleanup.
+3. **When it ends** (done, or given up after the last retry), the stored token and PIN are
+   deleted (`credential.deleted`, then `whatsapp.offboarding_completed` or
+   `whatsapp.offboarding_failed`; retries are audited as `system:whatsapp-offboarding`). The
+   token is not revoked at Meta: the customer can remove the app in their Meta business
+   settings. Numbers are not deregistered.
+
+`listAccounts` shows a disconnected account's cleanup as `pending` (with `retryAfter`), `done` or
+`failed`; how it finished (unsubscribed, skipped, token refused) is only in the audit log.
+
+While a cleanup is pending, a signup for that WABA is refused for every org
+(`disconnect_in_progress`). Afterwards a new signup reconnects it: the numbers are routed again
+with a new activation time (messages from the gap are not backfilled), the WABA is subscribed
+again, a new PIN is stored, and registered numbers are not registered again. A setup call that
+subscribes after a disconnect undoes that subscription with the same token. The generic connection
+sweep leaves a revoked WhatsApp connection's credential alone for 24 hours, then deletes what is
+left, as for every provider.
+
+Unverified at Meta: whether `DELETE subscribed_apps` is harmless to repeat, whether it removes only
+our app's subscription, and what Meta does with the WABA's deliveries afterwards.
+
 ## Public API
 
 Inbox: `v1/whatsapp:listConversations` (`{ paginationOpts }`), `v1/whatsapp:getConversation`
@@ -229,8 +265,10 @@ Inbox: `v1/whatsapp:listConversations` (`{ paginationOpts }`), `v1/whatsapp:getC
 Connections: `v1/whatsapp:getSignupConfig` (`{}`, admin), `v1/whatsapp:completeSignup`
 (`{ code, wabaId, phoneNumberId }`, admin action), `v1/whatsapp:retrySetup` (`{ accountId }`,
 admin action; another org's account is `NOT_FOUND`) and `v1/whatsapp:listAccounts` (`{}`,
-viewer; accounts with their numbers and setup status, never the token or PIN).
-`completeSignup`'s `code` is the only secret-like argument the contract test allows.
+viewer; accounts with their numbers, setup status and, once disconnected, the Meta cleanup's
+status; never the token or PIN), and `v1/whatsapp:disconnectAccount` (`{ accountId }`, admin
+action; see below). `completeSignup`'s `code` is the only secret-like argument the contract test
+allows.
 
 ## Open risks (Stage 1)
 

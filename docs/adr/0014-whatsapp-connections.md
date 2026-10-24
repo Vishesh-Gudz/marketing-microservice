@@ -3,8 +3,9 @@
 - Status: in progress. B1 (data model, internal state changes, guards on the generic connection
   paths) and B2 (Embedded Signup action, WhatsApp Graph client, public API) are implemented and
   tested in-process against a fake Graph; B3 (the connect page `/whatsapp`, Meta's JavaScript
-  SDK and the signup hand-off) is implemented and tested against a fake SDK. Nothing in this flow
-  has run against Meta.
+  SDK and the signup hand-off) is implemented and tested against a fake SDK; B4 (disconnect and
+  its Meta cleanup) is implemented and tested against the fake Graph. Nothing in this flow has
+  run against Meta.
 - Date: 2026-10-24
 
 ## Context
@@ -54,7 +55,7 @@ registration):
    WABA webhook subscription and number routing, which the generic disconnect would leave live:
    `v1/connections:disconnect` and `refreshAssets` refuse it (`INVALID_ARGUMENT`, reason
    `whatsapp_connection`), and `revokeAtPlatform` never calls an OAuth revoke for it. Its own
-   offboarding comes later (B4).
+   offboarding is `v1/whatsapp:disconnectAccount` (decision 14).
 3. **Accounts and numbers.** `whatsappBusinessAccounts` (onboarding type `cloud_api` or
    `coexistence`) is linked to the connection and records `subscribedAt` and the latest failed
    setup step (`setupError`: step and sanitized reason code). Numbers record their `source`
@@ -125,12 +126,31 @@ registration):
 13. **No simulated signup in mock mode.** Automated tests stub `fetch` with a fake Graph that
     serves the documented calls (`convex/whatsapp/fakeGraph.fixtures.ts`); it is not evidence of
     real Meta behavior.
+14. **Disconnect** (B4, D1–D9): `v1/whatsapp:disconnectAccount`, admin-only, org and actor from
+    the JWT (another org's account is `NOT_FOUND`), idempotent, independent of the connection
+    gate. In one transaction every active number of the account stops routing (audited), the
+    connection is revoked (audited) and the account is `disconnected` with its Meta cleanup
+    `pending`; the credential stays for that cleanup. Conversations and messages are kept and
+    stay visible (D8). The cleanup (`convex/whatsapp/offboarding.ts`) runs one attempt at a time
+    (a claim, like registration): unless another org's active account or any active number in
+    any org still uses the WABA (then skipped, D1; that check needs the approved global index
+    `whatsappPhoneNumbers.by_waba_status`, D2), our app is unsubscribed with
+    `DELETE /{waba}/subscribed_apps`. Failures are retried after 1 min, 5 min, 30 min, 2 h and
+    6 h; a refused token ends it (nothing can unsubscribe with it). When it ends, done or given
+    up after the last retry (D9), the credential is deleted in the same transaction. The token is
+    not revoked at Meta (D3: `oauth/revoke` is documented for system users, not for business
+    tokens) and numbers are not deregistered (D4). While a cleanup is pending no org can connect
+    the WABA (`disconnect_in_progress`, D5); a setup call that subscribes after the disconnect
+    undoes its subscription. The generic connection sweep leaves a revoked WhatsApp connection's
+    credential alone for 24 hours (D6); every other provider is unchanged. Automatic disconnect
+    on Meta's `account_update` `PARTNER_REMOVED` is deferred (D7).
 
 ## Consequences
 
 - `v1/connections:list` can return connections with provider `whatsapp` (additive enum value);
-  four new `v1/whatsapp` functions (additive).
-- Nine approved global indexes (convex/schema.test.ts).
+  five new `v1/whatsapp` functions (additive).
+- Ten approved global indexes (convex/schema.test.ts); B4 added
+  `whatsappPhoneNumbers.by_waba_status`.
 - Meta's JavaScript SDK is loaded from `/whatsapp` only (admins, signup available) but, like any
   script, stays in the page until a full reload, with the page's privileges; the app has no
   Content Security Policy yet.
@@ -140,7 +160,11 @@ registration):
   tokens, Meta's error codes for a PIN mismatch and for a refused business token on these
   endpoints (190 / 102 / 401 are assumed, as for Meta Ads), whether 133016 clears exactly 72
   hours after the limit was reached, whether re-subscribing is harmless, and the
-  `granular_scopes` grants for a WABA shared with several apps.
-- Remaining work: B4 (WhatsApp disconnect and token revocation, `account_update` webhooks, token
-  health), B5 (Meta data-deletion callback); then outbound messages and templates. A first real
+  `granular_scopes` grants for a WABA shared with several apps. For B4: whether
+  `DELETE subscribed_apps` is harmless to repeat, whether it removes only our app's
+  subscription, what Meta does with deliveries afterwards, and whether `oauth/revoke` or
+  `PARTNER_REMOVED` apply to Embedded Signup business tokens and Cloud API customers.
+- Remaining work: B4b (`account_update` webhooks, e.g. `PARTNER_REMOVED`, which needs the field
+  subscribed in the Meta app), B5 (Meta data-deletion callback); then outbound messages and
+  templates. A first real
   signup needs the Meta configuration in docs/whatsapp.md ("Connect UI: Meta configuration").

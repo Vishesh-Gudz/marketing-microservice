@@ -311,10 +311,10 @@ a WhatsApp Business number through Meta's Embedded Signup and follow its setup; 
 the connected accounts. It uses the public `v1/whatsapp` functions only; the **server** verifies
 every Meta asset and decides who may act ([whatsapp.md](whatsapp.md#connecting-a-number-embedded-signup-adr-0014)).
 
-| Part                                         | Admin | Editor, viewer                                                     |
-| -------------------------------------------- | ----- | ------------------------------------------------------------------ |
-| Connected accounts, setup status, numbers    | yes   | yes                                                                |
-| Connect WhatsApp, Retry setup, Connect again | yes   | no ("Only organization admins …"; `getSignupConfig` is not called) |
+| Part                                                     | Admin | Editor, viewer                                                     |
+| -------------------------------------------------------- | ----- | ------------------------------------------------------------------ |
+| Connected accounts, setup status, numbers                | yes   | yes                                                                |
+| Connect WhatsApp, Retry setup, Connect again, Disconnect | yes   | no ("Only organization admins …"; `getSignupConfig` is not called) |
 
 1. **Availability.** The page asks `getSignupConfig`. When the server says WhatsApp is not
    available (the deployment's `WHATSAPP_CONNECTIONS_ENABLED` gate is closed, or the Meta app is
@@ -348,7 +348,12 @@ every Meta asset and decides who may act ([whatsapp.md](whatsapp.md#connecting-a
 5. **Accounts.** `listAccounts` (live): each account with its name (from the connection), status
    badge, WABA id, numbers (registered or not, and when registration may be retried after Meta's
    rate limit) and the reason in words. Admins get **Retry setup** for an unfinished setup (one call
-   at a time) and **Connect again** for one that needs reauthorization (a new signup).
+   at a time), **Connect again** for one that needs reauthorization (a new signup) and **Disconnect**
+   for an active one: a confirmation (Cancel has focus; Escape cancels) lists what happens, then
+   `disconnectAccount` runs once. The result says whether Meta's cleanup finished, is still being
+   retried, or gave up (with guidance to remove the app in the Meta business settings). A
+   disconnected account shows that status, no actions, and is connected again with **Connect
+   WhatsApp**. History stays visible to every member.
 
 Limits: Meta's SDK runs with the page's privileges (it can read what the page can, including the
 Clerk session cookie). It is loaded only from `/whatsapp`, for admins, when signup is available,
@@ -356,7 +361,7 @@ but a script cannot be unloaded: once loaded it stays in the page, also after na
 pages, until a full reload. The
 app has no Content Security Policy yet. The real Meta flow needs an HTTPS origin listed in the Meta
 app's Allowed domains ([whatsapp.md](whatsapp.md#connect-ui-meta-configuration)); it has never run
-against Meta. There is no WhatsApp disconnect yet (ADR 0014 B4).
+against Meta.
 
 ## Import guard (D23)
 
