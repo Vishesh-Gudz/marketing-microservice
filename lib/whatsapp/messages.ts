@@ -1,7 +1,13 @@
 import { isMarketingError } from "@/convex/lib/errors";
 import type { Notice } from "@/lib/connections/types";
 import type { SignupEnd, UnsupportedFinish } from "./embedded-signup";
-import type { SetupResult, SetupStatus, SetupStep, WhatsAppAccount } from "./types";
+import type {
+  DisconnectResult,
+  SetupResult,
+  SetupStatus,
+  SetupStep,
+  WhatsAppAccount,
+} from "./types";
 
 /**
  * Fixed, user-facing text for connecting WhatsApp (ADR 0014, B3). Only public contract values
@@ -87,6 +93,11 @@ export const SIGNUP_ERROR_MESSAGES: Readonly<Record<string, Omit<Notice, "tone">
   reconnect_required: {
     title: "Connect WhatsApp again",
     message: "Meta no longer accepts this connection. Use Connect WhatsApp to reconnect it.",
+  },
+  disconnect_in_progress: {
+    title: "Still disconnecting",
+    message:
+      "This WhatsApp account is still being disconnected. Try again once the disconnect has finished.",
   },
 };
 
@@ -286,4 +297,43 @@ export function accountSetupText(account: WhatsAppAccount): string | null {
     return setupReasonText(account.setupReason ?? "token_invalid", undefined);
   }
   return null;
+}
+
+/** Shown when Meta's cleanup gave up (ADR 0014 B4): the customer can remove our access. */
+const CLEANUP_FAILED =
+  "Meta could not be told to stop sending this account's messages here. Its stored access was deleted. To remove this app's access completely, remove it in your Meta business settings.";
+
+/** disconnectAccount succeeded: routing has stopped; where Meta's cleanup stands. */
+export function disconnectResultNotice(result: DisconnectResult): Notice {
+  switch (result.cleanup) {
+    case "done":
+      return {
+        tone: "success",
+        title: "WhatsApp disconnected",
+        message:
+          "Messages for this account no longer reach this app. Conversations and messages so far are kept.",
+      };
+    case "pending":
+      return {
+        tone: "warning",
+        title: "WhatsApp disconnected, Meta cleanup still running",
+        message:
+          "Messages for this account no longer reach this app. Telling Meta did not work yet; it is retried automatically.",
+      };
+    case "failed":
+      return { tone: "warning", title: "WhatsApp disconnected", message: CLEANUP_FAILED };
+  }
+}
+
+/** A disconnected account's cleanup, in words (null otherwise). */
+export function accountCleanupText(account: WhatsAppAccount): string | null {
+  if (account.status !== "disconnected") return null;
+  switch (account.cleanup?.status) {
+    case "pending":
+      return "Disconnected. Telling Meta is still being retried; the account can be connected again once that has finished.";
+    case "failed":
+      return `Disconnected. ${CLEANUP_FAILED} Use Connect WhatsApp to connect it again.`;
+    default:
+      return "Disconnected. Use Connect WhatsApp to connect it again.";
+  }
 }

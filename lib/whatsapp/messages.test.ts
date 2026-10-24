@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { apiError } from "@/convex/lib/errors";
 import {
+  accountCleanupText,
   accountSetupText,
+  disconnectResultNotice,
   SETUP_STATUS_LABELS,
   setupReasonText,
   setupResultNotice,
@@ -33,6 +35,7 @@ const SERVER_REASONS = [
   "signup_in_progress",
   "account_disconnected",
   "reconnect_required",
+  "disconnect_in_progress",
 ];
 const SERVER_TEXT = "server-side detail that must not be shown";
 
@@ -157,6 +160,35 @@ describe("setup status texts", () => {
     ).toContain("no active phone number");
     expect(accountSetupText(account({ setupStatus: "reauthorization_required" }))).toContain(
       "Connect WhatsApp again",
+    );
+  });
+});
+
+describe("disconnect texts", () => {
+  it("reports a disconnect and where Meta's cleanup stands", () => {
+    expect(disconnectResultNotice({ accountId: "a", cleanup: "done" })).toMatchObject({
+      tone: "success",
+      title: "WhatsApp disconnected",
+    });
+    expect(disconnectResultNotice({ accountId: "a", cleanup: "pending" }).title).toBe(
+      "WhatsApp disconnected, Meta cleanup still running",
+    );
+    expect(disconnectResultNotice({ accountId: "a", cleanup: "failed" }).message).toContain(
+      "remove it in your Meta business settings",
+    );
+  });
+
+  it("explains a disconnected account's cleanup on its card", () => {
+    expect(accountCleanupText(account())).toBeNull();
+    const disconnected = account({ status: "disconnected", setupStatus: "disconnected" });
+    expect(accountCleanupText({ ...disconnected, cleanup: { status: "done" } })).toBe(
+      "Disconnected. Use Connect WhatsApp to connect it again.",
+    );
+    expect(accountCleanupText({ ...disconnected, cleanup: { status: "pending" } })).toContain(
+      "still being retried",
+    );
+    expect(accountCleanupText({ ...disconnected, cleanup: { status: "failed" } })).toContain(
+      "Meta business settings",
     );
   });
 });

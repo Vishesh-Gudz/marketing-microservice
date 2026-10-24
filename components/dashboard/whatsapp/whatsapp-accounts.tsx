@@ -10,6 +10,7 @@ import { useOrg } from "@/lib/analytics/org-context";
 import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
 import type { Notice } from "@/lib/connections/types";
 import {
+  accountCleanupText,
   accountSetupText,
   SETUP_STATUS_LABELS,
   setupResultNotice,
@@ -18,6 +19,7 @@ import {
 import type { SetupStatus, WhatsAppAccount } from "@/lib/whatsapp/types";
 import { formatInstant } from "../freshness-note";
 import type { EmbeddedSignup } from "./connect-whatsapp";
+import { DisconnectWhatsApp } from "./disconnect-whatsapp";
 
 const BADGE_VARIANT: Readonly<
   Record<SetupStatus, "default" | "secondary" | "destructive" | "outline">
@@ -83,8 +85,9 @@ function AccountCard({
 }) {
   const { timezone } = useOrg();
   const headingId = `whatsapp-account-${account.id}`;
-  const explanation = accountSetupText(account);
+  const explanation = accountSetupText(account) ?? accountCleanupText(account);
   const canRetry = account.setupStatus === "action_required" && account.nextStep !== undefined;
+  const canDisconnect = account.status === "active";
   return (
     <li aria-labelledby={headingId} className="flex flex-col gap-3 rounded-lg border p-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -120,8 +123,8 @@ function AccountCard({
           ))}
         </ul>
       )}
-      {isAdmin && (canRetry || account.setupStatus === "reauthorization_required") && (
-        <div className="flex flex-wrap gap-2">
+      {isAdmin && (canRetry || canDisconnect) && (
+        <div className="flex flex-wrap items-start gap-2">
           {canRetry && <RetrySetupButton accountId={account.id} onNotice={onNotice} />}
           {account.setupStatus === "reauthorization_required" && (
             <Button
@@ -133,6 +136,9 @@ function AccountCard({
               Connect again
             </Button>
           )}
+          {canDisconnect && (
+            <DisconnectWhatsApp accountId={account.id} name={name} onNotice={onNotice} />
+          )}
         </div>
       )}
     </li>
@@ -141,7 +147,7 @@ function AccountCard({
 
 /**
  * The org's WhatsApp Business accounts (every role): setup status, numbers and, for admins,
- * Retry setup / Connect again. Everything comes from the public v1 API; the server enforces
+ * Retry setup / Connect again / Disconnect. Everything comes from the public v1 API; the server enforces
  * roles and tenancy.
  */
 export function WhatsAppAccounts({

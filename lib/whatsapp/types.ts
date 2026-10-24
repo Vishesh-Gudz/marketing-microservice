@@ -12,3 +12,5 @@ export type WhatsAppAccount = FunctionReturnType<WhatsApp["listAccounts"]>[numbe
 export type WhatsAppNumber = WhatsAppAccount["numbers"][number];
 export type SetupStatus = WhatsAppAccount["setupStatus"];
 export type SetupStep = NonNullable<WhatsAppAccount["nextStep"]>;
+export type DisconnectResult = FunctionReturnType<WhatsApp["disconnectAccount"]>;
+export type CleanupStatus = DisconnectResult["cleanup"];

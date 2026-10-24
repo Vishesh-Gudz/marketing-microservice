@@ -512,3 +512,104 @@ describe("Connected accounts", () => {
     expect(fb.login).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("Disconnect", () => {
+  const DISCONNECT = "v1/whatsapp:disconnectAccount";
+
+  it("asks for confirmation, then disconnects once and reports the result", async () => {
+    queryResults.set("v1/whatsapp:listAccounts", [account()]);
+    let resolve: (value: unknown) => void = () => {};
+    const disconnect = mockAction(DISCONNECT).mockImplementation(
+      () => new Promise((r) => (resolve = r)),
+    );
+    render();
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+    const confirm = screen.getByRole("group", { name: /Disconnect .*\?/ });
+    expect(confirm).toHaveTextContent("Conversations and messages so far are kept.");
+    expect(within(confirm).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    const yes = within(confirm).getByRole("button", { name: "Disconnect" });
+    fireEvent.click(yes);
+    fireEvent.click(yes);
+    expect(disconnect).toHaveBeenCalledTimes(1);
+    expect(disconnect).toHaveBeenCalledWith({ accountId: "acc1" });
+    expect(within(confirm).getByRole("button", { name: "Disconnecting…" })).toBeDisabled();
+    await act(async () => resolve({ accountId: "acc1", cleanup: "done" }));
+    expect(screen.getByLabelText("WhatsApp disconnected")).toHaveTextContent(
+      "Conversations and messages so far are kept.",
+    );
+  });
+
+  it("can be cancelled with Escape or Cancel, without calling the server", () => {
+    queryResults.set("v1/whatsapp:listAccounts", [account()]);
+    const disconnect = mockAction(DISCONNECT);
+    render();
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+    fireEvent.keyDown(screen.getByRole("group", { name: /Disconnect/ }), { key: "Escape" });
+    expect(screen.queryByRole("group", { name: /Disconnect/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Disconnect" })).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(disconnect).not.toHaveBeenCalled();
+  });
+
+  it("reports a cleanup still retrying, and a refused disconnect", async () => {
+    queryResults.set("v1/whatsapp:listAccounts", [account()]);
+    const disconnect = mockAction(DISCONNECT).mockResolvedValueOnce({
+      accountId: "acc1",
+      cleanup: "pending",
+      retryAfter: "2026-10-24T10:01:00.000Z",
+    });
+    render();
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+    fireEvent.click(
+      within(screen.getByRole("group", { name: /Disconnect/ })).getByRole("button", {
+        name: "Disconnect",
+      }),
+    );
+    expect(
+      await screen.findByLabelText("WhatsApp disconnected, Meta cleanup still running"),
+    ).toBeInTheDocument();
+
+    disconnect.mockRejectedValueOnce(apiError("NOT_FOUND", "server detail never shown"));
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+    fireEvent.click(
+      within(screen.getByRole("group", { name: /Disconnect/ })).getByRole("button", {
+        name: "Disconnect",
+      }),
+    );
+    const refused = await screen.findByLabelText("Account not found");
+    expect(refused).not.toHaveTextContent("server detail never shown");
+  });
+
+  it("shows a disconnected account's cleanup and offers no disconnect, retry or reconnect on it", () => {
+    queryResults.set("v1/whatsapp:listAccounts", [
+      account({
+        status: "disconnected",
+        setupStatus: "disconnected",
+        disconnectedAt: "2026-10-24T11:00:00.000Z",
+        cleanup: { status: "pending", retryAfter: "2026-10-24T11:01:00.000Z" },
+        numbers: [
+          {
+            id: "num1",
+            phoneNumberId: PHONE,
+            displayPhoneNumber: "+1 555-000-0001",
+            status: "disconnected",
+            registered: true,
+          },
+        ],
+      }),
+    ]);
+    render();
+    const card = screen.getByRole("listitem", { name: /WhatsApp Business account/ });
+    // The status badge and the number's own status.
+    expect(within(card).getAllByText("Disconnected")).toHaveLength(2);
+    expect(card).toHaveTextContent("Telling Meta is still being retried");
+    expect(within(card).queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("is not offered to viewers", () => {
+    queryResults.set("v1/whatsapp:listAccounts", [account()]);
+    render(VIEWER);
+    expect(screen.queryByRole("button", { name: "Disconnect" })).not.toBeInTheDocument();
+  });
+});
