@@ -7,6 +7,7 @@ import type {
   SetupStatus,
   SetupStep,
   WhatsAppAccount,
+  WhatsAppMessage,
 } from "./types";
 
 /**
@@ -336,4 +337,151 @@ export function accountCleanupText(account: WhatsAppAccount): string | null {
     default:
       return "Disconnected. Use Connect WhatsApp to connect it again.";
   }
+}
+
+// ---------------------------------------------------------------------------
+// Sending (ADR 0013 stage 5): refusals of sendText / sendTemplate / listTemplates, and why an
+// outbound message failed or is unconfirmed. Fixed words only; Meta's own text never appears.
+// ---------------------------------------------------------------------------
+
+const SETTINGS = "in the WhatsApp settings";
+
+/** Refusals by `details.reason` (convex/whatsapp/outbound.ts, convex/whatsapp/templates.ts). */
+export const SEND_ERROR_MESSAGES: Readonly<Record<string, Omit<Notice, "tone">>> = {
+  service_window_closed: {
+    title: "Reply window closed",
+    message: "The customer last wrote more than 24 hours ago. Send an approved template instead.",
+  },
+  number_cannot_send: {
+    title: "This number cannot send from here",
+    message: "It was set up by support. Contact support to send messages from it.",
+  },
+  number_unavailable: {
+    title: "Number no longer connected",
+    message: `This WhatsApp number is no longer connected. Check it ${SETTINGS}.`,
+  },
+  reconnect_required: {
+    title: "Connect WhatsApp again",
+    message: `Meta no longer accepts this connection. Reconnect it ${SETTINGS}.`,
+  },
+  number_not_ready: {
+    title: "Number not ready",
+    message: `This number is not registered for messaging yet. Finish its setup ${SETTINGS}.`,
+  },
+  template_unavailable: {
+    title: "Template not available",
+    message: "This template is not approved for your account any more. Choose another one.",
+  },
+  template_unsupported: {
+    title: "Template not supported",
+    message: "This template cannot be sent from here yet. Choose another one.",
+  },
+  credential_unavailable: {
+    title: "Connection could not be read",
+    message: `The saved WhatsApp connection could not be read. ${SUPPORT}`,
+  },
+  missing_value: {
+    title: "Fill in every value",
+    message: "Every placeholder of the template needs a value.",
+  },
+  blank_value: {
+    title: "Fill in every value",
+    message: "Every placeholder of the template needs a value.",
+  },
+  too_long: { title: "A value is too long", message: "Shorten it and send again." },
+  header_too_long: {
+    title: "Header too long",
+    message: "Filled in, the template's header is longer than 60 characters. Shorten its value.",
+  },
+  body_too_long: {
+    title: "Message too long",
+    message: "Filled in, the template is longer than 1024 characters. Shorten its values.",
+  },
+  unexpected_value: {
+    title: "The template has changed",
+    message: "Choose the template again and fill it in.",
+  },
+};
+
+/** A refused send or template listing, in fixed words. */
+export function sendErrorNotice(error: unknown): Notice {
+  const reason = detail(error, "reason");
+  const known = reason !== undefined ? SEND_ERROR_MESSAGES[reason] : undefined;
+  if (known) return { tone: reason === "service_window_closed" ? "warning" : "error", ...known };
+  if (isMarketingError(error)) {
+    switch (error.data.code) {
+      case "PROVIDER_ERROR":
+        return {
+          tone: "error",
+          title: "Meta did not answer",
+          message: `Meta did not answer as expected. Try again. ${SUPPORT}`,
+        };
+      case "INVALID_ARGUMENT":
+        return {
+          tone: "error",
+          title: "Message not valid",
+          message: "Check the message (1 to 4096 characters) and send again.",
+        };
+      case "FORBIDDEN":
+        return {
+          tone: "error",
+          title: "Editors and admins only",
+          message: "Only editors and admins can send WhatsApp messages.",
+        };
+      case "UNAUTHENTICATED":
+        return { tone: "error", title: "Signed out", message: "Sign in again, then retry." };
+      case "NOT_FOUND":
+        return {
+          tone: "error",
+          title: "Conversation not found",
+          message: "This conversation no longer exists. Go back to the inbox.",
+        };
+    }
+  }
+  return {
+    tone: "error",
+    title: "Message not sent",
+    message: `Something went wrong. Try again. ${SUPPORT}`,
+  };
+}
+
+/** Why an outbound message failed or is not confirmed (null for any other message). */
+export function deliveryProblemText(
+  message: Pick<WhatsAppMessage, "status" | "errorCode" | "failureReason">,
+): string | null {
+  if (message.status === "unknown") {
+    return "WhatsApp did not confirm this message. It may have been sent: check with the customer before sending it again.";
+  }
+  if (message.status !== "failed") return null;
+  const code = message.errorCode;
+  switch (code) {
+    case 131047:
+      return "The customer's 24-hour reply window had closed. Send an approved template instead.";
+    case 131026:
+      return "WhatsApp could not deliver it to this number; it may not use WhatsApp.";
+    case 131049:
+      return "WhatsApp held it back to protect the customer's experience. Try again later.";
+    case 131050:
+      return "The customer has stopped messages from businesses.";
+    case 131056:
+    case 130429:
+      return "Too many messages were sent in a short time. Try again in a moment.";
+    case 190:
+    case 102:
+      return `Meta no longer accepts this connection. Reconnect it ${SETTINGS}.`;
+  }
+  if (code !== undefined && code >= 132000 && code < 133000) {
+    return "Meta refused the template: it may be paused, changed or filled in wrongly.";
+  }
+  switch (message.failureReason) {
+    case "not_sent":
+      return "It could not be sent. Try again.";
+    case "number_unavailable":
+    case "number_cannot_send":
+    case "number_not_ready":
+      return `The number could no longer send when it was due. Check it ${SETTINGS}.`;
+    case "reconnect_required":
+      return `Meta no longer accepts this connection. Reconnect it ${SETTINGS}.`;
+  }
+  return "It could not be delivered.";
 }

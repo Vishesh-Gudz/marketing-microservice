@@ -1,6 +1,7 @@
 "use client";
 
 import { usePaginatedQuery } from "convex/react";
+import { useId } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -15,12 +16,15 @@ import {
   outboundStatusLabel,
   useNow,
 } from "@/lib/whatsapp/inbox";
+import { deliveryProblemText } from "@/lib/whatsapp/messages";
 import type { WhatsAppConversation, WhatsAppMessage } from "@/lib/whatsapp/types";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "../empty-state";
 import { formatInstant } from "../freshness-note";
 import { Breadcrumbs, PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
+import { ReplyBox } from "../whatsapp/reply-box";
+import { TemplatePicker } from "../whatsapp/template-picker";
 
 /** Messages loaded per page; the thread shows the newest, oldest at the top. */
 const MESSAGES_PER_PAGE = 30;
@@ -52,6 +56,7 @@ function MessageBubble({ message, contact }: { message: WhatsAppMessage; contact
   const outbound = message.direction === "outbound";
   const content = messageContent(message);
   const status = outboundStatusLabel(message.status);
+  const problem = outbound ? deliveryProblemText(message) : null;
   return (
     <li className={cn("flex flex-col gap-1", outbound ? "items-end" : "items-start")}>
       <span className="text-xs text-muted-foreground">
@@ -77,6 +82,9 @@ function MessageBubble({ message, contact }: { message: WhatsAppMessage; contact
         </p>
       </div>
       {status && <span className="text-xs text-muted-foreground">{status}</span>}
+      {problem && (
+        <span className="max-w-[80%] text-right text-xs text-destructive">{problem}</span>
+      )}
     </li>
   );
 }
@@ -116,6 +124,35 @@ function Thread({ conversation }: { conversation: WhatsAppConversation }) {
   );
 }
 
+/**
+ * Replying, for editors and admins: a text reply while the reply window is open (the server
+ * decides again), and an approved template at any time. Viewers read only.
+ */
+function Composer({ conversation }: { conversation: WhatsAppConversation }) {
+  const { role } = useOrg();
+  const now = useNow();
+  const headingId = useId();
+  if (role !== "admin" && role !== "editor") {
+    return <p className="text-sm text-muted-foreground">Only editors and admins can reply.</p>;
+  }
+  const open = isReplyWindowOpen(conversation.serviceWindowExpiresAt, now);
+  return (
+    <section aria-labelledby={headingId} className="flex flex-col gap-4 rounded-lg border p-4">
+      <h2 id={headingId} className="text-lg font-semibold">
+        Reply
+      </h2>
+      {open ? (
+        <ReplyBox conversationId={conversation.id} />
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          The reply window is closed: only an approved template can be sent.
+        </p>
+      )}
+      <TemplatePicker conversationId={conversation.id} />
+    </section>
+  );
+}
+
 function Conversation({ conversationId }: { conversationId: string }) {
   const { data: conversation } = useAnalyticsQuery(api.v1.whatsapp.getConversation, {
     conversationId,
@@ -144,14 +181,16 @@ function Conversation({ conversationId }: { conversationId: string }) {
       <section aria-label="Conversation" className="flex flex-col gap-4">
         <Thread conversation={conversation} />
       </section>
+      <Composer conversation={conversation} />
     </>
   );
 }
 
 /**
  * One WhatsApp conversation (ADR 0013): its messages, oldest at the top, with each outbound
- * message's delivery status and the customer's reply window. Read-only here. An unknown or
- * another org's conversation id renders the not-found page (the API answers NOT_FOUND).
+ * message's delivery status (and why one failed), the customer's reply window, and replying for
+ * editors and admins. An unknown or another org's conversation id renders the not-found page (the
+ * API answers NOT_FOUND).
  */
 export function WhatsAppConversationView({ conversationId }: { conversationId: string }) {
   return (

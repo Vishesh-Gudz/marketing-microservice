@@ -6,6 +6,17 @@ import type { MessageStatus, MessageType, WhatsAppConversation, WhatsAppMessage 
  * customer's and the business's own words and are shown as plain text, never as HTML.
  */
 
+/** Longest text reply (Meta's limit, enforced again by v1/whatsapp:sendText). */
+export const MAX_REPLY_CHARS = 4096;
+
+/**
+ * A new id for one message the user is about to send (v1/whatsapp `clientMessageId`): sending
+ * the same draft again with it, after an error, can never send it twice.
+ */
+export function newClientMessageId(): string {
+  return crypto.randomUUID();
+}
+
 /** Who a conversation is with: the customer's WhatsApp profile name, else their number. */
 export function contactLabel(
   conversation: Pick<WhatsAppConversation, "contactName" | "contactWaId">,

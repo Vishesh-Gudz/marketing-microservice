@@ -20,3 +20,6 @@ export type WhatsAppConversation = FunctionReturnType<WhatsApp["getConversation"
 export type WhatsAppMessage = FunctionReturnType<WhatsApp["listMessages"]>["page"][number];
 export type MessageStatus = WhatsAppMessage["status"];
 export type MessageType = WhatsAppMessage["type"];
+export type WhatsAppTemplateList = FunctionReturnType<WhatsApp["listTemplates"]>;
+export type WhatsAppTemplate = WhatsAppTemplateList["templates"][number];
+export type TemplateVariable = WhatsAppTemplate["variables"][number];

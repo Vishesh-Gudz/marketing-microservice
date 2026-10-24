@@ -168,7 +168,7 @@ describe("WhatsApp conversation", () => {
     expect(items.map((item) => item.textContent)).toEqual([
       `Ana · ${formatInstant("2026-10-24T11:00:00.000Z", ORG.timezone)}<b>Where</b> is\nmy order?`,
       `Ana · ${formatInstant("2026-10-24T11:05:00.000Z", ORG.timezone)}Photo (not shown in this inbox)`,
-      `You · ${formatInstant("2026-10-24T11:10:00.000Z", ORG.timezone)}Checking nowNot delivered`,
+      `You · ${formatInstant("2026-10-24T11:10:00.000Z", ORG.timezone)}Checking nowNot deliveredThe customer's 24-hour reply window had closed. Send an approved template instead.`,
       `You · ${formatInstant("2026-10-24T11:20:00.000Z", ORG.timezone)}Template: order_updateHi Ana, your order A-1 has shipped.Read`,
     ]);
     // A message's text is shown as text, never interpreted as markup.
