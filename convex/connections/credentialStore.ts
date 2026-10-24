@@ -8,7 +8,7 @@ import {
   type DatabaseReader,
   type DatabaseWriter,
 } from "../_generated/server";
-import type { ConnectionProvider } from "../domain/types";
+import type { ConnectionProvider, StoredConnectionProvider } from "../domain/types";
 import { AUDIT_ACTIONS, SYSTEM_SWEEP_SUBJECT, writeAudit } from "../lib/audit";
 import {
   CREDENTIAL_ALGORITHM,
@@ -34,7 +34,8 @@ import { OAUTH_GRANT_TTL_MS } from "./config";
  *   connection (claimGrant), once, before it expires.
  */
 
-const encryptedValidator = v.object({
+/** Ciphertext bundle from `encryptCredential` (validator for internal mutation arguments). */
+export const encryptedValidator = v.object({
   ciphertext: v.bytes(),
   iv: v.bytes(),
   keyVersion: v.number(),
@@ -42,7 +43,7 @@ const encryptedValidator = v.object({
 
 export type CredentialBinding = {
   orgId: string;
-  provider: ConnectionProvider;
+  provider: StoredConnectionProvider;
   externalUserId: string;
 };
 
@@ -79,19 +80,22 @@ export type ConnectionBinding = CredentialBinding & {
 /**
  * The ONLY way to use a stored credential: decrypts it, hands it to `handle`,
  * and never returns it. Refuses non-active connections unless `allowRevoked`
- * (used solely to revoke at the platform on disconnect).
+ * (used solely to revoke at the platform on disconnect) or `allowNeedsReauth` (used solely by
+ * the WhatsApp signup to keep a number's registration PIN across a reconnect, ADR 0014).
  */
 export async function withConnectionCredential<T>(
   ctx: ActionCtx,
   connectionId: Id<"connections">,
   handle: (credential: unknown, connection: ConnectionBinding) => Promise<T>,
-  options: { allowRevoked?: boolean } = {},
+  options: { allowRevoked?: boolean; allowNeedsReauth?: boolean } = {},
 ): Promise<T> {
   const row = await ctx.runQuery(internal.connections.credentialStore.loadForUse, { connectionId });
   if (row === null) throw new CredentialUnavailableError("not_found");
-  if (row.status !== "active" && !(options.allowRevoked && row.status === "revoked")) {
-    throw new CredentialUnavailableError("inactive");
-  }
+  const allowed =
+    row.status === "active" ||
+    (options.allowRevoked === true && row.status === "revoked") ||
+    (options.allowNeedsReauth === true && row.status === "needs_reauth");
+  if (!allowed) throw new CredentialUnavailableError("inactive");
   if (row.encrypted === null) throw new CredentialUnavailableError("missing");
 
   const binding: ConnectionBinding = {
@@ -445,6 +449,73 @@ export const claimGrant = internalMutation({
     return { ok: true as const, connectionId, reconnected: existing !== null };
   },
 });
+
+/**
+ * Creates or re-activates a connection and stores its credential, for providers that never use
+ * OAuth grants (WhatsApp Embedded Signup, ADR 0014: its action exchanges the code and encrypts
+ * the token itself). `encrypted` must be bound to exactly (orgId, provider, externalUserId); a
+ * ciphertext bound to anything else fails to decrypt on use. A reconnect replaces the
+ * credential and increments `credentialVersion`. The caller authorizes and audits.
+ */
+export async function upsertDirectConnection(
+  db: DatabaseWriter,
+  input: {
+    orgId: Id<"organizations">;
+    /** Never an OAuth provider: those connect only through grants (S2). */
+    provider: Exclude<StoredConnectionProvider, ConnectionProvider>;
+    externalUserId: string;
+    displayName?: string;
+    grantedScopes: string[];
+    /** Absent = the token does not expire (the expiry sweep skips the connection). */
+    tokenExpiresAt?: number;
+    connectedBySubject: string;
+    encrypted: EncryptedPayload;
+    now: number;
+  },
+): Promise<{ connectionId: Id<"connections">; reconnected: boolean }> {
+  const existing = await db
+    .query("connections")
+    .withIndex("by_org_provider_identity", (q) =>
+      q
+        .eq("orgId", input.orgId)
+        .eq("provider", input.provider)
+        .eq("externalUserId", input.externalUserId),
+    )
+    .unique();
+
+  let connectionId: Id<"connections">;
+  if (existing) {
+    connectionId = existing._id;
+    await db.patch(existing._id, {
+      displayName: input.displayName,
+      status: "active",
+      grantedScopes: input.grantedScopes,
+      credentialVersion: existing.credentialVersion + 1,
+      tokenExpiresAt: input.tokenExpiresAt,
+      lastError: undefined,
+      revokedAt: undefined,
+      connectedBySubject: input.connectedBySubject,
+      updatedAt: input.now,
+    });
+  } else {
+    connectionId = await db.insert("connections", {
+      orgId: input.orgId,
+      provider: input.provider,
+      externalUserId: input.externalUserId,
+      ...(input.displayName !== undefined ? { displayName: input.displayName } : {}),
+      status: "active",
+      grantedScopes: input.grantedScopes,
+      credentialVersion: 1,
+      ...(input.tokenExpiresAt !== undefined ? { tokenExpiresAt: input.tokenExpiresAt } : {}),
+      connectedBySubject: input.connectedBySubject,
+      connectedAt: input.now,
+      createdAt: input.now,
+      updatedAt: input.now,
+    });
+  }
+  await writeCredential(db, input.orgId, connectionId, input.encrypted, input.now);
+  return { connectionId, reconnected: existing !== null };
+}
 
 /** Sweep step (connections/maintenance.ts): deletes unclaimed grants past their expiry. */
 export async function deleteExpiredGrants(

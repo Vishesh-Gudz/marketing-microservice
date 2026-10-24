@@ -1,8 +1,8 @@
 import { v } from "convex/values";
-import type { Doc } from "../_generated/dataModel";
-import { internalMutation, type DatabaseReader } from "../_generated/server";
+import type { Doc, Id } from "../_generated/dataModel";
+import { internalMutation, type DatabaseReader, type DatabaseWriter } from "../_generated/server";
 import { AUDIT_ACTIONS, writeAudit } from "../lib/audit";
-import { requireOperatorSubject } from "./config";
+import { requireOperatorSubject, requireUserSubject } from "./config";
 import { isNumericId } from "./payload";
 
 /**
@@ -13,11 +13,14 @@ import { isNumericId } from "./payload";
  * number that another org holds active; the webhook additionally fails closed if it ever finds
  * more than one, or a WABA id that differs from the registered one.
  *
- * Internal only: no public function accepts an org id or a phone_number_id to route. Today an
- * operator runs `register` / `disconnect` (Convex dashboard, or a deploy key) and must pass an
- * `operator:<name>` actorSubject, which is recorded but NOT verified by this application. The
- * connection flow (Stage 3, server-verified assets) will need its own entry point that records
- * its authenticated subject.
+ * Internal only: no public function accepts an org id or a phone_number_id to route. Two entry
+ * points share one registration path:
+ * - `register` / `disconnect`: run by an operator (Convex dashboard, or a deploy key) with an
+ *   `operator:<name>` actorSubject, recorded but NOT verified by this application.
+ * - Embedded Signup (ADR 0014): `accounts.ts recordConnection` routes the signup's number in the
+ *   same transaction as the connection (`registerNumber` with a link); `registerForConnection`
+ *   does the same for a number of an already connected WABA. Both use the signed-in admin's
+ *   verified JWT subject.
  */
 
 async function activeRows(db: DatabaseReader, phoneNumberId: string) {
@@ -59,7 +62,132 @@ export function isBeforeActivation(
   return timestampMs < Math.floor(activatedAt / 1000) * 1000;
 }
 
-/** Registers (or re-activates) a number for an org. Refuses numbers active in another org. */
+/** Rows registered through the operator path (absent `source`: from before ADR 0014). */
+export function isOperatorManaged(number: Doc<"whatsappPhoneNumbers">): boolean {
+  return (number.source ?? "operator") === "operator";
+}
+
+/**
+ * Whether Embedded Signup may take this number for the org:
+ * - `in_use`: ANOTHER org has it active (approved global index; rows are only compared);
+ * - `operator_managed`: this org has it from the operator path (any status). Its two-step
+ *   PIN at Meta is not ours: registering it with a new PIN would overwrite or fail on it.
+ * Read by the signup's early check and enforced again where the number is routed
+ * (accounts.ts recordConnection, registerForConnection), in the same transaction as the write.
+ */
+export async function numberAvailabilityOf(
+  db: DatabaseReader,
+  orgId: Id<"organizations">,
+  phoneNumberId: string,
+): Promise<"available" | "in_use" | "operator_managed"> {
+  const active = await activeRows(db, phoneNumberId);
+  if (active.some((row) => row.orgId !== orgId)) return "in_use";
+  const own = await db
+    .query("whatsappPhoneNumbers")
+    .withIndex("by_org_phone_number", (q) =>
+      q.eq("orgId", orgId).eq("phoneNumberId", phoneNumberId),
+    )
+    .unique();
+  return own !== null && isOperatorManaged(own) ? "operator_managed" : "available";
+}
+
+const registerResult = v.union(
+  v.object({ ok: v.literal(true), numberId: v.id("whatsappPhoneNumbers") }),
+  v.object({
+    ok: v.literal(false),
+    reason: v.union(v.literal("invalid_id"), v.literal("in_use"), v.literal("no_org")),
+  }),
+);
+
+/**
+ * The one registration path. Registers (or re-activates) a number for an org and refuses a
+ * number another org holds active. `link` ties the number to a connected WABA (Embedded
+ * Signup); without it (operator), a new row is recorded as `operator` and an existing row keeps
+ * its source and account. Callers that link check `numberAvailabilityOf` first, in the same
+ * transaction.
+ */
+export async function registerNumber(
+  db: DatabaseWriter,
+  input: {
+    orgId: Id<"organizations">;
+    wabaId: string;
+    phoneNumberId: string;
+    displayPhoneNumber?: string;
+    actorSubject: string;
+    link?: { accountId: Id<"whatsappBusinessAccounts"> };
+  },
+) {
+  if (!isNumericId(input.wabaId) || !isNumericId(input.phoneNumberId)) {
+    return { ok: false as const, reason: "invalid_id" as const };
+  }
+  const org = await db.get(input.orgId);
+  if (org === null) return { ok: false as const, reason: "no_org" as const };
+
+  const active = await activeRows(db, input.phoneNumberId);
+  // Another org's active registration wins; its identity is never revealed.
+  if (active.some((row) => row.orgId !== input.orgId)) {
+    return { ok: false as const, reason: "in_use" as const };
+  }
+  const now = Date.now();
+  const own = await db
+    .query("whatsappPhoneNumbers")
+    .withIndex("by_org_phone_number", (q) =>
+      q.eq("orgId", input.orgId).eq("phoneNumberId", input.phoneNumberId),
+    )
+    .unique();
+  // A new or re-activated registration starts a new ownership; updating a number that is
+  // already active keeps its activation, so its own late deliveries are not dropped.
+  const activating = own === null || own.status !== "active";
+  const linkFields = input.link
+    ? { source: "embedded_signup" as const, accountId: input.link.accountId }
+    : {};
+  const fields = {
+    wabaId: input.wabaId,
+    displayPhoneNumber: input.displayPhoneNumber,
+    status: "active" as const,
+    registeredBySubject: input.actorSubject,
+    ...(activating ? { activatedAt: now } : {}),
+    disconnectedAt: undefined,
+    ...linkFields,
+    updatedAt: now,
+  };
+  let numberId;
+  if (own !== null) {
+    numberId = own._id;
+    await db.patch(own._id, fields);
+  } else {
+    numberId = await db.insert("whatsappPhoneNumbers", {
+      orgId: input.orgId,
+      phoneNumberId: input.phoneNumberId,
+      wabaId: input.wabaId,
+      ...(input.displayPhoneNumber !== undefined
+        ? { displayPhoneNumber: input.displayPhoneNumber }
+        : {}),
+      status: "active",
+      registeredBySubject: input.actorSubject,
+      activatedAt: now,
+      source: "operator",
+      ...linkFields,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+  if (activating) {
+    await writeAudit(
+      db,
+      { orgId: input.orgId, issuer: org.issuer, subject: input.actorSubject },
+      {
+        action: AUDIT_ACTIONS.whatsappNumberRegistered,
+        targetType: "whatsappPhoneNumber",
+        targetId: numberId,
+        changes: { status: { from: own?.status ?? null, to: "active" } },
+      },
+    );
+  }
+  return { ok: true as const, numberId };
+}
+
+/** Operator registration: registers (or re-activates) a number for an org. */
 export const register = internalMutation({
   args: {
     orgId: v.id("organizations"),
@@ -68,77 +196,62 @@ export const register = internalMutation({
     displayPhoneNumber: v.optional(v.string()),
     actorSubject: v.string(),
   },
+  returns: registerResult,
+  handler: async (ctx, args) => {
+    requireOperatorSubject(args.actorSubject);
+    return await registerNumber(ctx.db, args);
+  },
+});
+
+/**
+ * Embedded Signup registration (ADR 0014): registers a number of an org's ACTIVE connected WABA,
+ * after the action verified with Meta that the number belongs to it. The WABA id comes from the
+ * account row, never from the caller. `actorSubject` is the signed-in admin's verified subject.
+ */
+export const registerForConnection = internalMutation({
+  args: {
+    orgId: v.id("organizations"),
+    accountId: v.id("whatsappBusinessAccounts"),
+    phoneNumberId: v.string(),
+    displayPhoneNumber: v.optional(v.string()),
+    actorSubject: v.string(),
+  },
   returns: v.union(
     v.object({ ok: v.literal(true), numberId: v.id("whatsappPhoneNumbers") }),
     v.object({
       ok: v.literal(false),
-      reason: v.union(v.literal("invalid_id"), v.literal("in_use"), v.literal("no_org")),
+      reason: v.union(
+        v.literal("invalid_id"),
+        v.literal("in_use"),
+        v.literal("no_org"),
+        v.literal("no_account"),
+        v.literal("operator_managed"),
+      ),
     }),
   ),
   handler: async (ctx, args) => {
-    requireOperatorSubject(args.actorSubject);
-    if (!isNumericId(args.wabaId) || !isNumericId(args.phoneNumberId)) {
-      return { ok: false as const, reason: "invalid_id" as const };
+    requireUserSubject(args.actorSubject);
+    const account = await ctx.db.get(args.accountId);
+    if (account === null || account.orgId !== args.orgId || account.status !== "active") {
+      return { ok: false as const, reason: "no_account" as const };
     }
-    const org = await ctx.db.get(args.orgId);
-    if (org === null) return { ok: false as const, reason: "no_org" as const };
-
-    const active = await activeRows(ctx.db, args.phoneNumberId);
-    // Another org's active registration wins; its identity is never revealed.
-    if (active.some((row) => row.orgId !== args.orgId)) {
-      return { ok: false as const, reason: "in_use" as const };
+    // A number this org has from the operator path is never taken over: its two-step PIN at
+    // Meta is not ours (numberAvailabilityOf). Its row and routing stay unchanged.
+    if (
+      (await numberAvailabilityOf(ctx.db, args.orgId, args.phoneNumberId)) === "operator_managed"
+    ) {
+      return { ok: false as const, reason: "operator_managed" as const };
     }
-    const now = Date.now();
-    const own = await ctx.db
-      .query("whatsappPhoneNumbers")
-      .withIndex("by_org_phone_number", (q) =>
-        q.eq("orgId", args.orgId).eq("phoneNumberId", args.phoneNumberId),
-      )
-      .unique();
-    // A new or re-activated registration starts a new ownership; updating a number that is
-    // already active keeps its activation, so its own late deliveries are not dropped.
-    const activating = own === null || own.status !== "active";
-    const fields = {
-      wabaId: args.wabaId,
-      displayPhoneNumber: args.displayPhoneNumber,
-      status: "active" as const,
-      registeredBySubject: args.actorSubject,
-      ...(activating ? { activatedAt: now } : {}),
-      disconnectedAt: undefined,
-      updatedAt: now,
-    };
-    let numberId;
-    if (own !== null) {
-      numberId = own._id;
-      await ctx.db.patch(own._id, fields);
-    } else {
-      numberId = await ctx.db.insert("whatsappPhoneNumbers", {
-        orgId: args.orgId,
-        phoneNumberId: args.phoneNumberId,
-        wabaId: args.wabaId,
-        ...(args.displayPhoneNumber !== undefined
-          ? { displayPhoneNumber: args.displayPhoneNumber }
-          : {}),
-        status: "active",
-        registeredBySubject: args.actorSubject,
-        activatedAt: now,
-        createdAt: now,
-        updatedAt: now,
-      });
-    }
-    if (activating) {
-      await writeAudit(
-        ctx.db,
-        { orgId: args.orgId, issuer: org.issuer, subject: args.actorSubject },
-        {
-          action: AUDIT_ACTIONS.whatsappNumberRegistered,
-          targetType: "whatsappPhoneNumber",
-          targetId: numberId,
-          changes: { status: { from: own?.status ?? null, to: "active" } },
-        },
-      );
-    }
-    return { ok: true as const, numberId };
+    return await registerNumber(ctx.db, {
+      orgId: args.orgId,
+      wabaId: account.wabaId,
+      phoneNumberId: args.phoneNumberId,
+      ...(args.displayPhoneNumber !== undefined
+        ? { displayPhoneNumber: args.displayPhoneNumber }
+        : {}),
+      actorSubject: args.actorSubject,
+      link: { accountId: account._id },
+    });
   },
 });
 

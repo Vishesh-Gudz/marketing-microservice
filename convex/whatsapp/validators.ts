@@ -40,6 +40,24 @@ export const webhookChangeValidator = v.object({
 
 export const phoneNumberStatusValidator = v.union(v.literal("active"), v.literal("disconnected"));
 
+/** How a number was registered (ADR 0014). Absent on rows from before it existed: operator. */
+export const phoneNumberSourceValidator = v.union(
+  v.literal("operator"),
+  v.literal("embedded_signup"),
+);
+
+/** A WhatsApp Business Account connected by an org (ADR 0014). */
+export const businessAccountStatusValidator = v.union(
+  v.literal("active"),
+  v.literal("disconnected"),
+);
+
+/**
+ * How the WABA's numbers were onboarded: a number new to the Cloud API, or one already used in
+ * the WhatsApp Business app (coexistence; not supported by the first release).
+ */
+export const onboardingTypeValidator = v.union(v.literal("cloud_api"), v.literal("coexistence"));
+
 /** Processing state of a stored webhook event. */
 export const webhookEventStatusValidator = v.union(
   /** Stored, waiting for the scheduled processor. */

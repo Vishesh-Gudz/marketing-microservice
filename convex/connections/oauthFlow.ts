@@ -2,7 +2,11 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalAction, type ActionCtx } from "../_generated/server";
-import { isAdPlatform, isSocialConnectionProvider } from "../domain/types";
+import {
+  isAdPlatform,
+  isOAuthConnectionProvider,
+  isSocialConnectionProvider,
+} from "../domain/types";
 import { randomToken, sha256Base64Url } from "../lib/crypto";
 import { isProviderError } from "../providers/errors";
 import type { ProviderDiscoveredSocialAccount } from "../providers/social/types";
@@ -298,6 +302,9 @@ export const revokeAtPlatform = internalAction({
         ctx,
         connectionId,
         async (credential, connection) => {
+          // WhatsApp connections are never revoked through the OAuth spec (ADR 0014): the
+          // generic disconnect refuses them, and their own offboarding unsubscribes the WABA.
+          if (!isOAuthConnectionProvider(connection.provider)) return;
           const spec = providerRegistry().oauth(connection.provider);
           await spec.revoke?.(credential, oauthClientConfig(connection.provider));
         },

@@ -10,10 +10,10 @@ import { whatsappTables } from "./tables/whatsapp";
 
 // Conventions (enforced by convex/schema.test.ts):
 // - Every table except the global integrationApps/organizations/fxRates carries `orgId`,
-//   and every index on those tables starts with `orgId` (eight approved global
+//   and every index on those tables starts with `orgId` (nine approved global
 //   system indexes: five in tables/connections.ts, including the S2 oauthGrants claim
-//   lookup and sweep; one in tables/sync.ts; and two in tables/whatsapp.ts, the
-//   webhook's tenant lookup and the event recovery sweep).
+//   lookup and sweep; one in tables/sync.ts; and three in tables/whatsapp.ts, the
+//   webhook's tenant lookup, the event recovery sweep and the WABA ownership check).
 // - Money fields (*Micros) are int64 micros; calendar dates are "YYYY-MM-DD" strings.
 // Tables for later phases (inbox, alerts) are added by the phase that writes
 // them. See docs/data-model.md.

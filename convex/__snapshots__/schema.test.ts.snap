@@ -283,6 +283,20 @@ exports[`schema inventory > declares the approved indexes 1`] = `
       "seq",
     ],
   },
+  "whatsappBusinessAccounts": {
+    "by_org_connection": [
+      "orgId",
+      "connectionId",
+    ],
+    "by_org_waba": [
+      "orgId",
+      "wabaId",
+    ],
+    "by_waba_status": [
+      "wabaId",
+      "status",
+    ],
+  },
   "whatsappConversations": {
     "by_org_last_message": [
       "orgId",
@@ -306,6 +320,10 @@ exports[`schema inventory > declares the approved indexes 1`] = `
     ],
   },
   "whatsappPhoneNumbers": {
+    "by_org_account": [
+      "orgId",
+      "accountId",
+    ],
     "by_org_phone_number": [
       "orgId",
       "phoneNumberId",

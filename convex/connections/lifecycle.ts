@@ -2,7 +2,9 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { internalMutation, type DatabaseWriter, type MutationCtx } from "../_generated/server";
+import { isOAuthConnectionProvider } from "../domain/types";
 import { AUDIT_ACTIONS, writeAudit } from "../lib/audit";
+import { apiError } from "../lib/errors";
 import { getOwned, type Tenant } from "../lib/tenancy";
 import { discoveredAssetsOf } from "./assets";
 import { unlinkSocialAccountsOfConnection } from "./socialAssets";
@@ -15,14 +17,30 @@ import { unlinkSocialAccountsOfConnection } from "./socialAssets";
 type TenantCtx = MutationCtx & { tenant: Tenant };
 
 /**
+ * Refuses connections that the generic OAuth lifecycle must not handle (ADR 0014): a WhatsApp
+ * connection also owns a WABA webhook subscription and number routing, which only its own
+ * offboarding may undo.
+ */
+export function requireOAuthConnection(connection: Doc<"connections">): void {
+  if (!isOAuthConnectionProvider(connection.provider)) {
+    throw apiError("INVALID_ARGUMENT", "This connection is managed in its own settings.", {
+      field: "connectionId",
+      reason: "whatsapp_connection",
+    });
+  }
+}
+
+/**
  * Disconnects: revoked + unlink its ad accounts and (Phase 10) social accounts (rows and
  * data kept) + drop discovered assets + schedule platform revoke and credential deletion.
+ * OAuth connections only (WhatsApp is refused, see `requireOAuthConnection`).
  */
 export async function disconnectConnection(
   ctx: TenantCtx,
   connectionIdInput: string,
 ): Promise<Doc<"connections">> {
   const connection = await getOwned(ctx, "connections", connectionIdInput);
+  requireOAuthConnection(connection);
   if (connection.status === "revoked") return connection;
   const now = Date.now();
 

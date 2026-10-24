@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalAction, internalQuery, type ActionCtx } from "../_generated/server";
-import type { ConnectionProvider } from "../domain/types";
+import { isOAuthConnectionProvider, type ConnectionProvider } from "../domain/types";
 import { SYSTEM_TOKEN_REFRESH_SUBJECT } from "../lib/audit";
 import { isProviderError } from "../providers/errors";
 import { REFRESH_WINDOW_MS } from "../providers/instagram/config";
@@ -78,6 +78,7 @@ async function refreshOne(ctx: ActionCtx, connectionId: Id<"connections">): Prom
     return await withConnectionCredential(ctx, connectionId, async (credential, binding) => {
       const registry = providerRegistry();
       if (
+        !isOAuthConnectionProvider(binding.provider) ||
         !TOKEN_REFRESH_PROVIDERS.includes(binding.provider) ||
         !registry.hasOAuth(binding.provider)
       ) {

@@ -106,7 +106,12 @@ export function CoverageNotice({ coverage }: { coverage: Coverage }) {
   );
 }
 
-const PROVIDER_LABEL = { meta: "Meta", google_ads: "Google Ads", instagram: "Instagram" } as const;
+const PROVIDER_LABEL = {
+  meta: "Meta",
+  google_ads: "Google Ads",
+  instagram: "Instagram",
+  whatsapp: "WhatsApp",
+} as const;
 
 /**
  * Connections whose credentials stopped working (needs_reauth). Google Ads and Meta Ads are

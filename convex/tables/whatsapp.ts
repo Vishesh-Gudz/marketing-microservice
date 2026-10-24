@@ -1,20 +1,58 @@
 import { defineTable } from "convex/server";
 import { v } from "convex/values";
 import {
+  businessAccountStatusValidator,
   messageDirectionValidator,
   messageStatusValidator,
   messageTypeValidator,
+  onboardingTypeValidator,
+  phoneNumberSourceValidator,
   phoneNumberStatusValidator,
   webhookEventStatusValidator,
   webhookEventValidator,
 } from "../whatsapp/validators";
 import { orgIdField } from "./common";
 
-// WhatsApp inbox (ADR 0013). Every table is tenant-owned. The only global indexes are the
-// webhook's tenant lookup by Meta phone_number_id and the event recovery sweep (both approved
-// in convex/schema.test.ts). Message bodies are stored for the inbox but never logged.
+// WhatsApp inbox (ADR 0013) and connections (ADR 0014). Every table is tenant-owned. The only
+// global indexes are the webhook's tenant lookup by Meta phone_number_id, the event recovery
+// sweep and the WABA ownership check (all approved in convex/schema.test.ts). Message bodies
+// are stored for the inbox but never logged.
 
 export const whatsappTables = {
+  /**
+   * A WhatsApp Business Account an org connected through Embedded Signup (ADR 0014). Its
+   * business token is the credential of `connectionId` (provider "whatsapp", keyed by the WABA
+   * id, which is verified with Meta; no documented API verifies the owning business). At most
+   * one `active` row per WABA across all orgs (enforced by convex/whatsapp/accounts.ts).
+   */
+  whatsappBusinessAccounts: defineTable({
+    orgId: orgIdField,
+    connectionId: v.id("connections"),
+    wabaId: v.string(),
+    onboardingType: onboardingTypeValidator,
+    status: businessAccountStatusValidator,
+    connectedBySubject: v.string(),
+    /** When the app was subscribed to the WABA's webhooks. */
+    subscribedAt: v.optional(v.number()),
+    /** Latest failed setup step (sanitized reason code only); cleared when it succeeds. */
+    setupError: v.optional(
+      v.object({
+        step: v.union(v.literal("subscribe"), v.literal("register")),
+        reason: v.string(),
+        at: v.number(),
+      }),
+    ),
+    disconnectedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_org_waba", ["orgId", "wabaId"])
+    .index("by_org_connection", ["orgId", "connectionId"])
+    // GLOBAL (approved exception): one org per WABA. Connecting must see whether ANOTHER org
+    // has the WABA active (its webhook subscription and numbers would be shared otherwise);
+    // the row found is only compared, never returned or written.
+    .index("by_waba_status", ["wabaId", "status"]),
+
   /**
    * A WhatsApp business phone number registered to exactly one org. The ONLY source of tenant
    * identity for webhook deliveries: at most one `active` row per Meta phone_number_id across
@@ -36,10 +74,23 @@ export const whatsappTables = {
      */
     activatedAt: v.optional(v.number()),
     disconnectedAt: v.optional(v.number()),
+    /** Absent = "operator" (rows registered before ADR 0014). */
+    source: v.optional(phoneNumberSourceValidator),
+    /** The connected WABA this number belongs to (Embedded Signup numbers only). */
+    accountId: v.optional(v.id("whatsappBusinessAccounts")),
+    /** When Meta accepted the number's Cloud API registration (Embedded Signup numbers). */
+    platformRegisteredAt: v.optional(v.number()),
+    /** Registration calls made for this number (capped; Meta allows 10 per 72 hours). */
+    registrationAttempts: v.optional(v.number()),
+    /** Meta reported its registration rate limit (133016): no registration call before this. */
+    registrationBlockedUntil: v.optional(v.number()),
+    /** A registration call holds this number until then (one call at a time; expires alone). */
+    registrationClaimedUntil: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_org_phone_number", ["orgId", "phoneNumberId"])
+    .index("by_org_account", ["orgId", "accountId"])
     // GLOBAL (approved exception): webhook deliveries are authenticated as Meta, not as a
     // tenant; the org is resolved from phone_number_id and the row is re-verified (active,
     // WABA match, unique) before anything is written.

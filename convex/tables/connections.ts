@@ -7,6 +7,7 @@ import {
   managerStatusValidator,
   socialAccountTypeValidator,
   socialPlatformValidator,
+  storedConnectionProviderValidator,
   testAccountStatusValidator,
 } from "../domain/validators";
 import { orgIdField } from "./common";
@@ -23,13 +24,17 @@ export const connectionStatusValidator = v.union(
 
 export const connectionTables = {
   /**
-   * One platform identity (Meta user / Google account / Instagram professional account)
-   * connected by an org.
+   * One platform identity (Meta user / Google account / Instagram professional account /
+   * WhatsApp business, ADR 0014) connected by an org.
    */
   connections: defineTable({
     orgId: orgIdField,
-    provider: connectionProviderValidator,
-    /** Platform user identity; natural key with (orgId, provider). */
+    /** OAuth providers, plus "whatsapp" (Embedded Signup; never the generic OAuth flow). */
+    provider: storedConnectionProviderValidator,
+    /**
+     * Platform user identity (WhatsApp: the WABA id); natural key with (orgId,
+     * provider).
+     */
     externalUserId: v.string(),
     displayName: v.optional(v.string()),
     status: connectionStatusValidator,

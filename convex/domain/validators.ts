@@ -20,6 +20,7 @@ import {
   SOCIAL_ACCOUNT_TYPES,
   SOCIAL_PLATFORMS,
   SOCIAL_POST_TYPES,
+  STORED_CONNECTION_PROVIDERS,
   TEST_ACCOUNT_STATUSES,
 } from "./types";
 
@@ -40,6 +41,8 @@ export function literalUnion<const T extends readonly [string, ...string[]]>(
 export const adPlatformValidator = literalUnion(AD_PLATFORMS);
 export const socialPlatformValidator = literalUnion(SOCIAL_PLATFORMS);
 export const connectionProviderValidator = literalUnion(CONNECTION_PROVIDERS);
+/** Stored connections only (`connections.provider`, its DTO): also "whatsapp" (ADR 0014). */
+export const storedConnectionProviderValidator = literalUnion(STORED_CONNECTION_PROVIDERS);
 export const entityLevelValidator = literalUnion(ENTITY_LEVELS);
 export const placementValidator = literalUnion(PLACEMENTS);
 export const adAccountStatusValidator = literalUnion(AD_ACCOUNT_STATUSES);
