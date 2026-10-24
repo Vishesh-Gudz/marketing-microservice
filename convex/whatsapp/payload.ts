@@ -12,9 +12,10 @@ import { MAX_CONTACT_NAME_CHARS, MAX_EVENTS_PER_DELIVERY, MAX_TEXT_BODY_CHARS } 
  * - Only allowlisted fields are copied out. Everything else in the payload, including any
  *   organization identifier, is ignored: the tenant comes only from the server-side
  *   `phone_number_id` mapping (convex/whatsapp/ingest.ts).
- * - Only `field: "messages"` changes are read; other subscribed fields are counted and ignored
- *   whatever their `value` holds (their shapes are not validated, so a change to one of them
- *   can never reject the messages delivered beside it).
+ * - Only `field: "messages"` changes are read, plus the WABA id of an `account_update`
+ *   `PARTNER_REMOVED` change (ADR 0014 B4b). Other changes, including malformed
+ *   `account_update` ones, are counted and ignored whatever their `value` holds (their shapes
+ *   are not validated, so a change to one of them can never reject the messages beside it).
  */
 
 export const STATUS_VALUES = ["sent", "delivered", "read", "failed"] as const;
@@ -76,9 +77,16 @@ export type WebhookChange = {
 
 export type ParsedDelivery = {
   changes: WebhookChange[];
+  /**
+   * WABA ids (`value.waba_info.waba_id`) of `account_update` `PARTNER_REMOVED` changes, each
+   * once. Meta documents the event as the WABA being unshared with a Solution Partner, not
+   * necessarily us: the webhook confirms with Meta before acting
+   * (convex/whatsapp/partnerRemoval.ts).
+   */
+  partnerRemovals: string[];
   /** Message / status items that failed validation and were dropped. */
   skipped: number;
-  /** Changes for fields other than `messages`. */
+  /** Changes not read: other fields, and `account_update` changes that are not read above. */
   ignoredFields: number;
 };
 
@@ -205,6 +213,16 @@ function parseStatus(item: unknown): StatusEvent | null {
   };
 }
 
+/**
+ * The customer WABA of an `account_update` `PARTNER_REMOVED` change, or null. Meta's documented
+ * example carries it in `waba_info.waba_id`; `entry[].id` there is not the WABA and is never
+ * read. The coexistence variant without `waba_info` is not read (coexistence is not supported).
+ */
+function partnerRemovedWaba(value: unknown): string | null {
+  if (!isObject(value) || value.event !== "PARTNER_REMOVED") return null;
+  return isObject(value.waba_info) ? numericId(value.waba_info.waba_id) : null;
+}
+
 /** Parses an already JSON-decoded, signature-verified delivery. Never throws. */
 export function parseWebhookPayload(body: unknown): ParseResult {
   if (!isObject(body)) return { ok: false, reason: "not_object" };
@@ -214,6 +232,7 @@ export function parseWebhookPayload(body: unknown): ParseResult {
   }
 
   const changes: WebhookChange[] = [];
+  const partnerRemovals = new Set<string>();
   let skipped = 0;
   let ignoredFields = 0;
   let total = 0;
@@ -227,6 +246,12 @@ export function parseWebhookPayload(body: unknown): ParseResult {
     for (const change of entry.changes) {
       if (!isObject(change) || typeof change.field !== "string") {
         return { ok: false, reason: "invalid_change" };
+      }
+      if (change.field === "account_update") {
+        const wabaId = partnerRemovedWaba(change.value);
+        if (wabaId !== null) partnerRemovals.add(wabaId);
+        else ignoredFields++;
+        continue;
       }
       if (change.field !== "messages") {
         ignoredFields++;
@@ -263,5 +288,8 @@ export function parseWebhookPayload(body: unknown): ParseResult {
       if (events.length > 0) changes.push({ wabaId, phoneNumberId, events });
     }
   }
-  return { ok: true, delivery: { changes, skipped, ignoredFields } };
+  return {
+    ok: true,
+    delivery: { changes, partnerRemovals: [...partnerRemovals], skipped, ignoredFields },
+  };
 }

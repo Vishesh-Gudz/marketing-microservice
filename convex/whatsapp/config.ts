@@ -54,6 +54,42 @@ export const REGISTRATION_COOLDOWN_MS = 72 * 60 * 60 * 1000;
  */
 export const TOKEN_AUTH_ERROR_CODES: ReadonlySet<number> = new Set([102, 190]);
 
+/**
+ * Disconnect cleanup (ADR 0014 B4, convex/whatsapp/offboarding.ts). The first attempt runs at
+ * once; after a failure the next one waits OFFBOARDING_RETRY_DELAYS_MS[attempts - 1]. After the
+ * last delay's attempt the cleanup gives up (about 8.6 hours in all), and the credential is
+ * deleted whatever happened.
+ */
+export const OFFBOARDING_RETRY_DELAYS_MS: readonly number[] = [
+  60 * 1000,
+  5 * 60 * 1000,
+  30 * 60 * 1000,
+  2 * 60 * 60 * 1000,
+  6 * 60 * 60 * 1000,
+];
+/** The first attempt plus one per retry delay. */
+export const MAX_OFFBOARDING_ATTEMPTS = OFFBOARDING_RETRY_DELAYS_MS.length + 1;
+/** An attempt holds the cleanup this long: twice the Meta call's own timeout. */
+export const OFFBOARDING_CLAIM_MS = 2 * SIGNUP_TIMEOUT_MS;
+/**
+ * The generic connection sweep leaves a revoked WhatsApp connection's credential alone this
+ * long, so the cleanup can still unsubscribe with it (longer than every retry together); then
+ * it deletes any credential still there, as for every provider.
+ */
+export const WHATSAPP_REVOKED_CREDENTIAL_GRACE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Partner removal (ADR 0014 B4b, convex/whatsapp/partnerRemoval.ts): Graph errors read as "this
+ * token can no longer reach the WABA" when the webhook confirms a PARTNER_REMOVED: permission
+ * (10, 200), unknown alias (803), and 100 with subcode 33 (the object cannot be loaded due to
+ * missing permissions). ASSUMED: generic Graph codes, since Meta does not document what reading
+ * the WABA answers after a partner removal; to verify with a real removal.
+ */
+export const WABA_ACCESS_REFUSED_CODES: ReadonlySet<number> = new Set([10, 200, 803]);
+export const WABA_NOT_ACCESSIBLE = { code: 100, subcode: 33 } as const;
+/** WABAs checked with Meta per delivery; more are answered 500 and checked on Meta's retry. */
+export const MAX_PARTNER_REMOVAL_CHECKS = 10;
+
 const META_NUMERIC_ID = /^\d{1,32}$/;
 
 export type SignupAppConfig = { appId: string; appSecret: string; configId: string };

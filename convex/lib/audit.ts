@@ -40,10 +40,21 @@ export const AUDIT_ACTIONS = {
   whatsappNumberRegistered: "whatsapp.number_registered",
   whatsappNumberDisconnected: "whatsapp.number_disconnected",
   whatsappEventRequeued: "whatsapp.event_requeued",
+  // WhatsApp disconnect (ADR 0014 B4): how the Meta cleanup of a disconnected account ended.
+  whatsappOffboardingCompleted: "whatsapp.offboarding_completed",
+  whatsappOffboardingFailed: "whatsapp.offboarding_failed",
+  // WhatsApp partner removal (ADR 0014 B4b): Meta confirmed our access to the WABA is gone.
+  whatsappPartnerRemoved: "whatsapp.partner_removed",
 } as const;
 
 /** Actor used for audit entries written by scheduled system jobs. */
 export const SYSTEM_SWEEP_SUBJECT = "system:connection-sweep";
+
+/** Actor used for audit entries written by the WhatsApp disconnect cleanup's retries (B4). */
+export const SYSTEM_WHATSAPP_OFFBOARDING_SUBJECT = "system:whatsapp-offboarding";
+
+/** Actor used for audit entries written when a WhatsApp webhook confirms a removal (B4b). */
+export const SYSTEM_WHATSAPP_WEBHOOK_SUBJECT = "system:whatsapp-webhook";
 
 /** Actor used for audit entries written by the daily token refresh job (Phase 10). */
 export const SYSTEM_TOKEN_REFRESH_SUBJECT = "system:token-refresh";

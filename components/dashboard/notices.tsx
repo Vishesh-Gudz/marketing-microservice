@@ -115,7 +115,8 @@ const PROVIDER_LABEL = {
 
 /**
  * Connections whose credentials stopped working (needs_reauth). Google Ads and Meta Ads are
- * reconnected on the Connections page; Instagram stays read-only here (D17).
+ * reconnected on the Connections page, WhatsApp on the WhatsApp page (Embedded Signup, ADR
+ * 0014); Instagram stays read-only here (D17).
  */
 export function ReauthBanner() {
   const { data: connections } = useAnalyticsQuery(api.v1.connections.list, {});
@@ -136,6 +137,14 @@ export function ReauthBanner() {
           </Link>
         </Fragment>
       ))}
+      {broken.some((c) => c.provider === "whatsapp") && (
+        <>
+          {" "}
+          <Link href="/whatsapp" className="font-medium underline underline-offset-4">
+            Reconnect WhatsApp
+          </Link>
+        </>
+      )}
     </Notice>
   );
 }

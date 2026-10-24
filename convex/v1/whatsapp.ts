@@ -1,11 +1,13 @@
 import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
+import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { DatabaseReader } from "../_generated/server";
 import { clampPagination, mapPage, paginatedDto } from "../lib/dto";
 import { apiError } from "../lib/errors";
 import { getOwned, orgAdminAction, orgQuery } from "../lib/tenancy";
 import { setupProgress } from "../whatsapp/accounts";
+import { runCleanup } from "../whatsapp/offboarding";
 import {
   EMBEDDED_SIGNUP_VERSION,
   signupAppConfig,
@@ -16,12 +18,15 @@ import { completeSignup as runSignup, retrySetup as runRetry } from "../whatsapp
 import {
   toWhatsappAccountDto,
   toWhatsappConversationDto,
+  toWhatsappDisconnectResultDto,
   toWhatsappMessageDto,
   whatsappAccountDto,
   whatsappConversationDto,
+  whatsappDisconnectResultDto,
   whatsappMessageDto,
   whatsappSetupResultDto,
   whatsappSignupConfigDto,
+  type WhatsappDisconnectResultDto,
   type WhatsappSetupResultDto,
 } from "./dto/whatsapp";
 
@@ -78,6 +83,34 @@ export const retrySetup = orgAdminAction({
   returns: whatsappSetupResultDto,
   handler: async (ctx, { accountId }): Promise<WhatsappSetupResultDto> => {
     return await runRetry(ctx, ctx.tenant, { accountId });
+  },
+});
+
+/**
+ * Admin only: disconnects one of the caller's WhatsApp Business Accounts (ADR 0014 B4). Its
+ * numbers stop routing and its connection is revoked at once (one transaction); then our app is
+ * unsubscribed from the WABA's webhooks at Meta (skipped while another org or an
+ * operator-managed number still uses the WABA), retried on a schedule if Meta fails, and the
+ * stored token is deleted when that ends. Conversations and messages are kept. Repeating it is
+ * harmless; another org's account is NOT_FOUND. Works whatever the connection gate says.
+ */
+export const disconnectAccount = orgAdminAction({
+  args: { accountId: v.string() },
+  returns: whatsappDisconnectResultDto,
+  handler: async (ctx, { accountId }): Promise<WhatsappDisconnectResultDto> => {
+    const begun = await ctx.runMutation(internal.whatsapp.offboarding.beginDisconnect, {
+      orgId: ctx.tenant.orgId,
+      issuer: ctx.tenant.issuer,
+      actorSubject: ctx.tenant.subject,
+      accountId,
+    });
+    if (begun === null) throw apiError("NOT_FOUND", "No WhatsApp account with this id.");
+    await runCleanup(ctx, ctx.tenant.orgId, begun.accountId, ctx.tenant.subject);
+    const cleanup = await ctx.runQuery(internal.whatsapp.offboarding.cleanupOf, {
+      orgId: ctx.tenant.orgId,
+      accountId: begun.accountId,
+    });
+    return toWhatsappDisconnectResultDto(begun.accountId, cleanup);
   },
 });
 

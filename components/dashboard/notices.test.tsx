@@ -57,6 +57,21 @@ describe("ReauthBanner", () => {
     ]);
   });
 
+  it("links a WhatsApp reconnection to the WhatsApp page (Embedded Signup)", () => {
+    queryResults.set("v1/connections:list", [
+      { id: "w1", provider: "whatsapp", status: "needs_reauth", displayName: "Acme Coaching" },
+      { id: "g1", provider: "google_ads", status: "needs_reauth" },
+    ]);
+    render(<ReauthBanner />);
+    const banner = screen.getByLabelText("Reconnect required");
+    expect(banner).toHaveTextContent("(Acme Coaching, Google Ads)");
+    const links = within(banner).getAllByRole("link");
+    expect(links.map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
+      ["Reconnect Google Ads", "/connections"],
+      ["Reconnect WhatsApp", "/whatsapp"],
+    ]);
+  });
+
   it("keeps the Instagram banner read-only (no link)", () => {
     queryResults.set("v1/connections:list", [
       { id: "x1", provider: "instagram", status: "needs_reauth" },

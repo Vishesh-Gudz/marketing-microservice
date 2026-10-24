@@ -147,6 +147,43 @@ export const whatsappAccountNumberDto = v.object({
   registrationRetryAfter: v.optional(v.string()),
 });
 
+const cleanupStatusValidator = v.union(
+  v.literal("pending"),
+  v.literal("done"),
+  v.literal("failed"),
+);
+
+/**
+ * A disconnected account's Meta cleanup: unsubscribing our app from the WABA's webhooks, then
+ * deleting the stored token. `pending` while it retries, `done` when finished (unsubscribed, or
+ * not needed), `failed` when it gave up (the token is deleted anyway). How it finished is kept
+ * in the audit log, not here (it could reveal that another org uses the WABA).
+ */
+export const whatsappCleanupDto = v.object({
+  status: cleanupStatusValidator,
+  /** When the next automatic attempt runs (pending only). */
+  retryAfter: v.optional(v.string()),
+});
+
+/** Outcome of disconnectAccount. */
+export const whatsappDisconnectResultDto = v.object({
+  accountId: v.string(),
+  cleanup: cleanupStatusValidator,
+  retryAfter: v.optional(v.string()),
+});
+export type WhatsappDisconnectResultDto = Infer<typeof whatsappDisconnectResultDto>;
+
+export function toWhatsappDisconnectResultDto(
+  accountId: string,
+  cleanup: { status: "pending" | "done" | "failed"; nextAttemptAt?: number } | null,
+): WhatsappDisconnectResultDto {
+  return {
+    accountId,
+    cleanup: cleanup?.status ?? "done",
+    ...optionalIso("retryAfter", cleanup?.status === "pending" ? cleanup.nextAttemptAt : undefined),
+  };
+}
+
 export const whatsappAccountDto = v.object({
   id: v.string(),
   connectionId: v.string(),
@@ -159,6 +196,8 @@ export const whatsappAccountDto = v.object({
   subscribedAt: v.optional(v.string()),
   connectedAt: v.string(),
   disconnectedAt: v.optional(v.string()),
+  /** After a disconnect: the Meta cleanup (ADR 0014 B4). */
+  cleanup: v.optional(whatsappCleanupDto),
   numbers: v.array(whatsappAccountNumberDto),
 });
 export type WhatsappAccountDto = Infer<typeof whatsappAccountDto>;
@@ -191,6 +230,19 @@ export function toWhatsappAccountDto(
     ...optionalIso("subscribedAt", account.subscribedAt),
     connectedAt: toIso(account.createdAt),
     ...optionalIso("disconnectedAt", account.disconnectedAt),
+    ...(account.offboarding !== undefined
+      ? {
+          cleanup: {
+            status: account.offboarding.status,
+            ...optionalIso(
+              "retryAfter",
+              account.offboarding.status === "pending"
+                ? account.offboarding.nextAttemptAt
+                : undefined,
+            ),
+          },
+        }
+      : {}),
     numbers: numbers.map((number) => ({
       id: number._id,
       phoneNumberId: number.phoneNumberId,

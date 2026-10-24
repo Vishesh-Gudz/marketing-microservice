@@ -111,6 +111,7 @@ describe("public API contract", () => {
       "v1/socialPosts:get",
       "v1/socialPosts:list",
       "v1/whatsapp:completeSignup",
+      "v1/whatsapp:disconnectAccount",
       "v1/whatsapp:getConversation",
       "v1/whatsapp:getSignupConfig",
       "v1/whatsapp:listAccounts",

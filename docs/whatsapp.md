@@ -8,8 +8,9 @@ Development mode): webhook verification and one inbound text message, stored end
 inbound hardening that followed (activation cutoff, stuck-event recovery, retention, parser and
 contact-name fixes) is tested in-process only. The server side of Embedded Signup (connecting a
 number, [ADR 0014](adr/0014-whatsapp-connections.md)) is implemented and tested in-process
-against a fake Graph only; it has never run against Meta, and its connect UI is not built.
-Outbound replies, templates, quick replies and the dashboard are not implemented.
+against a fake Graph only, and its connect page (`/whatsapp`, B3) against a fake Meta SDK only;
+neither has run against Meta. Outbound replies, templates, quick replies and the inbox UI are not
+implemented.
 
 ## Webhook
 
@@ -29,13 +30,14 @@ URL: `<CONVEX_SITE_URL>/whatsapp/webhook`.
 
 Processing is asynchronous: the POST stores events and schedules their processing.
 
-Only `messages` changes are read. Changes for other subscribed fields (template, quality,
-account updates, …) are acknowledged and ignored whatever their `value` holds, so they never
-reject the messages delivered beside them; a malformed `messages` change still rejects the whole
-delivery (400). The Content-Length check is tested in-process only: whether Convex's HTTP front
-end passes a malformed header through to the action at all is unverified. Only the `messages`
-field needs a subscription; Meta's dashboard has been seen to subscribe others automatically,
-and they are ignored.
+Only `messages` changes are read, plus `account_update` `PARTNER_REMOVED` (see "Partner removal"
+below). Changes for other subscribed fields (template, quality, other account updates, …), and
+malformed `account_update` changes, are acknowledged and ignored whatever their `value` holds,
+so they never reject the messages delivered beside them; a malformed `messages` change still
+rejects the whole delivery (400). The Content-Length check is tested in-process only: whether
+Convex's HTTP front end passes a malformed header through to the action at all is unverified.
+The inbox needs only the `messages` field; connected accounts also need `account_update`. Meta's
+dashboard has been seen to subscribe others automatically, and they are ignored.
 
 ## Configuration (Convex environment variables)
 
@@ -102,8 +104,8 @@ org id.
 
 ## Connecting a number (Embedded Signup, ADR 0014)
 
-Server side only so far; tested against a fake Graph, never against Meta, and the connect UI
-(B3) is not built. A WhatsApp connection is provider `whatsapp`, keyed by the WABA id, with the
+Tested against a fake Graph and (the page) a fake Meta SDK only, never against Meta. Admins start
+it on `/whatsapp` ([dashboard.md](dashboard.md#whatsapp-embedded-signup)). A WhatsApp connection is provider `whatsapp`, keyed by the WABA id, with the
 business token and the registration PIN stored encrypted (connection credential, AAD
 `orgId|whatsapp|wabaId|v1`). The generic connection endpoints refuse WhatsApp connections
 (`whatsapp_connection`).
@@ -181,12 +183,119 @@ Limits (B2):
   registered number. A stored credential that cannot be read is never replaced: the signup is
   refused (`stored_pin_unavailable`). Whether re-subscribing is harmless at Meta is not
   documented.
-- No WhatsApp disconnect or token revocation yet (B4). If the connection is revoked, the stored
-  PIN is lost with its credential.
+- Disconnecting deletes the stored token and PIN once Meta's cleanup ends (see "Disconnecting
+  an account"); a later signup uses a new PIN. The token is not revoked at Meta.
 - Two calls carry secrets in their query string, as Meta documents them (server to server,
   HTTPS): the code exchange (`client_secret`, `code`) and `debug_token` (the business token).
   This application never logs a URL; whether anything between Convex and Meta records query
   strings is unverified.
+
+## Connect UI: Meta configuration
+
+The connect page ([dashboard.md](dashboard.md#whatsapp-embedded-signup)) uses Meta's JavaScript
+SDK as Meta documents it for Embedded Signup ("Embedded Signup implementation", read 2026-10-24).
+None of this is configured or tested yet; each step is an operator task with its own approval:
+
+1. In the Meta app, a **Facebook Login for Business** configuration with the **WhatsApp Embedded
+   Signup** login variation (Embedded Signup v4 is selected there). Its id goes into
+   `WHATSAPP_ES_CONFIG_ID`, the app id into `WHATSAPP_APP_ID` (Convex env, not secrets).
+2. Facebook Login for Business → Settings → Client OAuth settings set to **Yes**: Client OAuth
+   login, Web OAuth login, Enforce HTTPS, Embedded Browser OAuth Login, use Strict Mode for
+   redirect URIs, Login with the JavaScript SDK.
+3. The page's HTTPS origin in **Allowed domains** and **Valid OAuth redirect URIs** (for example
+   `https://marketing-microservice.vercel.app`). Otherwise Meta does not return the code or the
+   ids to the page. Only HTTPS domains are supported: plain `http://localhost` cannot run the real
+   flow; a local test needs an HTTPS origin that is listed there.
+4. While the app is in Development mode, only people with a role on the Meta app can finish a
+   signup. Real customers need the app Live with Advanced Access to `whatsapp_business_management`
+   and `whatsapp_business_messaging`, business verification and Tech Provider status.
+5. `WHATSAPP_CONNECTIONS_ENABLED=true` on the cloud deployment that serves the page. It opens new
+   connections for every organization there; until then the page says WhatsApp is not available.
+6. The `account_update` webhook field subscribed (App Dashboard → WhatsApp → Configuration →
+   Webhook fields). Meta requires it for Embedded Signup; without it a customer's partner
+   removal is never seen ("Partner removal" below). Account-level webhooks always go to the
+   app's default callback URL (no override).
+
+Page behaviour worth knowing for a first real test: the browser shows Meta's error code and
+session id (never Meta's error text) when the signup fails in the Meta window; "Signup did not
+finish" means the code arrived but Meta's `FINISH` message did not follow within 10 seconds,
+or the window closed after `FINISH` without a code (the page waits for the window to close
+after `FINISH`, since Meta counts its final screen as finished); the signup variants Meta
+reports for a WABA without a number, a WhatsApp Business app number (coexistence), a migration or
+API-access-only signup are refused in the browser with an explanation.
+
+## Disconnecting an account
+
+`v1/whatsapp:disconnectAccount` (`{ accountId }`, org admins, ADR 0014 B4). Tested against a fake
+Graph only; never run against Meta.
+
+1. **At once, in one transaction:** every active number of the account stops routing (from that
+   commit on, deliveries for it are acknowledged and dropped as unrouted), the connection is
+   revoked and the account becomes `disconnected`. Each change is audited
+   (`whatsapp.number_disconnected`, `connection.disconnected`). Events accepted before still
+   reach the conversations; conversations and messages are never deleted and stay visible.
+2. **Then the Meta cleanup:** our app is unsubscribed from the WABA's webhooks with the stored
+   token (`DELETE /{waba}/subscribed_apps`). It is skipped when the WABA is still used: another
+   org has it connected, or any org (this one included) has an active number on it, e.g. an
+   operator-managed one; unsubscribing would cut their webhooks too. One attempt runs at a time.
+   A Meta failure is retried after 1 min, 5 min, 30 min, 2 h and 6 h; a refused token (190 /
+   102 / 401) ends it. Repeating the disconnect never repeats a finished cleanup.
+3. **When it ends** (done, or given up after the last retry), the stored token and PIN are
+   deleted (`credential.deleted`, then `whatsapp.offboarding_completed` or
+   `whatsapp.offboarding_failed`; retries are audited as `system:whatsapp-offboarding`). The
+   token is not revoked at Meta: the customer can remove the app in their Meta business
+   settings. Numbers are not deregistered.
+
+`listAccounts` shows a disconnected account's cleanup as `pending` (with `retryAfter`), `done` or
+`failed`; how it finished (unsubscribed, skipped, token refused) is only in the audit log.
+
+While a cleanup is pending, a signup for that WABA is refused for every org
+(`disconnect_in_progress`). Afterwards a new signup reconnects it: the numbers are routed again
+with a new activation time (messages from the gap are not backfilled), the WABA is subscribed
+again, a new PIN is stored, and registered numbers are not registered again. A setup call that
+subscribes after a disconnect undoes that subscription with the same token. The generic connection
+sweep leaves a revoked WhatsApp connection's credential alone for 24 hours, then deletes what is
+left, as for every provider.
+
+Unverified at Meta: whether `DELETE subscribed_apps` is harmless to repeat, whether it removes only
+our app's subscription, and what Meta does with the WABA's deliveries afterwards.
+
+## Partner removal (Meta `PARTNER_REMOVED`)
+
+When a customer unshares their WABA in Meta, Meta sends an `account_update` webhook with
+`event: "PARTNER_REMOVED"` (ADR 0014 B4b). Tested against signed fake deliveries and a fake Graph
+only; never run against Meta.
+
+- **Read:** only `value.waba_info.waba_id`. In Meta's example `entry[].id` is a business id, not
+  the WABA, and is never read; the coexistence variant without `waba_info` is ignored.
+- **Not trusted alone:** Meta describes the event as the WABA being unshared with a Solution
+  Partner, not necessarily us, and does not say which apps receive it. For the one org that has
+  the WABA connected (its id was verified with Meta at signup), the webhook reads the WABA once
+  with that org's stored token (`GET /{waba}`):
+  - Meta answers: our access remains (another partner was removed, or the event is older than a
+    reconnect). Acknowledged; nothing changes.
+  - Meta refuses the token (190, 102, HTTP 401) or access to the WABA (10, 200, 803, or 100 with
+    subcode 33; these four are assumed): the account is disconnected, in one transaction.
+  - Anything else (network, timeout, 5xx, rate limit, a token that cannot be decrypted): the
+    delivery is answered 500 and Meta retries it (Meta documents up to 7 days). At most 10 WABAs
+    are checked per delivery; the rest wait for the retry.
+- **Disconnecting:** the account's active numbers stop routing, the connection is revoked and the
+  token and PIN are deleted at once; the account shows as disconnected and can be connected again
+  with a new signup. Nothing is called at Meta (no unsubscribe, no deregister): our access is
+  gone. Audited as `system:whatsapp-webhook`: `whatsapp.number_disconnected`,
+  `connection.disconnected`, `credential.deleted` and `whatsapp.partner_removed`.
+- **Never touched:** other orgs' rows, older disconnected accounts for the WABA, operator-managed
+  numbers, a WABA no org has connected, and an account an admin disconnected meanwhile (its own
+  cleanup continues). A reconnect made while the check runs is never undone: the write re-checks
+  the credential version the check used. Repeats find nothing active and call nothing.
+
+Unverified at Meta: which apps receive `PARTNER_REMOVED`; that `waba_info` is present for normal
+Embedded Signup customers; what reading the WABA answers after a removal (the four access codes
+above are assumed), and whether access ends at once (if the read still succeeds just after a
+removal, the event is ignored and the account stays connected until its token is next refused);
+whether Meta removes our webhook subscription itself; and whether re-adding the partner works at
+once. Not handled: `PARTNER_APP_UNINSTALLED`, `ACCOUNT_OFFBOARDED`, `ACCOUNT_DELETED` and the
+other `account_update` events.
 
 ## Public API
 
@@ -197,8 +306,10 @@ Inbox: `v1/whatsapp:listConversations` (`{ paginationOpts }`), `v1/whatsapp:getC
 Connections: `v1/whatsapp:getSignupConfig` (`{}`, admin), `v1/whatsapp:completeSignup`
 (`{ code, wabaId, phoneNumberId }`, admin action), `v1/whatsapp:retrySetup` (`{ accountId }`,
 admin action; another org's account is `NOT_FOUND`) and `v1/whatsapp:listAccounts` (`{}`,
-viewer; accounts with their numbers and setup status, never the token or PIN).
-`completeSignup`'s `code` is the only secret-like argument the contract test allows.
+viewer; accounts with their numbers, setup status and, once disconnected, the Meta cleanup's
+status; never the token or PIN), and `v1/whatsapp:disconnectAccount` (`{ accountId }`, admin
+action; see below). `completeSignup`'s `code` is the only secret-like argument the contract test
+allows.
 
 ## Open risks (Stage 1)
 
@@ -348,4 +459,6 @@ Everything below is still modeled on Meta's documentation and unverified:
   business integration token (`granular_scopes` WABA ids, `expires_at`), the `subscribed_apps`
   and `register` answers, Meta's error codes for a reused code, a PIN mismatch, a rate limit or a
   refused business token (190 / 102 / 401 assumed), when a 133016 limit clears, and whether
-  re-subscribing an already subscribed WABA is harmless.
+  re-subscribing an already subscribed WABA is harmless;
+- partner removal (never seen): who receives `PARTNER_REMOVED`, its real shape, and what
+  `GET /{waba}` answers with the customer's token afterwards ("Partner removal").

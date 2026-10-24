@@ -85,6 +85,7 @@ describe("AppShell / OrgGate", () => {
       "Accounts",
       "Organic",
       "Organization",
+      "WhatsApp",
       "Connections",
     ]);
     const connections = within(nav).getByRole("link", { name: "Connections" });

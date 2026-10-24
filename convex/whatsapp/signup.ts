@@ -23,6 +23,7 @@ import {
   readWaba,
   registerPhoneNumber,
   subscribeApp,
+  unsubscribeApp,
   type GraphFailure,
   type GraphOutcome,
 } from "./graph";
@@ -66,7 +67,8 @@ export type SetupResult = SetupProgress & {
 
 type WhatsAppCredential = { kind: "whatsapp"; v: 1; accessToken: string; pin: string };
 
-function parseCredential(value: unknown): WhatsAppCredential | null {
+/** The stored WhatsApp credential (token and PIN), or null when it is not one. */
+export function parseCredential(value: unknown): WhatsAppCredential | null {
   const c = value as Partial<WhatsAppCredential> | null;
   if (c === null || typeof c !== "object" || c.kind !== "whatsapp" || c.v !== 1) return null;
   if (typeof c.accessToken !== "string" || c.accessToken === "") return null;
@@ -215,7 +217,7 @@ async function pinFor(
 }
 
 /** Meta refused the business token itself (same classification as the Meta Ads provider). */
-function tokenRefused(failure: GraphFailure): boolean {
+export function tokenRefused(failure: GraphFailure): boolean {
   return (
     failure.kind === "http" &&
     ((failure.metaCode !== undefined && TOKEN_AUTH_ERROR_CODES.has(failure.metaCode)) ||
@@ -230,6 +232,19 @@ function outcomeOf(result: GraphOutcome): { failure?: string; tokenRefused: bool
       : { failure: "unexpected_response", tokenRefused: false };
   }
   return { failure: failureReason(result.failure), tokenRefused: tokenRefused(result.failure) };
+}
+
+async function undoLateSubscribe(
+  ctx: ActionCtx,
+  orgId: Id<"organizations">,
+  accountId: Id<"whatsappBusinessAccounts">,
+  auth: { accessToken: string; appSecret: string },
+): Promise<void> {
+  const undo = await ctx.runQuery(internal.whatsapp.offboarding.lateSubscribeUndo, {
+    orgId,
+    accountId,
+  });
+  if (undo !== null) await unsubscribeApp(undo.wabaId, auth);
 }
 
 /**
@@ -265,11 +280,18 @@ async function runSetupSteps(
       await reauth("subscribe");
       return;
     }
-    await ctx.runMutation(internal.whatsapp.accounts.recordSubscribeResult, {
+    const recorded = await ctx.runMutation(internal.whatsapp.accounts.recordSubscribeResult, {
       orgId,
       accountId,
       ...(outcome.failure !== undefined ? { failure: outcome.failure } : {}),
     });
+    if (!recorded) {
+      // Disconnected while this call was at Meta (ADR 0014 B4): its cleanup may have
+      // unsubscribed already, so undo this subscription with the same token, unless the
+      // WABA is still used. Best effort; nothing else runs for the account.
+      if (outcome.failure === undefined) await undoLateSubscribe(ctx, orgId, accountId, auth);
+      return;
+    }
     // Registration waits for the subscription: Meta's documented order.
     if (outcome.failure !== undefined) return;
   }
@@ -423,6 +445,12 @@ export async function completeSignup(
           "CONFLICT",
           "Another signup for this WhatsApp account finished first. Check its status.",
           { reason: "signup_in_progress" },
+        );
+      case "disconnect_in_progress":
+        throw apiError(
+          "CONFLICT",
+          "This WhatsApp account is still being disconnected. Try again later.",
+          { reason: "disconnect_in_progress" },
         );
       case "phone_number_in_use":
         throw numberConflict("in_use");

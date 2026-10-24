@@ -85,7 +85,7 @@ async function send(url: string, init: RequestInit): Promise<GraphOutcome> {
 }
 
 async function withToken(
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "DELETE",
   path: string,
   params: Record<string, string>,
   auth: { accessToken: string; appSecret: string },
@@ -183,6 +183,18 @@ export async function subscribeApp(
   auth: { accessToken: string; appSecret: string },
 ): Promise<GraphOutcome> {
   return await withToken("POST", nodePath(wabaId, "subscribed_apps"), {}, auth);
+}
+
+/**
+ * Disconnect (ADR 0014 B4): unsubscribe our app from the WABA's webhooks (Meta "Managing
+ * webhooks": DELETE /{waba}/subscribed_apps, success `{"success": true}`). Not documented:
+ * whether repeating it is harmless, and whether it removes only the calling app.
+ */
+export async function unsubscribeApp(
+  wabaId: string,
+  auth: { accessToken: string; appSecret: string },
+): Promise<GraphOutcome> {
+  return await withToken("DELETE", nodePath(wabaId, "subscribed_apps"), {}, auth);
 }
 
 /** Step 3: register the number for Cloud API; the 6-digit PIN becomes its two-step PIN. */

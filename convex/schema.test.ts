@@ -35,13 +35,19 @@ const APPROVED_GLOBAL_INDEXES = [
   "oauthStates.by_nonce_hash",
   "syncAccounts.by_next_plan",
   // WhatsApp connections (ADR 0014): one org per WABA. Connecting checks whether another org
-  // has the WABA active; the row found is only compared, never returned or written. Covered by
-  // convex/whatsapp/accounts.test.ts.
+  // has the WABA active; the row found is only compared. Covered by
+  // convex/whatsapp/accounts.test.ts. A PARTNER_REMOVED webhook (B4b) resolves the one active
+  // row for its WABA and disconnects it only after Meta refuses that org's own token, re-checked
+  // in the writing transaction; covered by convex/whatsapp/partnerRemoval.test.ts.
   "whatsappBusinessAccounts.by_waba_status",
   // WhatsApp (ADR 0013): webhook deliveries are authenticated as Meta, not as a tenant, so the
   // org is resolved from the registered phone_number_id. Rows are re-verified (active, unique,
   // WABA match) before any write; covered by convex/whatsapp/webhook.test.ts isolation tests.
   "whatsappPhoneNumbers.by_phone_number_status",
+  // WhatsApp disconnect (ADR 0014 B4): the Meta cleanup counts active numbers on a WABA across
+  // orgs, so it never unsubscribes a WABA another org (or an operator-managed number) still
+  // uses. Counted only; covered by convex/whatsapp/offboarding.test.ts.
+  "whatsappPhoneNumbers.by_waba_status",
   // WhatsApp stuck-event recovery: a system sweep (no tenant caller) finds events still pending
   // across orgs. Each row is re-checked and retried under its own orgId; covered by the
   // recovery tests in convex/whatsapp/webhook.test.ts. The retention sweep reads it to delete
