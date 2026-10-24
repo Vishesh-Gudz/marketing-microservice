@@ -13,6 +13,7 @@ import {
   seedOrg,
   type Backend,
 } from "../test.helpers";
+import { REGISTRATION_CLAIM_MS } from "./accounts";
 import { whatsappConnectionsEnabled } from "./config";
 import {
   CUSTOMER_1,
@@ -26,11 +27,10 @@ import {
   stubWhatsAppEnv,
 } from "./fakeWebhook.fixtures";
 
-// ADR 0014 (B1): the database side of WhatsApp connections. Everything is in-process
-// (convex-test); the Embedded Signup action, Meta calls and the public API come in B2.
+// ADR 0014: the database side of WhatsApp connections (one connection and account per
+// (org, WABA); the WABA id is the connection key). Everything is in-process (convex-test); the
+// Embedded Signup action is tested in convex/whatsapp/signup.test.ts.
 
-const BUSINESS_1 = "300000000000001";
-const BUSINESS_2 = "300000000000002";
 const ADMIN = "user_admin_1";
 const SCOPES = ["whatsapp_business_management", "whatsapp_business_messaging"];
 const CLOUD_URL = "https://happy-otter-123.convex.cloud";
@@ -47,11 +47,11 @@ async function setup() {
   return { t, orgA, orgB };
 }
 
-/** What the B2 action stores: the business token (+ PIN), encrypted for this org and business. */
-async function encryptedToken(orgId: Id<"organizations">, businessId: string, token: string) {
+/** What the signup action stores: the business token and PIN, encrypted for (org, WABA). */
+async function encryptedToken(orgId: Id<"organizations">, wabaId: string, token: string) {
   return await encryptCredential(
-    { orgId, provider: "whatsapp", externalUserId: businessId },
-    { accessToken: token, pin: "123456" },
+    { orgId, provider: "whatsapp", externalUserId: wabaId },
+    { kind: "whatsapp", v: 1, accessToken: token, pin: "123456" },
   );
 }
 
@@ -59,24 +59,30 @@ async function record(
   t: Backend,
   orgId: Id<"organizations">,
   overrides: Partial<{
-    businessId: string;
     wabaId: string;
     actorSubject: string;
     token: string;
     issuer: string;
+    expectedCredentialVersion: number | null;
+    phoneNumberId: string;
   }> = {},
 ) {
-  const businessId = overrides.businessId ?? BUSINESS_1;
+  const wabaId = overrides.wabaId ?? WABA_A;
   return await t.mutation(internal.whatsapp.accounts.recordConnection, {
     orgId,
     issuer: overrides.issuer ?? ISSUER_ERP,
     actorSubject: overrides.actorSubject ?? ADMIN,
-    businessId,
-    wabaId: overrides.wabaId ?? WABA_A,
+    wabaId,
     onboardingType: "cloud_api",
     displayName: "Test Business",
     grantedScopes: SCOPES,
-    encrypted: await encryptedToken(orgId, businessId, overrides.token ?? "token-1"),
+    encrypted: await encryptedToken(orgId, wabaId, overrides.token ?? "token-1"),
+    ...(overrides.expectedCredentialVersion !== undefined
+      ? { expectedCredentialVersion: overrides.expectedCredentialVersion }
+      : {}),
+    ...(overrides.phoneNumberId !== undefined
+      ? { number: { phoneNumberId: overrides.phoneNumberId, displayPhoneNumber: "+000001" } }
+      : {}),
   });
 }
 
@@ -118,7 +124,7 @@ describe("recordConnection", () => {
       expect.objectContaining({
         orgId: orgA,
         provider: "whatsapp",
-        externalUserId: BUSINESS_1,
+        externalUserId: WABA_A,
         displayName: "Test Business",
         status: "active",
         grantedScopes: SCOPES,
@@ -134,7 +140,6 @@ describe("recordConnection", () => {
         _id: result.accountId,
         orgId: orgA,
         connectionId: result.connectionId,
-        businessId: BUSINESS_1,
         wabaId: WABA_A,
         onboardingType: "cloud_api",
         status: "active",
@@ -152,21 +157,26 @@ describe("recordConnection", () => {
     expect(JSON.stringify(audits)).not.toContain("token-1");
   });
 
-  it("binds the stored token to (org, whatsapp, business): it decrypts only under that binding", async () => {
+  it("binds the stored token to (org, whatsapp, WABA): it decrypts only under that binding", async () => {
     const { t, orgA, orgB } = await setup();
     const { connectionId } = await connected(t, orgA);
 
-    expect(await decryptStored(t, connectionId)).toEqual({ accessToken: "token-1", pin: "123456" });
+    expect(await decryptStored(t, connectionId)).toEqual({
+      kind: "whatsapp",
+      v: 1,
+      accessToken: "token-1",
+      pin: "123456",
+    });
     for (const aad of [
-      credentialAad(orgB, "whatsapp", BUSINESS_1),
-      credentialAad(orgA, "meta", BUSINESS_1),
-      credentialAad(orgA, "whatsapp", BUSINESS_2),
+      credentialAad(orgB, "whatsapp", WABA_A),
+      credentialAad(orgA, "meta", WABA_A),
+      credentialAad(orgA, "whatsapp", WABA_B),
     ]) {
       await expect(decryptStored(t, connectionId, aad)).rejects.toThrow();
     }
   });
 
-  it("reconnects the same business in the same org: replaces the token, keeps one connection", async () => {
+  it("reconnects the same WABA in the same org: replaces the token, keeps one connection", async () => {
     const { t, orgA } = await setup();
     const first = await connected(t, orgA);
     // As if it had been disconnected meanwhile.
@@ -229,27 +239,25 @@ describe("recordConnection", () => {
     expect(result).toMatchObject({ ok: true, reconnected: false });
   });
 
-  it("keeps one connection per (org, business) and one account per WABA", async () => {
+  it("keeps one connection and one account per (org, WABA)", async () => {
     const { t, orgA, orgB } = await setup();
     const a = await connected(t, orgA, WABA_A);
     const b = await connected(t, orgA, WABA_B);
-    expect(b.connectionId).toBe(a.connectionId);
+    expect(b.connectionId).not.toBe(a.connectionId);
     expect(b.accountId).not.toBe(a.accountId);
-    // The same business in another org (with another WABA) is that org's own connection.
+    // Another org connects its own WABA independently.
     const other = await record(t, orgB, { issuer: ISSUER_CRM, wabaId: "100000000000009" });
     expect(other).toMatchObject({ ok: true, reconnected: false });
     const { connections, accounts } = await state(t);
-    expect(connections.map((c) => c.orgId).sort()).toEqual([orgA, orgB].sort());
+    expect(connections.map((c) => c.externalUserId).sort()).toEqual(
+      [WABA_A, WABA_B, "100000000000009"].sort(),
+    );
     expect(accounts).toHaveLength(3);
   });
 
   it("refuses non-numeric ids and unknown orgs, writing nothing", async () => {
     const { t, orgA } = await setup();
     const before = await state(t);
-    expect(await record(t, orgA, { businessId: "biz" })).toEqual({
-      ok: false,
-      reason: "invalid_id",
-    });
     expect(await record(t, orgA, { wabaId: "waba" })).toEqual({ ok: false, reason: "invalid_id" });
     const gone = await seedOrg(t, ISSUER_ERP, "gone");
     await t.run(async (ctx) => await ctx.db.delete(gone));
@@ -284,6 +292,158 @@ describe("recordConnection", () => {
     expect(await state(t)).toEqual(before);
     vi.stubEnv("WHATSAPP_CONNECTIONS_ENABLED", "true");
     expect(await record(t, orgA)).toMatchObject({ ok: true });
+  });
+});
+
+describe("recordConnection: one transaction with the signup's number and PIN", () => {
+  it("routes the number in the same call, linked to the account", async () => {
+    const { t, orgA } = await setup();
+    const result = await record(t, orgA, { phoneNumberId: PHONE_A });
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.numberId).toBeDefined();
+    const { numbers, audits } = await state(t);
+    expect(numbers).toEqual([
+      expect.objectContaining({
+        _id: result.numberId,
+        orgId: orgA,
+        wabaId: WABA_A,
+        phoneNumberId: PHONE_A,
+        status: "active",
+        source: "embedded_signup",
+        accountId: result.accountId,
+        registeredBySubject: ADMIN,
+      }),
+    ]);
+    expect(audits.map((a) => a.action)).toEqual(
+      expect.arrayContaining(["connection.connected", "whatsapp.number_registered"]),
+    );
+  });
+
+  it("writes nothing when another org took the number (no connection or account left behind)", async () => {
+    const { t, orgA, orgB } = await setup();
+    await t.mutation(internal.whatsapp.phoneNumbers.register, {
+      orgId: orgB,
+      wabaId: WABA_A,
+      phoneNumberId: PHONE_A,
+      actorSubject: "operator:race",
+    });
+    const before = await state(t);
+    expect(await record(t, orgA, { phoneNumberId: PHONE_A })).toEqual({
+      ok: false,
+      reason: "phone_number_in_use",
+    });
+    expect(await state(t)).toEqual(before);
+  });
+
+  it("writes nothing for this org's operator-managed number", async () => {
+    const { t, orgA } = await setup();
+    await t.mutation(internal.whatsapp.phoneNumbers.register, {
+      orgId: orgA,
+      wabaId: WABA_A,
+      phoneNumberId: PHONE_A,
+      actorSubject: "operator:test",
+    });
+    const before = await state(t);
+    expect(await record(t, orgA, { phoneNumberId: PHONE_A })).toEqual({
+      ok: false,
+      reason: "phone_number_operator_managed",
+    });
+    expect(await state(t)).toEqual(before);
+  });
+
+  it("refuses to replace a credential that changed since the PIN was read", async () => {
+    const { t, orgA } = await setup();
+    // A first signup that saw no connection loses to one that stored a credential meanwhile.
+    expect(await record(t, orgA, { expectedCredentialVersion: null })).toMatchObject({ ok: true });
+    const stored = await state(t);
+    for (const expectedCredentialVersion of [null, 0, 2]) {
+      expect(await record(t, orgA, { token: "token-2", expectedCredentialVersion })).toEqual({
+        ok: false,
+        reason: "credential_changed",
+      });
+    }
+    expect(await state(t)).toEqual(stored);
+    // The version it was read at: accepted (a reconnect keeping that PIN).
+    expect(await record(t, orgA, { token: "token-2", expectedCredentialVersion: 1 })).toMatchObject(
+      { ok: true, reconnected: true },
+    );
+    expect((await state(t)).connections[0]).toMatchObject({ credentialVersion: 2 });
+  });
+});
+
+describe("claimRegistration", () => {
+  async function numberOfAccount(t: Backend, orgA: Id<"organizations">) {
+    const result = await record(t, orgA, { phoneNumberId: PHONE_A });
+    if (!result.ok || result.numberId === undefined) throw new Error("no number");
+    return { accountId: result.accountId, numberId: result.numberId };
+  }
+  const claim = (
+    t: Backend,
+    orgId: Id<"organizations">,
+    ids: { accountId: Id<"whatsappBusinessAccounts">; numberId: Id<"whatsappPhoneNumbers"> },
+  ) => t.mutation(internal.whatsapp.accounts.claimRegistration, { orgId, ...ids });
+  const numberRow = async (t: Backend) => (await state(t)).numbers[0]!;
+
+  it("lets one call at a time register, counts the attempt at claim time, and expires", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const { t, orgA } = await setup();
+    const ids = await numberOfAccount(t, orgA);
+    expect(await claim(t, orgA, ids)).toEqual({ ok: true });
+    expect(await numberRow(t)).toMatchObject({
+      registrationAttempts: 1,
+      registrationClaimedUntil: Date.now() + REGISTRATION_CLAIM_MS,
+    });
+    expect(await claim(t, orgA, ids)).toEqual({ ok: false, reason: "registration_in_progress" });
+    expect((await numberRow(t)).registrationAttempts).toBe(1);
+
+    // A crashed call's claim expires on its own.
+    vi.setSystemTime(Date.now() + REGISTRATION_CLAIM_MS + 1);
+    expect(await claim(t, orgA, ids)).toEqual({ ok: true });
+    expect((await numberRow(t)).registrationAttempts).toBe(2);
+
+    // The result releases the claim; a failure leaves the number claimable again.
+    await t.mutation(internal.whatsapp.accounts.recordRegisterResult, {
+      orgId: orgA,
+      ...ids,
+      failure: "http_503",
+    });
+    expect((await numberRow(t)).registrationClaimedUntil).toBeUndefined();
+    expect((await numberRow(t)).registrationAttempts).toBe(2);
+    expect(await claim(t, orgA, ids)).toEqual({ ok: true });
+    await t.mutation(internal.whatsapp.accounts.recordRegisterResult, { orgId: orgA, ...ids });
+    expect(await claim(t, orgA, ids)).toEqual({ ok: false, reason: "registered" });
+  });
+
+  it("refuses at the attempt cap and inside Meta's rate-limit window, without counting", async () => {
+    const { t, orgA } = await setup();
+    const ids = await numberOfAccount(t, orgA);
+    await t.run(async (ctx) => await ctx.db.patch(ids.numberId, { registrationAttempts: 5 }));
+    expect(await claim(t, orgA, ids)).toEqual({
+      ok: false,
+      reason: "registration_attempts_exhausted",
+    });
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch(ids.numberId, {
+          registrationAttempts: 1,
+          registrationBlockedUntil: Date.now() + 60_000,
+        }),
+    );
+    expect(await claim(t, orgA, ids)).toEqual({ ok: false, reason: "registration_rate_limited" });
+    expect(await numberRow(t)).toMatchObject({ registrationAttempts: 1 });
+    expect((await numberRow(t)).registrationClaimedUntil).toBeUndefined();
+    expect((await state(t)).accounts[0]!.setupError).toMatchObject({
+      step: "register",
+      reason: "registration_rate_limited",
+    });
+  });
+
+  it("refuses another org's account or number", async () => {
+    const { t, orgA, orgB } = await setup();
+    const ids = await numberOfAccount(t, orgA);
+    const before = await state(t);
+    expect(await claim(t, orgB, ids)).toEqual({ ok: false, reason: "gone" });
+    expect(await state(t)).toEqual(before);
   });
 });
 
@@ -385,7 +545,7 @@ describe("registerForConnection", () => {
     expect(await state(t)).toEqual(before);
   });
 
-  it("links an operator-registered number of the same org; the operator path keeps the link", async () => {
+  it("never takes over a number this org has from the operator path, active or not", async () => {
     const { t, orgA } = await setup();
     const operator = await t.mutation(internal.whatsapp.phoneNumbers.register, {
       orgId: orgA,
@@ -394,17 +554,36 @@ describe("registerForConnection", () => {
       actorSubject: "operator:test",
     });
     if (!operator.ok) throw new Error(operator.reason);
-    const [legacy] = (await state(t)).numbers;
-    expect(legacy).toMatchObject({ source: "operator" });
-    expect(legacy!.accountId).toBeUndefined();
-
     const { accountId } = await connected(t, orgA);
-    await registerFor(t, orgA, accountId);
-    let [number] = (await state(t)).numbers;
-    expect(number).toMatchObject({ _id: operator.numberId, source: "embedded_signup", accountId });
-    expect(number!.activatedAt).toBe(legacy!.activatedAt); // already active: activation kept
+    const before = await state(t);
+    expect(await registerFor(t, orgA, accountId)).toEqual({
+      ok: false,
+      reason: "operator_managed",
+    });
+    expect(await state(t)).toEqual(before);
 
-    // A later operator update (e.g. a display number fix) keeps the WABA link.
+    // Also once disconnected: its two-step PIN at Meta is still not ours.
+    await t.mutation(internal.whatsapp.phoneNumbers.disconnect, {
+      numberId: operator.numberId,
+      actorSubject: "operator:test",
+    });
+    const disconnected = await state(t);
+    expect(await registerFor(t, orgA, accountId)).toEqual({
+      ok: false,
+      reason: "operator_managed",
+    });
+    expect(await state(t)).toEqual(disconnected);
+    // A row from before ADR 0014 (no source) counts as operator-managed too.
+    await t.run(async (ctx) => await ctx.db.patch(operator.numberId, { source: undefined }));
+    expect(await registerFor(t, orgA, accountId)).toMatchObject({ reason: "operator_managed" });
+  });
+
+  it("keeps the WABA link when an operator later updates an Embedded Signup number", async () => {
+    const { t, orgA } = await setup();
+    const { accountId } = await connected(t, orgA);
+    const result = await registerFor(t, orgA, accountId);
+    if (!result.ok) throw new Error(result.reason);
+    // E.g. a display number fix through the operator path.
     await t.mutation(internal.whatsapp.phoneNumbers.register, {
       orgId: orgA,
       wabaId: WABA_A,
@@ -412,8 +591,9 @@ describe("registerForConnection", () => {
       displayPhoneNumber: "+999999",
       actorSubject: "operator:test",
     });
-    [number] = (await state(t)).numbers;
+    const [number] = (await state(t)).numbers;
     expect(number).toMatchObject({
+      _id: result.numberId,
       source: "embedded_signup",
       accountId,
       displayPhoneNumber: "+999999",

@@ -80,19 +80,22 @@ export type ConnectionBinding = CredentialBinding & {
 /**
  * The ONLY way to use a stored credential: decrypts it, hands it to `handle`,
  * and never returns it. Refuses non-active connections unless `allowRevoked`
- * (used solely to revoke at the platform on disconnect).
+ * (used solely to revoke at the platform on disconnect) or `allowNeedsReauth` (used solely by
+ * the WhatsApp signup to keep a number's registration PIN across a reconnect, ADR 0014).
  */
 export async function withConnectionCredential<T>(
   ctx: ActionCtx,
   connectionId: Id<"connections">,
   handle: (credential: unknown, connection: ConnectionBinding) => Promise<T>,
-  options: { allowRevoked?: boolean } = {},
+  options: { allowRevoked?: boolean; allowNeedsReauth?: boolean } = {},
 ): Promise<T> {
   const row = await ctx.runQuery(internal.connections.credentialStore.loadForUse, { connectionId });
   if (row === null) throw new CredentialUnavailableError("not_found");
-  if (row.status !== "active" && !(options.allowRevoked && row.status === "revoked")) {
-    throw new CredentialUnavailableError("inactive");
-  }
+  const allowed =
+    row.status === "active" ||
+    (options.allowRevoked === true && row.status === "revoked") ||
+    (options.allowNeedsReauth === true && row.status === "needs_reauth");
+  if (!allowed) throw new CredentialUnavailableError("inactive");
   if (row.encrypted === null) throw new CredentialUnavailableError("missing");
 
   const binding: ConnectionBinding = {
@@ -463,6 +466,8 @@ export async function upsertDirectConnection(
     externalUserId: string;
     displayName?: string;
     grantedScopes: string[];
+    /** Absent = the token does not expire (the expiry sweep skips the connection). */
+    tokenExpiresAt?: number;
     connectedBySubject: string;
     encrypted: EncryptedPayload;
     now: number;
@@ -486,7 +491,7 @@ export async function upsertDirectConnection(
       status: "active",
       grantedScopes: input.grantedScopes,
       credentialVersion: existing.credentialVersion + 1,
-      tokenExpiresAt: undefined,
+      tokenExpiresAt: input.tokenExpiresAt,
       lastError: undefined,
       revokedAt: undefined,
       connectedBySubject: input.connectedBySubject,
@@ -501,6 +506,7 @@ export async function upsertDirectConnection(
       status: "active",
       grantedScopes: input.grantedScopes,
       credentialVersion: 1,
+      ...(input.tokenExpiresAt !== undefined ? { tokenExpiresAt: input.tokenExpiresAt } : {}),
       connectedBySubject: input.connectedBySubject,
       connectedAt: input.now,
       createdAt: input.now,

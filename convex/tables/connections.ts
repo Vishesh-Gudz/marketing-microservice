@@ -32,7 +32,7 @@ export const connectionTables = {
     /** OAuth providers, plus "whatsapp" (Embedded Signup; never the generic OAuth flow). */
     provider: storedConnectionProviderValidator,
     /**
-     * Platform user identity (WhatsApp: the Meta business id); natural key with (orgId,
+     * Platform user identity (WhatsApp: the WABA id); natural key with (orgId,
      * provider).
      */
     externalUserId: v.string(),

@@ -182,6 +182,7 @@ import type * as whatsapp_processing from "../whatsapp/processing.js";
 import type * as whatsapp_recovery from "../whatsapp/recovery.js";
 import type * as whatsapp_retention from "../whatsapp/retention.js";
 import type * as whatsapp_signature from "../whatsapp/signature.js";
+import type * as whatsapp_signup from "../whatsapp/signup.js";
 import type * as whatsapp_status from "../whatsapp/status.js";
 import type * as whatsapp_validators from "../whatsapp/validators.js";
 import type * as whatsapp_webhook from "../whatsapp/webhook.js";
@@ -368,6 +369,7 @@ declare const fullApi: ApiFromModules<{
   "whatsapp/recovery": typeof whatsapp_recovery;
   "whatsapp/retention": typeof whatsapp_retention;
   "whatsapp/signature": typeof whatsapp_signature;
+  "whatsapp/signup": typeof whatsapp_signup;
   "whatsapp/status": typeof whatsapp_status;
   "whatsapp/validators": typeof whatsapp_validators;
   "whatsapp/webhook": typeof whatsapp_webhook;

@@ -21,21 +21,27 @@ import { orgIdField } from "./common";
 export const whatsappTables = {
   /**
    * A WhatsApp Business Account an org connected through Embedded Signup (ADR 0014). Its
-   * business token is the credential of `connectionId` (provider "whatsapp", keyed by the Meta
-   * business id). At most one `active` row per WABA across all orgs (enforced by
-   * convex/whatsapp/accounts.ts).
+   * business token is the credential of `connectionId` (provider "whatsapp", keyed by the WABA
+   * id, which is verified with Meta; no documented API verifies the owning business). At most
+   * one `active` row per WABA across all orgs (enforced by convex/whatsapp/accounts.ts).
    */
   whatsappBusinessAccounts: defineTable({
     orgId: orgIdField,
     connectionId: v.id("connections"),
-    /** Meta business (portfolio) id that owns the WABA and the token. */
-    businessId: v.string(),
     wabaId: v.string(),
     onboardingType: onboardingTypeValidator,
     status: businessAccountStatusValidator,
     connectedBySubject: v.string(),
-    /** When the app was subscribed to the WABA's webhooks (B2). */
+    /** When the app was subscribed to the WABA's webhooks. */
     subscribedAt: v.optional(v.number()),
+    /** Latest failed setup step (sanitized reason code only); cleared when it succeeds. */
+    setupError: v.optional(
+      v.object({
+        step: v.union(v.literal("subscribe"), v.literal("register")),
+        reason: v.string(),
+        at: v.number(),
+      }),
+    ),
     disconnectedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -72,6 +78,14 @@ export const whatsappTables = {
     source: v.optional(phoneNumberSourceValidator),
     /** The connected WABA this number belongs to (Embedded Signup numbers only). */
     accountId: v.optional(v.id("whatsappBusinessAccounts")),
+    /** When Meta accepted the number's Cloud API registration (Embedded Signup numbers). */
+    platformRegisteredAt: v.optional(v.number()),
+    /** Registration calls made for this number (capped; Meta allows 10 per 72 hours). */
+    registrationAttempts: v.optional(v.number()),
+    /** Meta reported its registration rate limit (133016): no registration call before this. */
+    registrationBlockedUntil: v.optional(v.number()),
+    /** A registration call holds this number until then (one call at a time; expires alone). */
+    registrationClaimedUntil: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
