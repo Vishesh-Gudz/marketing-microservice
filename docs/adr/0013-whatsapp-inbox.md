@@ -4,8 +4,9 @@
   (activation cutoff, stuck-event recovery, retention, parser and contact-name fixes) tested
   against signed fake deliveries. Checked once against real Meta (a test app: webhook
   verification and one inbound text message); every other payload shape is provisional.
-  Embedded Signup, outbound sending and the dashboard are not built yet.
-- Date: 2026-10-22 (updated 2026-10-23)
+  Embedded Signup ([ADR 0014](0014-whatsapp-connections.md)), sending and the dashboard inbox
+  ([ADR 0015](0015-whatsapp-messaging.md)) are built and tested in-process only.
+- Date: 2026-10-22 (updated 2026-10-24)
 
 ## Context
 

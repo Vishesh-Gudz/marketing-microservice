@@ -57,7 +57,7 @@ describe("ReauthBanner", () => {
     ]);
   });
 
-  it("links a WhatsApp reconnection to the WhatsApp page (Embedded Signup)", () => {
+  it("links a WhatsApp reconnection to the WhatsApp settings (Embedded Signup)", () => {
     queryResults.set("v1/connections:list", [
       { id: "w1", provider: "whatsapp", status: "needs_reauth", displayName: "Acme Coaching" },
       { id: "g1", provider: "google_ads", status: "needs_reauth" },
@@ -68,7 +68,7 @@ describe("ReauthBanner", () => {
     const links = within(banner).getAllByRole("link");
     expect(links.map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
       ["Reconnect Google Ads", "/connections"],
-      ["Reconnect WhatsApp", "/whatsapp"],
+      ["Reconnect WhatsApp", "/whatsapp/settings"],
     ]);
   });
 

@@ -309,6 +309,10 @@ exports[`schema inventory > declares the approved indexes 1`] = `
     ],
   },
   "whatsappMessages": {
+    "by_org_client_message": [
+      "orgId",
+      "clientMessageId",
+    ],
     "by_org_conversation_platform": [
       "orgId",
       "conversationId",

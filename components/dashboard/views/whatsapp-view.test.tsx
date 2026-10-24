@@ -55,7 +55,7 @@ vi.mock("next/script", async () => {
   };
 });
 
-import WhatsAppPage, { metadata } from "@/app/(dashboard)/whatsapp/page";
+import WhatsAppSettingsPage, { metadata } from "@/app/(dashboard)/whatsapp/settings/page";
 import { useEmbeddedSignup } from "../whatsapp/connect-whatsapp";
 import { WhatsAppView } from "./whatsapp-view";
 
@@ -154,11 +154,18 @@ afterEach(() => {
   delete (window as Window & { FB?: unknown }).FB;
 });
 
-describe("WhatsApp page", () => {
-  it("is the /whatsapp route, titled WhatsApp", () => {
-    expect(metadata.title).toBe("WhatsApp");
-    renderWithOrg(<WhatsAppPage />);
-    expect(screen.getByRole("heading", { level: 1, name: "WhatsApp" })).toBeInTheDocument();
+describe("WhatsApp settings page", () => {
+  it("is the /whatsapp/settings route, titled WhatsApp settings, linked back to the inbox", () => {
+    expect(metadata.title).toBe("WhatsApp settings");
+    renderWithOrg(<WhatsAppSettingsPage />);
+    expect(
+      screen.getByRole("heading", { level: 1, name: "WhatsApp settings" }),
+    ).toBeInTheDocument();
+    const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(crumbs).getByRole("link", { name: "WhatsApp" })).toHaveAttribute(
+      "href",
+      "/whatsapp",
+    );
   });
 
   it("shows viewers the accounts only: no signup config, no Meta SDK, no admin actions", () => {

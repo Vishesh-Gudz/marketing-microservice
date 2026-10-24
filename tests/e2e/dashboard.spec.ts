@@ -13,6 +13,7 @@ const PAGES = [
   { path: "/social", link: "Organic" },
   { path: "/connections", link: "Connections" },
   { path: "/whatsapp", link: "WhatsApp" },
+  { path: "/whatsapp/settings", link: "WhatsApp" },
 ];
 
 test("navigates between dashboard pages and keeps the global filters", async ({ page }) => {

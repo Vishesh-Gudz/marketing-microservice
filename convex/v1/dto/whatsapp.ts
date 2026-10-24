@@ -2,6 +2,7 @@ import { v, type Infer } from "convex/values";
 import type { Doc } from "../../_generated/dataModel";
 import { toIso } from "../../lib/dto";
 import type { SetupProgress } from "../../whatsapp/accounts";
+import type { ParsedTemplate } from "../../whatsapp/templates";
 import {
   businessAccountStatusValidator,
   messageDirectionValidator,
@@ -65,6 +66,13 @@ export const whatsappMessageDto = v.object({
   status: messageStatusValidator,
   /** Platform error code of a failed message. */
   errorCode: v.optional(v.number()),
+  /**
+   * Outbound, failed or unknown: a sanitized reason code, e.g. "meta_131047" (Meta refused),
+   * "timeout" (unknown: may have been sent, never resent automatically), "number_unavailable".
+   */
+  failureReason: v.optional(v.string()),
+  /** Outbound templates: which approved template was sent (`text` is it filled in). */
+  template: v.optional(v.object({ name: v.string(), language: v.string() })),
   /** When the message happened. */
   at: v.string(),
   sentAt: v.optional(v.string()),
@@ -87,11 +95,64 @@ export function toWhatsappMessageDto(message: Doc<"whatsappMessages">): Whatsapp
     ...(message.text !== undefined ? { text: message.text } : {}),
     status: message.status,
     ...(message.errorCode !== undefined ? { errorCode: message.errorCode } : {}),
+    ...(message.failureReason !== undefined ? { failureReason: message.failureReason } : {}),
+    ...(message.template !== undefined
+      ? { template: { name: message.template.name, language: message.template.language } }
+      : {}),
     at: toIso(message.platformAt),
     ...optionalIso("sentAt", message.sentAt),
     ...optionalIso("deliveredAt", message.deliveredAt),
     ...optionalIso("readAt", message.readAt),
     ...optionalIso("failedAt", message.failedAt),
+  };
+}
+
+/**
+ * An APPROVED message template of the conversation's WhatsApp Business Account, as the template
+ * picker needs it. `supported` false: it cannot be sent from here yet (`unsupportedReason`).
+ * `variables` are the values to fill in, in order (`name`: the placeholder, or a URL button's
+ * index), with Meta's example when the template has one.
+ */
+export const whatsappTemplateDto = v.object({
+  name: v.string(),
+  language: v.string(),
+  category: v.string(),
+  parameterFormat: v.union(v.literal("POSITIONAL"), v.literal("NAMED")),
+  header: v.optional(v.string()),
+  body: v.string(),
+  footer: v.optional(v.string()),
+  buttons: v.array(v.object({ type: v.string(), text: v.string() })),
+  variables: v.array(
+    v.object({
+      component: v.union(v.literal("header"), v.literal("body"), v.literal("button")),
+      name: v.string(),
+      example: v.optional(v.string()),
+    }),
+  ),
+  supported: v.boolean(),
+  unsupportedReason: v.optional(v.string()),
+});
+export type WhatsappTemplateDto = Infer<typeof whatsappTemplateDto>;
+
+/** listTemplates: `complete` is false when Meta had more templates than one listing reads. */
+export const whatsappTemplateListDto = v.object({
+  templates: v.array(whatsappTemplateDto),
+  complete: v.boolean(),
+});
+
+export function toWhatsappTemplateDto(template: ParsedTemplate): WhatsappTemplateDto {
+  return {
+    name: template.name,
+    language: template.language,
+    category: template.category,
+    parameterFormat: template.parameterFormat,
+    ...(template.header !== undefined ? { header: template.header } : {}),
+    body: template.body,
+    ...(template.footer !== undefined ? { footer: template.footer } : {}),
+    buttons: template.buttons,
+    variables: template.variables,
+    supported: template.unsupported === undefined,
+    ...(template.unsupported !== undefined ? { unsupportedReason: template.unsupported } : {}),
   };
 }
 

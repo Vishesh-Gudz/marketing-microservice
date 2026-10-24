@@ -6,14 +6,15 @@ import { useOrg } from "@/lib/analytics/org-context";
 import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
 import type { Notice } from "@/lib/connections/types";
 import { ConnectionNotice } from "../connections/connection-notice";
-import { PageHeader } from "../page-header";
+import { Breadcrumbs, PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
 import { ConnectWhatsApp, useEmbeddedSignup } from "../whatsapp/connect-whatsapp";
 import { WhatsAppAccounts } from "../whatsapp/whatsapp-accounts";
 
 /**
- * WhatsApp (ADR 0014, B3): admins connect a WhatsApp Business number through Meta's Embedded
- * Signup and follow its setup; every member sees the connected accounts. Non-admins never
+ * WhatsApp settings (/whatsapp/settings; ADR 0014, B3): admins connect a WhatsApp Business
+ * number through Meta's Embedded Signup and follow its setup; every member sees the connected
+ * accounts. The inbox is /whatsapp. Non-admins never
  * call v1/whatsapp:getSignupConfig and never load Meta's SDK. The result of the latest action
  * is shown at the top and receives focus, so it is announced and reachable.
  */
@@ -35,8 +36,9 @@ export function WhatsAppView() {
 
   return (
     <div className="flex flex-col gap-6">
+      <Breadcrumbs items={[{ label: "WhatsApp", href: "/whatsapp" }, { label: "Settings" }]} />
       <PageHeader
-        title="WhatsApp"
+        title="WhatsApp settings"
         description="Connect your WhatsApp Business number and follow its setup."
       />
       {notice && (

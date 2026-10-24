@@ -3,7 +3,10 @@ import { apiError } from "@/convex/lib/errors";
 import {
   accountCleanupText,
   accountSetupText,
+  deliveryProblemText,
   disconnectResultNotice,
+  SEND_ERROR_MESSAGES,
+  sendErrorNotice,
   SETUP_STATUS_LABELS,
   setupReasonText,
   setupResultNotice,
@@ -190,5 +193,87 @@ describe("disconnect texts", () => {
     expect(accountCleanupText({ ...disconnected, cleanup: { status: "failed" } })).toContain(
       "Meta business settings",
     );
+  });
+});
+
+// Every refusal reason sendText / sendTemplate / listTemplates can send (convex/whatsapp/
+// outbound.ts, convex/whatsapp/templates.ts). A new server reason must get its own text here.
+const SEND_REASONS = [
+  "service_window_closed",
+  "number_cannot_send",
+  "number_unavailable",
+  "reconnect_required",
+  "number_not_ready",
+  "template_unavailable",
+  "template_unsupported",
+  "credential_unavailable",
+  "missing_value",
+  "blank_value",
+  "too_long",
+  "header_too_long",
+  "body_too_long",
+  "unexpected_value",
+];
+
+describe("sendErrorNotice", () => {
+  it("has fixed words for every refusal reason, and only for those", () => {
+    expect(Object.keys(SEND_ERROR_MESSAGES).sort()).toEqual([...SEND_REASONS].sort());
+    for (const reason of SEND_REASONS) {
+      const notice = sendErrorNotice(apiError("CONFLICT", "server text never shown", { reason }));
+      expect(notice).toMatchObject(SEND_ERROR_MESSAGES[reason]!);
+      expect(notice.message).not.toContain("server text");
+      expect(notice.tone).toBe(reason === "service_window_closed" ? "warning" : "error");
+    }
+  });
+
+  it.each([
+    ["PROVIDER_ERROR", "Meta did not answer"],
+    ["INVALID_ARGUMENT", "Message not valid"],
+    ["FORBIDDEN", "Editors and admins only"],
+    ["UNAUTHENTICATED", "Signed out"],
+    ["NOT_FOUND", "Conversation not found"],
+  ] as const)("names a %s without a known reason", (code, title) => {
+    expect(sendErrorNotice(apiError(code, "server text"))).toMatchObject({ tone: "error", title });
+  });
+
+  it("falls back to a generic text for anything else", () => {
+    expect(sendErrorNotice(new Error("network down"))).toMatchObject({
+      tone: "error",
+      title: "Message not sent",
+    });
+  });
+});
+
+describe("deliveryProblemText", () => {
+  it("explains an unconfirmed message, and nothing for one on its way", () => {
+    expect(deliveryProblemText({ status: "unknown", failureReason: "timeout" })).toContain(
+      "check with the customer before sending it again",
+    );
+    for (const status of ["pending", "submitted", "sent", "delivered", "read"] as const) {
+      expect(deliveryProblemText({ status })).toBeNull();
+    }
+  });
+
+  it.each([
+    [131047, "24-hour reply window had closed"],
+    [131026, "could not deliver it to this number"],
+    [131049, "held it back"],
+    [131050, "stopped messages from businesses"],
+    [131056, "Too many messages"],
+    [130429, "Too many messages"],
+    [190, "Reconnect it in the WhatsApp settings"],
+    [132001, "Meta refused the template"],
+    [132018, "Meta refused the template"],
+  ])("explains Meta's code %s", (errorCode, text) => {
+    expect(deliveryProblemText({ status: "failed", errorCode })).toContain(text);
+  });
+
+  it.each([
+    ["not_sent", "could not be sent"],
+    ["number_unavailable", "could no longer send"],
+    ["reconnect_required", "Reconnect it"],
+    ["something_else", "could not be delivered"],
+  ])("explains a failure without a Meta code (%s)", (failureReason, text) => {
+    expect(deliveryProblemText({ status: "failed", failureReason })).toContain(text);
   });
 });

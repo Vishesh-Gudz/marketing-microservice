@@ -78,15 +78,17 @@ lib/analytics/                    pure logic: types, format, filters, deltas, st
 | `/social` (nav "Organic")                       | One Instagram account: 6 headline + 7 detail KPIs, UTC series, posts (lifetime totals)   | `socialAccounts:list`/`get`, `organicAnalytics:overview`/`accountSeries`, `socialPosts:list`, `connections:list`          |
 | `/social/posts/[postId]`                        | One post: caption, latest lifetime totals, lifetime totals at each capture               | `socialPosts:get`                                                                                                         |
 | `/connections`                                  | Google Ads and Meta Ads: status, Connect/Reconnect/Disconnect, accounts, link, sync      | `connections:list`/`listDiscoveredAssets`/`beginConnect`/`linkAdAccounts`/`refreshAssets`/`disconnect`, `adAccounts:list` |
-| `/whatsapp`                                     | WhatsApp: Connect WhatsApp (Meta Embedded Signup), setup progress, connected accounts    | `whatsapp:getSignupConfig`/`completeSignup`/`retrySetup`/`listAccounts`, `connections:list`                               |
+| `/whatsapp`                                     | WhatsApp inbox: conversations, newest activity first, reply window                       | `whatsapp:listConversations`                                                                                              |
+| `/whatsapp/conversations/[conversationId]`      | One conversation: messages and statuses, reply window, reply, templates                  | `whatsapp:getConversation`/`listMessages`/`sendText`/`listTemplates`/`sendTemplate`                                       |
+| `/whatsapp/settings`                            | WhatsApp settings: Connect WhatsApp (Embedded Signup), setup, connected accounts         | `whatsapp:getSignupConfig`/`completeSignup`/`retrySetup`/`listAccounts`, `connections:list`                               |
 
 There is no org-wide ads page: the API requires a campaign or ad-group parent for ads (read budget).
 Connection management is on `/connections` for the **ad platforms, Google Ads and Meta Ads**
 (ADR 0008, D17 amendments). Instagram (organic) connections stay out of the dashboard. An admin can
 disconnect a connection (after a confirmation); single accounts cannot be unlinked here. The
 "reconnect required" banner (Overview, Accounts, Organic) links to `/connections` for a Google
-Ads or Meta Ads connection and to `/whatsapp` for a WhatsApp connection; for Instagram it stays
-read-only. WhatsApp is connected on its own page, `/whatsapp` (see below). On `/accounts`, unlinked or
+Ads or Meta Ads connection and to `/whatsapp/settings` for a WhatsApp connection; for Instagram it
+stays read-only. WhatsApp is connected on its own page, `/whatsapp/settings` (see below). On `/accounts`, unlinked or
 reconnect-required Google Ads and Meta Ads accounts link to "Manage in Connections".
 
 A foreign, unknown or malformed entity id (API `NOT_FOUND`), or an ad group opened under the wrong
@@ -304,9 +306,52 @@ text. Unexpected errors never show their message.
   (`exchange_failed`), not during discovery; the notice can only suggest the cause.
 - Embedded (iframe) use is not a goal of the standalone SaaS (ADR 0012).
 
+## WhatsApp inbox
+
+`/whatsapp` ([ADR 0015](adr/0015-whatsapp-messaging.md)) lists the org's WhatsApp conversations,
+newest activity first, 25 at a time (**Show more conversations**): the contact's name (or `+`
+and their WhatsApp id), the business number, the time of the latest message and whether the
+reply window is open. Each opens `/whatsapp/conversations/[conversationId]`: the messages,
+oldest at the top, 30 at a time (**Show older messages**), each outbound one with its status, and
+the reply window. The inbox links to **WhatsApp settings** (below). Both pages use the public
+`v1/whatsapp` functions only; the server decides the org and the role, and an unknown or another
+org's conversation id renders the not-found page. Sending itself is described in
+[whatsapp.md](whatsapp.md#sending-messages-adr-0015); nothing has been sent through Meta.
+
+| Part                                                | Admin, editor | Viewer                                    |
+| --------------------------------------------------- | ------------- | ----------------------------------------- |
+| Conversations, messages, statuses, the reply window | yes           | yes                                       |
+| Reply box, template picker                          | yes           | no ("Only editors and admins can reply.") |
+
+1. **Reply window.** "Reply window open", with the time it closes, until 24 hours after the
+   customer's last message; otherwise "Templates only". The page re-checks it every 30 seconds,
+   and the server checks again when a reply is sent.
+2. **Reply box** (window open only). Up to 4096 characters, with a counter; **Send** sends once
+   (`sendText`). The draft keeps its `clientMessageId` until it is sent or edited, so pressing
+   Send again after an error can never send it twice.
+3. **Template picker** (at any time). **Choose a template** reads the approved templates from
+   Meta (`listTemplates`); ones this app cannot send yet are listed with the reason and cannot be
+   chosen. **Use this template** shows a field per variable (Meta's example as the placeholder),
+   a live preview and **Send template** (`sendTemplate`), enabled once every field is filled in.
+   The server checks every value again.
+4. **Statuses, in words:** Sending, Accepted by WhatsApp, Sent, Delivered, Read, Not delivered
+   (with the reason: the reply window had closed, the number may not use WhatsApp, too many
+   messages, reconnect in the settings, a refused template, …) and Not confirmed ("It may have
+   been sent: check with the customer before sending it again"). Refusals (window closed, a
+   number set up by support, reconnect required, a missing or too long value, …) appear above
+   the composer. All of these are fixed texts (`lib/whatsapp/messages.ts`); Meta's and the
+   server's own texts are never shown.
+5. **Messages.** Text keeps its line breaks; other types (photo, audio, …) are named but not
+   shown; a template shows the text the customer received.
+
+Limits: list and thread are separate pages, not a split view. A reply typed while the window
+closes is lost when the reply box gives way to templates. Sending needs a number connected through
+Embedded Signup; it has never run against Meta.
+
 ## WhatsApp (Embedded Signup)
 
-`/whatsapp` ([ADR 0014](adr/0014-whatsapp-connections.md), B3) lets an organization admin connect
+`/whatsapp/settings` ([ADR 0014](adr/0014-whatsapp-connections.md), B3; `/whatsapp` until the
+inbox took that path) lets an organization admin connect
 a WhatsApp Business number through Meta's Embedded Signup and follow its setup; every member sees
 the connected accounts. It uses the public `v1/whatsapp` functions only; the **server** verifies
 every Meta asset and decides who may act ([whatsapp.md](whatsapp.md#connecting-a-number-embedded-signup-adr-0014)).
@@ -356,7 +401,7 @@ every Meta asset and decides who may act ([whatsapp.md](whatsapp.md#connecting-a
    WhatsApp**. History stays visible to every member.
 
 Limits: Meta's SDK runs with the page's privileges (it can read what the page can, including the
-Clerk session cookie). It is loaded only from `/whatsapp`, for admins, when signup is available,
+Clerk session cookie). It is loaded only from `/whatsapp/settings`, for admins, when signup is available,
 but a script cannot be unloaded: once loaded it stays in the page, also after navigating to other
 pages, until a full reload. The
 app has no Content Security Policy yet. The real Meta flow needs an HTTPS origin listed in the Meta
@@ -436,14 +481,19 @@ If a dynamic route unexpectedly returns 404 in `next dev` after pulling new rout
   mutations fall back to the org gate's `ensureMock`). The Connections journey is covered in
   `components/dashboard/views/connections-view.test.tsx`; `tests/unit/connections-parity.test.ts`
   pins the dashboard's copies of the callback error codes and error reasons to the server's. The
-  WhatsApp page: `lib/whatsapp/*.test.ts` (sender check, message parsing, pairing, texts) and
-  `components/dashboard/views/whatsapp-view.test.tsx` (a stand-in for `next/script` and a fake
-  `FB`; nothing loads from Meta).
+  WhatsApp settings page: `lib/whatsapp/*.test.ts` (sender check, message parsing, pairing,
+  texts) and `components/dashboard/views/whatsapp-view.test.tsx` (a stand-in for `next/script`
+  and a fake `FB`; nothing loads from Meta). The WhatsApp inbox:
+  `whatsapp-inbox-view.test.tsx`, `whatsapp-conversation-view.test.tsx` and
+  `whatsapp-reply.test.tsx` (paging through the harness's `usePaginatedQueryMock` /
+  `loadMoreMock`, statuses, the reply window, roles, and the reply box and template picker against
+  mocked `sendText`, `listTemplates` and `sendTemplate`), with `lib/whatsapp/inbox.test.ts`,
+  `template-form.test.ts` and `messages.test.ts`.
 - Lint guards: `tests/lint/frontend-imports.test.ts`, `tests/lint/organic-dashboard-boundary.test.ts`.
 - Playwright: `dashboard.spec.ts`, `social.spec.ts` and `smoke.spec.ts` are CI-safe (shell,
-  navigation, gate, mobile menu, not-found, axe on every page including `/connections` and
-  `/whatsapp`). `whatsapp.spec.ts` checks the WhatsApp page's admin states locally (opt-in, see
-  below).
+  navigation, gate, mobile menu, not-found, axe on every page including `/connections`,
+  `/whatsapp` and `/whatsapp/settings`). `whatsapp.spec.ts` checks the WhatsApp inbox and
+  settings pages locally (opt-in, see below).
   `dashboard-data.spec.ts`, `social-data.spec.ts` and `org-status.spec.ts` are local-only:
   `E2E_DASHBOARD_DATA=1 npx playwright test` after `dev:auth setup` and `dev:seed`. The organic
   data is mock data; no real Instagram account has been used.
@@ -550,17 +600,20 @@ E2E_CONNECTIONS_JOURNEY=1 npm run test:e2e:connections -- meta-ads-journey
   and both fixtures). Residue is like the Google journey's: the org, revoked connections, unlinked
   accounts with their mock data and sync state, consumed OAuth states and audit entries.
 
-### WhatsApp page (local, opt-in)
+### WhatsApp pages (local, opt-in)
 
-`tests/e2e/whatsapp.spec.ts` opens `/whatsapp` as the dev-org admin against the local backend
-(`npm run dev:backend`, `npm run dev:auth setup`), with every request to Meta's hosts blocked and
-recorded:
+`tests/e2e/whatsapp.spec.ts` opens the inbox, `/whatsapp`, as the dev-org admin against the local
+backend (`npm run dev:backend`, `npm run dev:auth setup`), then follows **WhatsApp settings** to
+`/whatsapp/settings`, with every request to Meta's hosts blocked and recorded:
 
 ```bash
 E2E_WHATSAPP_PAGE=1 npx playwright test whatsapp
 ```
 
-Without the Meta app settings in the local Convex env the page says WhatsApp is not available and
+The inbox shows its conversations or "No conversations yet" and never requests Meta. Without the
+Meta app settings in the local Convex env the settings page says WhatsApp is not available and
 Meta's SDK is never requested; with them, the blocked SDK fails visibly and nothing can start. It
-checks accessibility (axe) too. It never runs a real signup: that needs the Meta configuration in
-[whatsapp.md](whatsapp.md#connect-ui-meta-configuration) and is a separate, manual test.
+checks accessibility (axe) on both pages too. It never runs a real signup or sends a message: a
+signup needs the Meta configuration in [whatsapp.md](whatsapp.md#connect-ui-meta-configuration),
+sending a connected number ([whatsapp.md](whatsapp.md#live-check-sending-adr-0015)); both are
+separate, manual tests.

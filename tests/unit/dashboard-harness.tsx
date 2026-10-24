@@ -81,8 +81,45 @@ export const useQueryMock = vi.fn(
   },
 );
 
+/** `loadMore` of every paginated query (one shared mock: assert calls on it). */
+export const loadMoreMock = vi.fn();
+
+/**
+ * Convex `usePaginatedQuery`: the registered result for the function (a value or a function of
+ * the arguments, like queries) is ONE page `{ page, isDone }` for the first page's arguments
+ * (`paginationOpts: { numItems: initialNumItems, cursor: null }`, recorded like a query's).
+ * Unregistered: still loading. Throwing inside it simulates a failed query.
+ */
+export const usePaginatedQueryMock = vi.fn(
+  (
+    ref: FunctionReference<"query">,
+    args: Record<string, unknown> | "skip",
+    options: { initialNumItems: number },
+  ) => {
+    const loading = {
+      results: [],
+      status: "LoadingFirstPage",
+      isLoading: true,
+      loadMore: loadMoreMock,
+    };
+    if (args === "skip") return loading;
+    const page = useQueryMock(ref, {
+      ...args,
+      paginationOpts: { numItems: options.initialNumItems, cursor: null },
+    }) as { page: unknown[]; isDone: boolean } | undefined;
+    if (page === undefined) return loading;
+    return {
+      results: page.page,
+      status: page.isDone ? "Exhausted" : "CanLoadMore",
+      isLoading: false,
+      loadMore: loadMoreMock,
+    };
+  },
+);
+
 export const convexReact = {
   useQuery: useQueryMock,
+  usePaginatedQuery: usePaginatedQueryMock,
   useConvexAuth: () => auth,
   useMutation: useMutationMock,
   useAction: useActionMock,
@@ -134,6 +171,8 @@ export function resetHarness() {
   queryResults.clear();
   stableResults.clear();
   useQueryMock.mockClear();
+  usePaginatedQueryMock.mockClear();
+  loadMoreMock.mockReset();
   ensureMock.mockReset();
   mutationMocks.clear();
   actionMocks.clear();

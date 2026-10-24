@@ -2,10 +2,11 @@
 
 - Status: in progress. B1 (data model, internal state changes, guards on the generic connection
   paths) and B2 (Embedded Signup action, WhatsApp Graph client, public API) are implemented and
-  tested in-process against a fake Graph; B3 (the connect page `/whatsapp`, Meta's JavaScript
-  SDK and the signup hand-off) is implemented and tested against a fake SDK; B4 (disconnect and
-  its Meta cleanup) and B4b (Meta's `PARTNER_REMOVED` webhook) are implemented and tested
-  against the fake Graph and signed fake deliveries. Nothing in this flow has run against Meta.
+  tested in-process against a fake Graph; B3 (the connect page, now `/whatsapp/settings`, Meta's
+  JavaScript SDK and the signup hand-off) is implemented and tested against a fake SDK; B4
+  (disconnect and its Meta cleanup) and B4b (Meta's `PARTNER_REMOVED` webhook) are implemented
+  and tested against the fake Graph and signed fake deliveries. Nothing in this flow has run
+  against Meta.
 - Date: 2026-10-24
 
 ## Context
@@ -170,9 +171,9 @@ registration):
 - Ten approved global indexes (convex/schema.test.ts); B4 added
   `whatsappPhoneNumbers.by_waba_status`; B4b reads `whatsappBusinessAccounts.by_waba_status`
   from the webhook too (no new index, no schema change).
-- Meta's JavaScript SDK is loaded from `/whatsapp` only (admins, signup available) but, like any
-  script, stays in the page until a full reload, with the page's privileges; the app has no
-  Content Security Policy yet.
+- Meta's JavaScript SDK is loaded from `/whatsapp/settings` only (admins, signup available) but,
+  like any script, stays in the page until a full reload, with the page's privileges; the app has
+  no Content Security Policy yet.
 - New Convex env vars (none secret): `WHATSAPP_CONNECTIONS_ENABLED`, `WHATSAPP_APP_ID`,
   `WHATSAPP_ES_CONFIG_ID`. The signup reuses `WHATSAPP_APP_SECRET`.
 - Unverified until a real signup: the exact `debug_token` shape for business integration
@@ -190,6 +191,6 @@ registration):
 - B4b needs the `account_update` field subscribed in the Meta app (Meta requires it for Embedded
   Signup); until then no partner removal is seen.
 - Remaining work: B5 (Meta data-deletion callback); other `account_update` events
-  (`PARTNER_APP_UNINSTALLED`, `ACCOUNT_OFFBOARDED`, `ACCOUNT_DELETED`); then outbound messages
-  and templates. A first real signup needs the Meta configuration in docs/whatsapp.md
-  ("Connect UI: Meta configuration").
+  (`PARTNER_APP_UNINSTALLED`, `ACCOUNT_OFFBOARDED`, `ACCOUNT_DELETED`). Outbound messages and
+  templates: [ADR 0015](0015-whatsapp-messaging.md). A first real signup needs the Meta
+  configuration in docs/whatsapp.md ("Connect UI: Meta configuration").
