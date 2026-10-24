@@ -30,13 +30,14 @@ URL: `<CONVEX_SITE_URL>/whatsapp/webhook`.
 
 Processing is asynchronous: the POST stores events and schedules their processing.
 
-Only `messages` changes are read. Changes for other subscribed fields (template, quality,
-account updates, …) are acknowledged and ignored whatever their `value` holds, so they never
-reject the messages delivered beside them; a malformed `messages` change still rejects the whole
-delivery (400). The Content-Length check is tested in-process only: whether Convex's HTTP front
-end passes a malformed header through to the action at all is unverified. Only the `messages`
-field needs a subscription; Meta's dashboard has been seen to subscribe others automatically,
-and they are ignored.
+Only `messages` changes are read, plus `account_update` `PARTNER_REMOVED` (see "Partner removal"
+below). Changes for other subscribed fields (template, quality, other account updates, …), and
+malformed `account_update` changes, are acknowledged and ignored whatever their `value` holds,
+so they never reject the messages delivered beside them; a malformed `messages` change still
+rejects the whole delivery (400). The Content-Length check is tested in-process only: whether
+Convex's HTTP front end passes a malformed header through to the action at all is unverified.
+The inbox needs only the `messages` field; connected accounts also need `account_update`. Meta's
+dashboard has been seen to subscribe others automatically, and they are ignored.
 
 ## Configuration (Convex environment variables)
 
@@ -210,7 +211,10 @@ None of this is configured or tested yet; each step is an operator task with its
    and `whatsapp_business_messaging`, business verification and Tech Provider status.
 5. `WHATSAPP_CONNECTIONS_ENABLED=true` on the cloud deployment that serves the page. It opens new
    connections for every organization there; until then the page says WhatsApp is not available.
-6. Meta recommends subscribing the `account_update` webhook field (ADR 0014 B4).
+6. The `account_update` webhook field subscribed (App Dashboard → WhatsApp → Configuration →
+   Webhook fields). Meta requires it for Embedded Signup; without it a customer's partner
+   removal is never seen ("Partner removal" below). Account-level webhooks always go to the
+   app's default callback URL (no override).
 
 Page behaviour worth knowing for a first real test: the browser shows Meta's error code and
 session id (never Meta's error text) when the signup fails in the Meta window; "Signup did not
@@ -255,6 +259,43 @@ left, as for every provider.
 
 Unverified at Meta: whether `DELETE subscribed_apps` is harmless to repeat, whether it removes only
 our app's subscription, and what Meta does with the WABA's deliveries afterwards.
+
+## Partner removal (Meta `PARTNER_REMOVED`)
+
+When a customer unshares their WABA in Meta, Meta sends an `account_update` webhook with
+`event: "PARTNER_REMOVED"` (ADR 0014 B4b). Tested against signed fake deliveries and a fake Graph
+only; never run against Meta.
+
+- **Read:** only `value.waba_info.waba_id`. In Meta's example `entry[].id` is a business id, not
+  the WABA, and is never read; the coexistence variant without `waba_info` is ignored.
+- **Not trusted alone:** Meta describes the event as the WABA being unshared with a Solution
+  Partner, not necessarily us, and does not say which apps receive it. For the one org that has
+  the WABA connected (its id was verified with Meta at signup), the webhook reads the WABA once
+  with that org's stored token (`GET /{waba}`):
+  - Meta answers: our access remains (another partner was removed, or the event is older than a
+    reconnect). Acknowledged; nothing changes.
+  - Meta refuses the token (190, 102, HTTP 401) or access to the WABA (10, 200, 803, or 100 with
+    subcode 33; these four are assumed): the account is disconnected, in one transaction.
+  - Anything else (network, timeout, 5xx, rate limit, a token that cannot be decrypted): the
+    delivery is answered 500 and Meta retries it (Meta documents up to 7 days). At most 10 WABAs
+    are checked per delivery; the rest wait for the retry.
+- **Disconnecting:** the account's active numbers stop routing, the connection is revoked and the
+  token and PIN are deleted at once; the account shows as disconnected and can be connected again
+  with a new signup. Nothing is called at Meta (no unsubscribe, no deregister): our access is
+  gone. Audited as `system:whatsapp-webhook`: `whatsapp.number_disconnected`,
+  `connection.disconnected`, `credential.deleted` and `whatsapp.partner_removed`.
+- **Never touched:** other orgs' rows, older disconnected accounts for the WABA, operator-managed
+  numbers, a WABA no org has connected, and an account an admin disconnected meanwhile (its own
+  cleanup continues). A reconnect made while the check runs is never undone: the write re-checks
+  the credential version the check used. Repeats find nothing active and call nothing.
+
+Unverified at Meta: which apps receive `PARTNER_REMOVED`; that `waba_info` is present for normal
+Embedded Signup customers; what reading the WABA answers after a removal (the four access codes
+above are assumed), and whether access ends at once (if the read still succeeds just after a
+removal, the event is ignored and the account stays connected until its token is next refused);
+whether Meta removes our webhook subscription itself; and whether re-adding the partner works at
+once. Not handled: `PARTNER_APP_UNINSTALLED`, `ACCOUNT_OFFBOARDED`, `ACCOUNT_DELETED` and the
+other `account_update` events.
 
 ## Public API
 
@@ -418,4 +459,6 @@ Everything below is still modeled on Meta's documentation and unverified:
   business integration token (`granular_scopes` WABA ids, `expires_at`), the `subscribed_apps`
   and `register` answers, Meta's error codes for a reused code, a PIN mismatch, a rate limit or a
   refused business token (190 / 102 / 401 assumed), when a 133016 limit clears, and whether
-  re-subscribing an already subscribed WABA is harmless.
+  re-subscribing an already subscribed WABA is harmless;
+- partner removal (never seen): who receives `PARTNER_REMOVED`, its real shape, and what
+  `GET /{waba}` answers with the customer's token afterwards ("Partner removal").

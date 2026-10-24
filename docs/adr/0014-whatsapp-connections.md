@@ -4,8 +4,8 @@
   paths) and B2 (Embedded Signup action, WhatsApp Graph client, public API) are implemented and
   tested in-process against a fake Graph; B3 (the connect page `/whatsapp`, Meta's JavaScript
   SDK and the signup hand-off) is implemented and tested against a fake SDK; B4 (disconnect and
-  its Meta cleanup) is implemented and tested against the fake Graph. Nothing in this flow has
-  run against Meta.
+  its Meta cleanup) and B4b (Meta's `PARTNER_REMOVED` webhook) are implemented and tested
+  against the fake Graph and signed fake deliveries. Nothing in this flow has run against Meta.
 - Date: 2026-10-24
 
 ## Context
@@ -143,14 +143,33 @@ registration):
     the WABA (`disconnect_in_progress`, D5); a setup call that subscribes after the disconnect
     undoes its subscription. The generic connection sweep leaves a revoked WhatsApp connection's
     credential alone for 24 hours (D6); every other provider is unchanged. Automatic disconnect
-    on Meta's `account_update` `PARTNER_REMOVED` is deferred (D7).
+    on Meta's `account_update` `PARTNER_REMOVED` was deferred (D7) to B4b, decision 15.
+15. **Partner removal** (B4b, P1–P9): Meta documents `PARTNER_REMOVED` as a WABA being
+    unshared with a Solution Partner, not necessarily us, and not which apps receive it, so the
+    signed event alone changes nothing (P1). The parser reads only `value.waba_info.waba_id`
+    (`entry[].id` is a business id in Meta's example; the coexistence shape without `waba_info`
+    is ignored, P2) and never rejects a delivery for an `account_update` change. For the one
+    active account holding that WABA (approved global index
+    `whatsappBusinessAccounts.by_waba_status`, now also read by the webhook, P6; none, or more
+    than one, means nothing to do), the webhook reads the WABA with that org's stored token
+    (`convex/whatsapp/partnerRemoval.ts`). A refused token (190 / 102 / 401) or refused WABA
+    access (10 / 200 / 803 / 100 with subcode 33, assumed) disconnects the account in one
+    transaction: numbers stop routing, the connection is revoked, the credential is deleted at
+    once, no Meta write call, no `offboarding` record, audited as `system:whatsapp-webhook` with
+    `whatsapp.partner_removed` (P3, P4). Meta still answering means another partner's removal or
+    an event older than a reconnect: nothing changes. Anything else is answered 500 so that
+    Meta's retry (up to 7 days) is the retry; at most 10 WABAs are checked per delivery (P9).
+    The write re-checks the account, connection and credential version the check used, so a
+    reconnect or an admin disconnect made meanwhile wins; a pending admin cleanup is left alone
+    (P5). Only `PARTNER_REMOVED` is handled (P7); the page and DTO are unchanged (P8).
 
 ## Consequences
 
 - `v1/connections:list` can return connections with provider `whatsapp` (additive enum value);
   five new `v1/whatsapp` functions (additive).
 - Ten approved global indexes (convex/schema.test.ts); B4 added
-  `whatsappPhoneNumbers.by_waba_status`.
+  `whatsappPhoneNumbers.by_waba_status`; B4b reads `whatsappBusinessAccounts.by_waba_status`
+  from the webhook too (no new index, no schema change).
 - Meta's JavaScript SDK is loaded from `/whatsapp` only (admins, signup available) but, like any
   script, stays in the page until a full reload, with the page's privileges; the app has no
   Content Security Policy yet.
@@ -162,9 +181,15 @@ registration):
   hours after the limit was reached, whether re-subscribing is harmless, and the
   `granular_scopes` grants for a WABA shared with several apps. For B4: whether
   `DELETE subscribed_apps` is harmless to repeat, whether it removes only our app's
-  subscription, what Meta does with deliveries afterwards, and whether `oauth/revoke` or
-  `PARTNER_REMOVED` apply to Embedded Signup business tokens and Cloud API customers.
-- Remaining work: B4b (`account_update` webhooks, e.g. `PARTNER_REMOVED`, which needs the field
-  subscribed in the Meta app), B5 (Meta data-deletion callback); then outbound messages and
-  templates. A first real
-  signup needs the Meta configuration in docs/whatsapp.md ("Connect UI: Meta configuration").
+  subscription, what Meta does with deliveries afterwards, and whether `oauth/revoke` applies to
+  Embedded Signup business tokens. For B4b: which apps receive `PARTNER_REMOVED`, whether
+  `waba_info` is present for Embedded Signup customers, what `GET /{waba}` answers with the
+  customer's token after a removal (the access codes are assumed) and whether access ends at
+  once (a read that still succeeds right after a removal leaves the account connected), whether
+  Meta removes our subscription itself, and whether re-adding the partner works at once.
+- B4b needs the `account_update` field subscribed in the Meta app (Meta requires it for Embedded
+  Signup); until then no partner removal is seen.
+- Remaining work: B5 (Meta data-deletion callback); other `account_update` events
+  (`PARTNER_APP_UNINSTALLED`, `ACCOUNT_OFFBOARDED`, `ACCOUNT_DELETED`); then outbound messages
+  and templates. A first real signup needs the Meta configuration in docs/whatsapp.md
+  ("Connect UI: Meta configuration").
