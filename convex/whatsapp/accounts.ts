@@ -56,6 +56,18 @@ async function wabaActiveElsewhere(
   return active.some((row) => row.orgId !== orgId);
 }
 
+/**
+ * Whether any org's account for this WABA still has its disconnect cleanup pending
+ * (convex/whatsapp/offboarding.ts). Same approved global index; rows are only compared.
+ */
+async function offboardingPending(db: DatabaseReader, wabaId: string): Promise<boolean> {
+  const accounts = await db
+    .query("whatsappBusinessAccounts")
+    .withIndex("by_waba_status", (q) => q.eq("wabaId", wabaId))
+    .take(100);
+  return accounts.some((account) => account.offboarding?.status === "pending");
+}
+
 export const recordConnection = internalMutation({
   args: {
     orgId: v.id("organizations"),
@@ -101,6 +113,7 @@ export const recordConnection = internalMutation({
         v.literal("credential_changed"),
         v.literal("phone_number_in_use"),
         v.literal("phone_number_operator_managed"),
+        v.literal("disconnect_in_progress"),
       ),
     }),
   ),
@@ -119,6 +132,11 @@ export const recordConnection = internalMutation({
     // Another org's WABA wins; its identity is never revealed.
     if (await wabaActiveElsewhere(ctx.db, args.wabaId, args.orgId)) {
       return { ok: false as const, reason: "waba_in_use" as const };
+    }
+    // A disconnect's Meta cleanup still running for this WABA (any org) would unsubscribe the
+    // new connection's webhooks: wait until it is done or gave up (ADR 0014 B4, D5).
+    if (await offboardingPending(ctx.db, args.wabaId)) {
+      return { ok: false as const, reason: "disconnect_in_progress" as const };
     }
     if (args.expectedCredentialVersion !== undefined) {
       const existing = await ctx.db
@@ -174,6 +192,9 @@ export const recordConnection = internalMutation({
         subscribedAt: undefined,
         setupError: undefined,
         disconnectedAt: undefined,
+        // A reconnect after a finished disconnect starts a new lifecycle.
+        disconnectedBySubject: undefined,
+        offboarding: undefined,
         updatedAt: now,
       });
     } else {

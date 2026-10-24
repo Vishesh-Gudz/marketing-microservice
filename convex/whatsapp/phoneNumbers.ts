@@ -263,19 +263,39 @@ export const disconnect = internalMutation({
     requireOperatorSubject(actorSubject);
     const row = await ctx.db.get(numberId);
     if (row === null || row.status !== "active") return false;
-    const now = Date.now();
-    await ctx.db.patch(row._id, { status: "disconnected", disconnectedAt: now, updatedAt: now });
     const org = await ctx.db.get(row.orgId);
-    await writeAudit(
+    await disconnectNumberRow(
       ctx.db,
+      row,
       { orgId: row.orgId, issuer: org?.issuer ?? "", subject: actorSubject },
-      {
-        action: AUDIT_ACTIONS.whatsappNumberDisconnected,
-        targetType: "whatsappPhoneNumber",
-        targetId: row._id,
-        changes: { status: { from: "active", to: "disconnected" } },
-      },
+      Date.now(),
     );
     return true;
   },
 });
+
+/**
+ * Stops routing one active number to its org, audited for `actor` (the operator path above, or
+ * a WhatsApp account disconnect, convex/whatsapp/offboarding.ts). From this commit on, webhook
+ * deliveries for the number are acknowledged and dropped; history is kept. A registration
+ * claim is dropped too (claimRegistration refuses a disconnected number anyway).
+ */
+export async function disconnectNumberRow(
+  db: DatabaseWriter,
+  row: Doc<"whatsappPhoneNumbers">,
+  actor: { orgId: Id<"organizations">; issuer: string; subject: string },
+  now: number,
+): Promise<void> {
+  await db.patch(row._id, {
+    status: "disconnected",
+    disconnectedAt: now,
+    ...(row.registrationClaimedUntil !== undefined ? { registrationClaimedUntil: undefined } : {}),
+    updatedAt: now,
+  });
+  await writeAudit(db, actor, {
+    action: AUDIT_ACTIONS.whatsappNumberDisconnected,
+    targetType: "whatsappPhoneNumber",
+    targetId: row._id,
+    changes: { status: { from: "active", to: "disconnected" } },
+  });
+}

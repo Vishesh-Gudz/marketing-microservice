@@ -13,7 +13,9 @@ import { FAKE_WA_APP_SECRET, stubWhatsAppEnv } from "./fakeWebhook.fixtures";
  * - GET debug_token?input_token (app token) -> validity, app, scopes and the WABA ids in the
  *   `whatsapp_business_management` granular scope;
  * - GET /{waba}?fields=id,name and GET /{waba}/phone_numbers (cursor paging), business token;
- * - POST /{waba}/subscribed_apps and POST /{phone}/register (JSON body) -> { success: true }.
+ * - POST /{waba}/subscribed_apps and POST /{phone}/register (JSON body) -> { success: true };
+ * - DELETE /{waba}/subscribed_apps -> { success: true } ("Managing webhooks"; the fake also
+ *   answers it for a WABA that is not subscribed, which Meta does not document).
  *
  * It is NOT evidence of real Meta behavior: error codes are generic (code 100) unless a test
  * injects a documented one, and nothing here is a recording. All ids and secrets are fake.
@@ -49,7 +51,7 @@ export type FakeWaba = {
 };
 
 export type FakeRoute =
-  "exchange" | "debug_token" | "waba" | "phone_numbers" | "subscribe" | "register";
+  "exchange" | "debug_token" | "waba" | "phone_numbers" | "subscribe" | "unsubscribe" | "register";
 
 /** An HTTP answer (any status, JSON body), a thrown fetch, a call that never answers, or HTML. */
 export type FakeFailure = { status: number; body?: unknown } | "network" | "hang" | "invalid_json";
@@ -107,6 +109,7 @@ function routeOf(method: string, path: string): FakeRoute | "unknown" {
   if (method === "GET" && /^\d+$/.test(path)) return "waba";
   if (method === "GET" && /^\d+\/phone_numbers$/.test(path)) return "phone_numbers";
   if (method === "POST" && /^\d+\/subscribed_apps$/.test(path)) return "subscribe";
+  if (method === "DELETE" && /^\d+\/subscribed_apps$/.test(path)) return "unsubscribe";
   if (method === "POST" && /^\d+\/register$/.test(path)) return "register";
   return "unknown";
 }
@@ -199,6 +202,15 @@ export function createFakeWhatsAppGraph(): FakeWhatsAppGraph {
           return json(400, graphError(100, 400, 33).body);
         }
         subscribed.add(wabaId);
+        return json(200, { success: true });
+      }
+      case "unsubscribe": {
+        const signup = await bearer(call);
+        const wabaId = call.path.split("/")[0]!;
+        if (signup === null || sharedWaba(signup, wabaId) === undefined) {
+          return json(400, graphError(100, 400, 33).body);
+        }
+        subscribed.delete(wabaId);
         return json(200, { success: true });
       }
       case "register": {

@@ -43,6 +43,37 @@ export const whatsappTables = {
       }),
     ),
     disconnectedAt: v.optional(v.number()),
+    /** The signed-in admin who disconnected the account (ADR 0014 B4). */
+    disconnectedBySubject: v.optional(v.string()),
+    /**
+     * Meta cleanup after a disconnect (convex/whatsapp/offboarding.ts): unsubscribing our app
+     * from the WABA's webhooks with the stored token, then deleting the credential. `pending`
+     * until it is done or gives up (`failed`); a new signup for the WABA waits until then.
+     */
+    offboarding: v.optional(
+      v.object({
+        status: v.union(v.literal("pending"), v.literal("done"), v.literal("failed")),
+        /** How it finished (done): unsubscribed, skipped (WABA still used), token refused, or no token. */
+        result: v.optional(
+          v.union(
+            v.literal("unsubscribed"),
+            v.literal("skipped_shared"),
+            v.literal("token_invalid"),
+            v.literal("credential_missing"),
+          ),
+        ),
+        /** Sanitized reason code of the latest failed attempt. */
+        lastFailure: v.optional(v.string()),
+        /** Cleanup attempts made (each counted when claimed). */
+        attempts: v.number(),
+        startedAt: v.number(),
+        /** The next scheduled attempt (pending only). */
+        nextAttemptAt: v.optional(v.number()),
+        /** An attempt holds the cleanup until then (one at a time; expires alone). */
+        claimedUntil: v.optional(v.number()),
+        finishedAt: v.optional(v.number()),
+      }),
+    ),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -94,7 +125,12 @@ export const whatsappTables = {
     // GLOBAL (approved exception): webhook deliveries are authenticated as Meta, not as a
     // tenant; the org is resolved from phone_number_id and the row is re-verified (active,
     // WABA match, unique) before anything is written.
-    .index("by_phone_number_status", ["phoneNumberId", "status"]),
+    .index("by_phone_number_status", ["phoneNumberId", "status"])
+    // GLOBAL (approved exception, ADR 0014 B4): before a disconnected account's WABA is
+    // unsubscribed from our app's webhooks, the cleanup checks whether any org still has an
+    // active number on that WABA (an operator-managed number, or another org's). Rows found are
+    // only counted, never returned or written.
+    .index("by_waba_status", ["wabaId", "status"]),
 
   /**
    * One webhook event (message or status) as received, keyed for idempotency. Meta retries and

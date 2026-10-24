@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation } from "../_generated/server";
 import { AUDIT_ACTIONS, SYSTEM_SWEEP_SUBJECT, writeAudit } from "../lib/audit";
+import { WHATSAPP_REVOKED_CREDENTIAL_GRACE_MS } from "../whatsapp/config";
 import { STATE_RETENTION_MS, SWEEP_BATCH } from "./config";
 import { deleteCredential, deleteExpiredGrants } from "./credentialStore";
 
@@ -10,7 +11,10 @@ import { deleteCredential, deleteExpiredGrants } from "./credentialStore";
  * 1. Deletes expired pending states and old consumed/failed states.
  * 2. S2: deletes unclaimed OAuth grants (encrypted credentials) past their expiry.
  * 3. Marks active connections whose access token expired as needs_reauth (Meta ~60 days).
- * 4. Backstop: deletes credentials still attached to revoked connections.
+ * 4. Backstop: deletes credentials still attached to revoked connections. A revoked WhatsApp
+ *    connection keeps its credential for WHATSAPP_REVOKED_CREDENTIAL_GRACE_MS (ADR 0014 B4: its
+ *    disconnect cleanup still unsubscribes with the token and deletes it itself); every other
+ *    provider is unchanged.
  */
 export const sweep = internalMutation({
   args: {},
@@ -73,6 +77,12 @@ export const sweep = internalMutation({
       .withIndex("by_status_expires", (q) => q.eq("status", "revoked"))
       .take(SWEEP_BATCH);
     for (const connection of revoked) {
+      if (
+        connection.provider === "whatsapp" &&
+        (connection.revokedAt ?? 0) > now - WHATSAPP_REVOKED_CREDENTIAL_GRACE_MS
+      ) {
+        continue;
+      }
       if (await deleteCredential(ctx.db, connection.orgId, connection._id)) {
         const org = await ctx.db.get(connection.orgId);
         await writeAudit(

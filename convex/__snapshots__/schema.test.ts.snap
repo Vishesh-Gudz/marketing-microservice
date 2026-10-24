@@ -332,6 +332,10 @@ exports[`schema inventory > declares the approved indexes 1`] = `
       "phoneNumberId",
       "status",
     ],
+    "by_waba_status": [
+      "wabaId",
+      "status",
+    ],
   },
   "whatsappWebhookEvents": {
     "by_org_dedupe": [
