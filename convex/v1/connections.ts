@@ -12,13 +12,14 @@ import {
   oauthRedirectUri,
   providerRegistry,
 } from "../connections/config";
-import { disconnectConnection } from "../connections/lifecycle";
+import { disconnectConnection, requireOAuthConnection } from "../connections/lifecycle";
 import { discoverAfterClaim } from "../connections/oauthFlow";
 import {
   discoveredSocialAccountsOf,
   linkSocialAccounts as linkSocial,
   unlinkSocialAccount as unlinkSocial,
 } from "../connections/socialAssets";
+import { isOAuthConnectionProvider, type StoredConnectionProvider } from "../domain/types";
 import { connectionProviderValidator } from "../domain/validators";
 import { pkceChallengeS256, randomToken, sha256Base64Url } from "../lib/crypto";
 import { toIso } from "../lib/dto";
@@ -47,9 +48,11 @@ import {
  * separate functions and tables and can never be linked through each other's path.
  */
 
-function requiredScopes(provider: Parameters<ReturnType<typeof providerRegistry>["oauth"]>[0]) {
+function requiredScopes(provider: StoredConnectionProvider) {
   const registry = providerRegistry();
-  return registry.hasOAuth(provider) ? registry.oauth(provider).requiredScopes : [];
+  return isOAuthConnectionProvider(provider) && registry.hasOAuth(provider)
+    ? registry.oauth(provider).requiredScopes
+    : [];
 }
 
 /**
@@ -281,6 +284,7 @@ export const refreshAssets = orgAdminMutation({
   returns: v.null(),
   handler: async (ctx, { connectionId }) => {
     const connection = await getOwned(ctx, "connections", connectionId);
+    requireOAuthConnection(connection);
     if (connection.status !== "active") {
       throw apiError("CONFLICT", "The connection is not active.", {
         reason: "connection_inactive",

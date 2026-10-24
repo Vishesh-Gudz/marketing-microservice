@@ -3,8 +3,8 @@ import type { Doc } from "../../_generated/dataModel";
 import {
   adAccountStatusValidator,
   adPlatformValidator,
-  connectionProviderValidator,
   managerStatusValidator,
+  storedConnectionProviderValidator,
   testAccountStatusValidator,
 } from "../../domain/validators";
 import { effectiveManagerStatus, effectiveTestAccountStatus } from "../../connections/assetStatus";
@@ -21,8 +21,11 @@ const EXPIRES_SOON_MS = 10 * 24 * 60 * 60 * 1000;
  */
 export const connectionDto = v.object({
   id: v.string(),
-  /** Phase 10: widened with "instagram" (additive enum value; v1 freezes in Phase 13). */
-  provider: connectionProviderValidator,
+  /**
+   * Phase 10: widened with "instagram"; ADR 0014: with "whatsapp" (additive enum values; v1
+   * freezes in Phase 13).
+   */
+  provider: storedConnectionProviderValidator,
   displayName: v.optional(v.string()),
   status: connectionStatusValidator,
   grantedScopes: v.array(v.string()),

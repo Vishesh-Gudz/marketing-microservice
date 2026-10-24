@@ -8,7 +8,7 @@ import {
   type DatabaseReader,
   type DatabaseWriter,
 } from "../_generated/server";
-import type { ConnectionProvider } from "../domain/types";
+import type { ConnectionProvider, StoredConnectionProvider } from "../domain/types";
 import { AUDIT_ACTIONS, SYSTEM_SWEEP_SUBJECT, writeAudit } from "../lib/audit";
 import {
   CREDENTIAL_ALGORITHM,
@@ -42,7 +42,7 @@ const encryptedValidator = v.object({
 
 export type CredentialBinding = {
   orgId: string;
-  provider: ConnectionProvider;
+  provider: StoredConnectionProvider;
   externalUserId: string;
 };
 

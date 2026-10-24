@@ -18,11 +18,24 @@ export const SOCIAL_PLATFORMS = ["instagram", "facebook"] as const;
 export type SocialPlatform = (typeof SOCIAL_PLATFORMS)[number];
 
 /**
- * What an org can connect (Phase 4 connections). The ad platforms plus Instagram Login
- * (Phase 10: organic Instagram only, never Instagram ads, which stay Meta ads).
+ * What an org can connect through the generic OAuth flow (Phase 4 connections). The ad
+ * platforms plus Instagram Login (Phase 10: organic Instagram only, never Instagram ads,
+ * which stay Meta ads). OAuth states, grants and `beginConnect` accept only these.
  */
 export const CONNECTION_PROVIDERS = ["meta", "google_ads", "instagram"] as const;
 export type ConnectionProvider = (typeof CONNECTION_PROVIDERS)[number];
+
+/**
+ * Every provider a stored connection can have: the OAuth providers plus WhatsApp (ADR 0014),
+ * which connects through Embedded Signup, never through the generic OAuth flow.
+ */
+export const STORED_CONNECTION_PROVIDERS = [...CONNECTION_PROVIDERS, "whatsapp"] as const;
+export type StoredConnectionProvider = (typeof STORED_CONNECTION_PROVIDERS)[number];
+
+/** True for providers that use the generic OAuth flow (everything except WhatsApp). */
+export function isOAuthConnectionProvider(value: string): value is ConnectionProvider {
+  return (CONNECTION_PROVIDERS as readonly string[]).includes(value);
+}
 
 /**
  * Connection providers that grant access to organic social accounts (not ad accounts).
