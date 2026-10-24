@@ -5,9 +5,11 @@ import {
   CUSTOMER_2,
   PHONE_A,
   WABA_A,
+  WABA_B,
   delivery,
   entry,
   message,
+  partnerRemovedEntry,
 } from "./fakeWebhook.fixtures";
 import { parseWebhookPayload } from "./payload";
 
@@ -148,6 +150,7 @@ describe("parseWebhookPayload: events", () => {
           ],
         },
       ],
+      partnerRemovals: [],
       skipped: 0,
       ignoredFields: 0,
     });
@@ -252,7 +255,7 @@ describe("parseWebhookPayload: events", () => {
         },
       ],
     };
-    expect(ok(body)).toEqual({ changes: [], skipped: 0, ignoredFields: 1 });
+    expect(ok(body)).toEqual({ changes: [], partnerRemovals: [], skipped: 0, ignoredFields: 1 });
   });
 
   it.each([
@@ -275,4 +278,90 @@ describe("parseWebhookPayload: events", () => {
       expect(parsed.changes.flatMap((c) => c.events.map((e) => e.wamid))).toEqual(["wamid.kept"]);
     },
   );
+});
+
+describe("parseWebhookPayload: partner removal (account_update, ADR 0014 B4b)", () => {
+  it("reads the WABA of Meta's documented PARTNER_REMOVED example, never entry.id", () => {
+    // Meta's example (webhooks reference, account_update), fake ids: entry.id is a business.
+    const body = {
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "2949482758682047",
+          time: 1748477359,
+          changes: [
+            {
+              value: {
+                event: "PARTNER_REMOVED",
+                waba_info: { waba_id: WABA_A, owner_business_id: "2329417887457253" },
+              },
+              field: "account_update",
+            },
+          ],
+        },
+      ],
+    };
+    expect(ok(body)).toEqual({
+      changes: [],
+      partnerRemovals: [WABA_A],
+      skipped: 0,
+      ignoredFields: 0,
+    });
+    // An entry id that is itself a WABA we know is still not read.
+    expect(ok(delivery({ ...partnerRemovedEntry(WABA_A), id: WABA_B })).partnerRemovals).toEqual([
+      WABA_A,
+    ]);
+  });
+
+  it("reads the variant with disconnection_info", () => {
+    const body = delivery(
+      partnerRemovedEntry(WABA_A, {
+        disconnection_info: { reason: "PRIMARY_INACTIVITY", initiated_by: "SYSTEM" },
+      }),
+    );
+    expect(ok(body).partnerRemovals).toEqual([WABA_A]);
+  });
+
+  it("lists each WABA once", () => {
+    const body = delivery(
+      partnerRemovedEntry(WABA_A),
+      partnerRemovedEntry(WABA_B),
+      partnerRemovedEntry(WABA_A),
+    );
+    expect(ok(body).partnerRemovals).toEqual([WABA_A, WABA_B]);
+  });
+
+  it.each([
+    ["another event", { event: "PARTNER_ADDED" }],
+    ["an app uninstall", { event: "PARTNER_APP_UNINSTALLED" }],
+    ["a deleted account", { event: "ACCOUNT_DELETED", waba_info: undefined }],
+    ["the event in another case", { event: "partner_removed" }],
+    ["the coexistence shape without waba_info", { waba_info: undefined, phone_number: "1555" }],
+    ["waba_info that is not an object", { waba_info: [WABA_A] }],
+    ["a waba_id that is not numeric", { waba_info: { waba_id: "abc" } }],
+    ["a numeric waba_id", { waba_info: { waba_id: 100000000000001 } }],
+    ["no waba_id", { waba_info: { owner_business_id: "400000000000001" } }],
+  ])(
+    "ignores (never rejects) an account_update with %s, and reads the messages beside it",
+    (_label, override) => {
+      const body = delivery(
+        partnerRemovedEntry(WABA_A, override),
+        entry({ messages: [{ id: "wamid.kept", text: "hi" }] }),
+      );
+      const parsed = ok(body);
+      expect(parsed.partnerRemovals).toEqual([]);
+      expect(parsed.ignoredFields).toBe(1);
+      expect(parsed.changes.flatMap((c) => c.events.map((e) => e.wamid))).toEqual(["wamid.kept"]);
+    },
+  );
+
+  it("reads a partner removal and messages in the same delivery", () => {
+    const body = delivery(
+      entry({ messages: [{ id: "wamid.kept", text: "hi" }] }),
+      partnerRemovedEntry(WABA_A),
+    );
+    const parsed = ok(body);
+    expect(parsed.partnerRemovals).toEqual([WABA_A]);
+    expect(parsed.changes.flatMap((c) => c.events.map((e) => e.wamid))).toEqual(["wamid.kept"]);
+  });
 });

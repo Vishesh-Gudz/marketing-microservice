@@ -134,6 +134,33 @@ export function entry(options: {
   };
 }
 
+/** `entry[].id` of Meta's documented PARTNER_REMOVED example: a business, not the WABA. */
+export const PARTNER_BUSINESS_ID = "300000000000001";
+
+/**
+ * An `account_update` `PARTNER_REMOVED` entry in Meta's documented shape (webhooks reference,
+ * account_update, 2026-10-24); `extraValue` adds to or overrides its `value`.
+ */
+export function partnerRemovedEntry(
+  wabaId: string,
+  extraValue: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    id: PARTNER_BUSINESS_ID,
+    time: nowSeconds(),
+    changes: [
+      {
+        value: {
+          event: "PARTNER_REMOVED",
+          waba_info: { waba_id: wabaId, owner_business_id: "400000000000001" },
+          ...extraValue,
+        },
+        field: "account_update",
+      },
+    ],
+  };
+}
+
 export function delivery(...entries: Record<string, unknown>[]): Record<string, unknown> {
   return { object: "whatsapp_business_account", entry: entries };
 }
