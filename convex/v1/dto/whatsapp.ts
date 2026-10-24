@@ -65,6 +65,11 @@ export const whatsappMessageDto = v.object({
   status: messageStatusValidator,
   /** Platform error code of a failed message. */
   errorCode: v.optional(v.number()),
+  /**
+   * Outbound, failed or unknown: a sanitized reason code, e.g. "meta_131047" (Meta refused),
+   * "timeout" (unknown: may have been sent, never resent automatically), "number_unavailable".
+   */
+  failureReason: v.optional(v.string()),
   /** When the message happened. */
   at: v.string(),
   sentAt: v.optional(v.string()),
@@ -87,6 +92,7 @@ export function toWhatsappMessageDto(message: Doc<"whatsappMessages">): Whatsapp
     ...(message.text !== undefined ? { text: message.text } : {}),
     status: message.status,
     ...(message.errorCode !== undefined ? { errorCode: message.errorCode } : {}),
+    ...(message.failureReason !== undefined ? { failureReason: message.failureReason } : {}),
     at: toIso(message.platformAt),
     ...optionalIso("sentAt", message.sentAt),
     ...optionalIso("deliveredAt", message.deliveredAt),

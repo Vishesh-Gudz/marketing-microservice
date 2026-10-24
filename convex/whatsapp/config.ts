@@ -210,6 +210,12 @@ export const MAX_RETENTION_CONTINUATIONS = 20;
 /** Longest inbound text body stored (WhatsApp's own limit for a text message). */
 export const MAX_TEXT_BODY_CHARS = 65_536;
 
+/** Longest outbound text body (Meta "Send messages": text.body up to 4096 characters). */
+export const MAX_OUTBOUND_TEXT_CHARS = 4096;
+
+/** A browser-chosen id for one outbound message (repeated submits send it once). */
+export const CLIENT_MESSAGE_ID = /^[A-Za-z0-9_-]{8,64}$/;
+
 /** Longest contact profile name stored. */
 export const MAX_CONTACT_NAME_CHARS = 256;
 

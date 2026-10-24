@@ -3,6 +3,7 @@ import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { internalMutation } from "../_generated/server";
 import { PROCESS_BATCH_SIZE } from "./config";
+import type { DeliveryStatus } from "./payload";
 import { isBeforeActivation, resolveWebhookNumber } from "./phoneNumbers";
 import { webhookChangeValidator, type WebhookEventInput } from "./validators";
 
@@ -22,7 +23,12 @@ import { webhookChangeValidator, type WebhookEventInput } from "./validators";
 export function dedupeKeyOf(event: WebhookEventInput): string {
   return event.kind === "message"
     ? `message:${event.wamid}`
-    : `status:${event.wamid}:${event.status}`;
+    : statusDedupeKey(event.wamid, event.status);
+}
+
+/** The dedupe key of one status report (also how outbound.ts finds statuses that came early). */
+export function statusDedupeKey(wamid: string, status: DeliveryStatus): string {
+  return `status:${wamid}:${status}`;
 }
 
 export const recordDelivery = internalMutation({

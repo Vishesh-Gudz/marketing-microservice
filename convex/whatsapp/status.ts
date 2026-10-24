@@ -14,9 +14,10 @@ import type { MessageStatus } from "./validators";
  * - `failed` applies only before delivery (pending / submitted / sent) and is terminal: later
  *   `sent` / `delivered` / `read` reports do not revive the message.
  * - The first report of each status wins; repeats change nothing.
+ * - Inbound (`received`) and `unknown` messages (no wamid, see validators.ts) never change.
  */
 
-const RANK: Readonly<Record<Exclude<MessageStatus, "received" | "failed">, number>> = {
+const RANK: Readonly<Record<Exclude<MessageStatus, "received" | "failed" | "unknown">, number>> = {
   pending: 0,
   submitted: 1,
   sent: 2,
@@ -47,7 +48,7 @@ export function applyDeliveryStatus(
   current: DeliveryState,
   report: { status: DeliveryStatus; timestampMs: number; errorCode?: number },
 ): DeliveryPatch | null {
-  if (current.status === "received") return null;
+  if (current.status === "received" || current.status === "unknown") return null;
   const patch: DeliveryPatch = {};
   const field = TIMESTAMP_FIELD[report.status];
   if (current[field] === undefined) patch[field] = report.timestampMs;

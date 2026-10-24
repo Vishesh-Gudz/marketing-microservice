@@ -85,6 +85,9 @@ export const messageDirectionValidator = v.union(v.literal("inbound"), v.literal
  * Message lifecycle. Inbound messages are `received`. Outbound: `pending` (stored, not yet
  * accepted by Meta) -> `submitted` (accepted, wamid known) -> `sent` -> `delivered` -> `read`,
  * or `failed`. Webhook statuses only ever move a message forward (convex/whatsapp/status.ts).
+ * `unknown`: Meta's answer to the send never arrived or could not be read (timeout, network,
+ * 5xx), so the message may or may not have gone out. Meta has no idempotency key, so it is
+ * never sent again automatically, and without a wamid no status can reach it (final).
  */
 export const MESSAGE_STATUSES = [
   "received",
@@ -94,6 +97,7 @@ export const MESSAGE_STATUSES = [
   "delivered",
   "read",
   "failed",
+  "unknown",
 ] as const;
 export type MessageStatus = (typeof MESSAGE_STATUSES)[number];
 export const messageStatusValidator = literalUnion(MESSAGE_STATUSES);

@@ -5,9 +5,10 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { DatabaseReader } from "../_generated/server";
 import { clampPagination, mapPage, paginatedDto } from "../lib/dto";
 import { apiError } from "../lib/errors";
-import { getOwned, orgAdminAction, orgQuery } from "../lib/tenancy";
+import { getOwned, orgAdminAction, orgMutation, orgQuery } from "../lib/tenancy";
 import { setupProgress } from "../whatsapp/accounts";
 import { runCleanup } from "../whatsapp/offboarding";
+import { queueText } from "../whatsapp/outbound";
 import {
   EMBEDDED_SIGNUP_VERSION,
   signupAppConfig,
@@ -31,10 +32,11 @@ import {
 } from "./dto/whatsapp";
 
 /**
- * WhatsApp inbox (ADR 0013), read side. Tenant-scoped through the verified JWT only: every
- * lookup uses an org-first index with ctx.tenant.orgId, and client-supplied ids go through
- * getOwned (another org's conversation is NOT_FOUND). Viewers may read; sending (later stage)
- * requires editor.
+ * WhatsApp inbox (ADR 0013). Tenant-scoped through the verified JWT only: every lookup uses an
+ * org-first index with ctx.tenant.orgId, and client-supplied ids go through getOwned (another
+ * org's conversation is NOT_FOUND). Viewers may read; sending (sendText) requires editor, and
+ * only through the conversation's own number and its org's own connection
+ * (convex/whatsapp/outbound.ts).
  *
  * WhatsApp connections (ADR 0014): admins connect a WhatsApp Business Account through Meta's
  * Embedded Signup (getSignupConfig, completeSignup, retrySetup); viewers may list accounts.
@@ -191,6 +193,25 @@ export const getConversation = orgQuery({
       conversation,
       await numberOf(ctx, conversation, ctx.tenant.orgId),
     );
+  },
+});
+
+/**
+ * Editors and admins: sends a free-form text reply (1-4096 characters) in one of the caller's
+ * conversations, from that conversation's business number. Refused (CONFLICT, `reason`) when the
+ * customer's 24-hour service window is closed (`service_window_closed`: send a template) or the
+ * number cannot send (`number_unavailable`, `number_cannot_send`, `reconnect_required`,
+ * `number_not_ready`). Returns the stored message, `pending` until Meta answers: then
+ * `submitted`, `failed` (with `errorCode` / `failureReason`) or `unknown` (may have been sent;
+ * never resent automatically). `clientMessageId` (8-64 letters, digits, - or _) is chosen by the
+ * browser: repeating a call with it returns the same message and sends nothing more.
+ */
+export const sendText = orgMutation({
+  args: { conversationId: v.string(), text: v.string(), clientMessageId: v.string() },
+  returns: whatsappMessageDto,
+  handler: async (ctx, args) => {
+    const conversation = await getOwned(ctx, "whatsappConversations", args.conversationId);
+    return toWhatsappMessageDto(await queueText(ctx, ctx.tenant, conversation, args));
   },
 });
 

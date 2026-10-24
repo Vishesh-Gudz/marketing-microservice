@@ -205,9 +205,21 @@ export const whatsappTables = {
     deliveredAt: v.optional(v.number()),
     readAt: v.optional(v.number()),
     failedAt: v.optional(v.number()),
+    /**
+     * Outbound only (convex/whatsapp/outbound.ts): the sender's id for this message, chosen by
+     * the browser, so a repeated submit returns the same message instead of sending twice.
+     */
+    clientMessageId: v.optional(v.string()),
+    /** Outbound only: the signed-in user who sent it (verified JWT subject). */
+    sentBySubject: v.optional(v.string()),
+    /** Outbound only: when the one Meta call was claimed; a message is never sent twice. */
+    sendAttemptedAt: v.optional(v.number()),
+    /** Outbound only, failed or unknown: a sanitized reason code ("meta_131047", "timeout"). */
+    failureReason: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_org_wamid", ["orgId", "wamid"])
-    .index("by_org_conversation_platform", ["orgId", "conversationId", "platformAt"]),
+    .index("by_org_conversation_platform", ["orgId", "conversationId", "platformAt"])
+    .index("by_org_client_message", ["orgId", "clientMessageId"]),
 };

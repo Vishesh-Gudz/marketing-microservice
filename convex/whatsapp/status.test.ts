@@ -33,6 +33,14 @@ describe("applyDeliveryStatus", () => {
     ).toEqual({ status: "read", sentAt: 1, deliveredAt: 2, readAt: 3 });
   });
 
+  it("never changes inbound or unknown messages (an unknown send has no wamid to report on)", () => {
+    for (const status of ["received", "unknown"] as const) {
+      for (const report of ["sent", "delivered", "read", "failed"] as const) {
+        expect(applyDeliveryStatus({ status }, { status: report, timestampMs: 1 })).toBeNull();
+      }
+    }
+  });
+
   it("keeps the first timestamp of a repeated report and reports no change", () => {
     const state: DeliveryState = { status: "delivered", deliveredAt: 2 };
     expect(applyDeliveryStatus(state, { status: "delivered", timestampMs: 9 })).toBeNull();
