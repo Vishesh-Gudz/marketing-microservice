@@ -16,6 +16,7 @@ import {
   CLIENT_MESSAGE_ID,
   configuredSecret,
   MAX_OUTBOUND_TEXT_CHARS,
+  STUCK_SEND_AFTER_MS,
   WHATSAPP_ENV,
 } from "./config";
 import { sendMessage, type SendOutcome } from "./graph";
@@ -40,10 +41,19 @@ import { isServiceWindowOpen } from "./window";
  *    (a refused token also marks the connection needs_reauth); no usable answer (timeout,
  *    network, 5xx, unreadable) -> `unknown`, never retried: Meta has no idempotency key and the
  *    message may have gone out.
+ * 3. A watchdog (`settleStuckSend`), scheduled with the delivery, settles a message still
+ *    `pending` STUCK_SEND_AFTER_MS later (Convex does not retry a failed action): claimed but no
+ *    result recorded (the action failed after the claim; Meta may have it) -> `unknown`
+ *    (`no_result`); never claimed (no Meta call was made) -> `failed` (`not_sent`), and a late
+ *    delivery finds it no longer pending. A real result recorded after the watchdog's `unknown`
+ *    still replaces it.
  *
  * Statuses then arrive through the webhook (processing.ts, status.ts). Nothing here logs; a
  * failure keeps only a sanitized reason code and Meta's numeric code.
  */
+
+/** The watchdog's reason for a claimed send whose result never came. */
+const NO_RESULT = "no_result";
 
 export type SendRefusal =
   "number_unavailable" | "number_cannot_send" | "reconnect_required" | "number_not_ready";
@@ -152,6 +162,10 @@ export async function queueText(
     updatedAt: now,
   });
   await ctx.scheduler.runAfter(0, internal.whatsapp.outbound.deliver, {
+    orgId: tenant.orgId,
+    messageId,
+  });
+  await ctx.scheduler.runAfter(STUCK_SEND_AFTER_MS, internal.whatsapp.outbound.settleStuckSend, {
     orgId: tenant.orgId,
     messageId,
   });
@@ -297,7 +311,11 @@ async function applyEarlyStatuses(
   if (Object.keys(patch).length > 0) await db.patch(message._id, { ...patch, updatedAt: now });
 }
 
-/** Records the claimed call's outcome (step 2). Only a pending message changes. */
+/**
+ * Records the claimed call's outcome (step 2). Only a pending message changes, or one the
+ * watchdog already marked `unknown` (`no_result`) because this result came late: the real answer
+ * replaces the guess.
+ */
 export const recordSendResult = internalMutation({
   args: {
     orgId: v.id("organizations"),
@@ -312,7 +330,10 @@ export const recordSendResult = internalMutation({
       message === null ||
       message.orgId !== orgId ||
       message.direction !== "outbound" ||
-      message.status !== "pending"
+      !(
+        message.status === "pending" ||
+        (message.status === "unknown" && message.failureReason === NO_RESULT)
+      )
     ) {
       return null;
     }
@@ -321,6 +342,7 @@ export const recordSendResult = internalMutation({
       await ctx.db.patch(message._id, {
         status: "submitted",
         wamid: outcome.wamid,
+        failureReason: undefined,
         updatedAt: now,
       });
       await applyEarlyStatuses(
@@ -362,6 +384,36 @@ export const recordSendResult = internalMutation({
         message.sentBySubject,
       );
     }
+    return null;
+  },
+});
+
+/**
+ * Step 3: settles a send still `pending` STUCK_SEND_AFTER_MS after it was queued (scheduled by
+ * queueText; never earlier). Claimed: the Meta call may have happened, so `unknown`. Not
+ * claimed: no call was made, so `failed`; a late delivery then finds it no longer pending.
+ */
+export const settleStuckSend = internalMutation({
+  args: { orgId: v.id("organizations"), messageId: v.id("whatsappMessages") },
+  returns: v.null(),
+  handler: async (ctx, { orgId, messageId }) => {
+    const message = await ctx.db.get(messageId);
+    const now = Date.now();
+    if (
+      message === null ||
+      message.orgId !== orgId ||
+      message.direction !== "outbound" ||
+      message.status !== "pending" ||
+      now < message.createdAt + STUCK_SEND_AFTER_MS
+    ) {
+      return null;
+    }
+    await ctx.db.patch(
+      message._id,
+      message.sendAttemptedAt !== undefined
+        ? { status: "unknown", failureReason: NO_RESULT, updatedAt: now }
+        : { status: "failed", failedAt: now, failureReason: "not_sent", updatedAt: now },
+    );
     return null;
   },
 });

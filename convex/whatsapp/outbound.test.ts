@@ -11,7 +11,7 @@ import {
   seedOrg,
   type Backend,
 } from "../test.helpers";
-import { SERVICE_WINDOW_MS } from "./config";
+import { SERVICE_WINDOW_MS, STUCK_SEND_AFTER_MS } from "./config";
 import {
   graphError,
   installFakeWhatsAppGraph,
@@ -68,7 +68,20 @@ afterEach(() => {
 
 const asB = (t: Backend) => as(t, { issuer: ISSUER_CRM, org: "77", sub: "user_b", role: "admin" });
 
-const run = (t: Backend) => t.finishAllScheduledFunctions(vi.runAllTimers);
+/**
+ * Runs what is due now, moving the fake clock 1 s at a time: a delivery takes a few steps, as it
+ * takes seconds in reality. Its watchdog (STUCK_SEND_AFTER_MS later) is not reached here
+ * (convex-test stops after a few idle steps); `overdue` runs it. Jumping over all timers at once
+ * would fire the watchdog in the middle of the delivery.
+ */
+const run = (t: Backend) =>
+  t.finishAllScheduledFunctions(() => vi.advanceTimersByTime(1_000), 1_000);
+
+/** Moves the clock past every watchdog and runs them. */
+async function overdue(t: Backend) {
+  vi.advanceTimersByTime(STUCK_SEND_AFTER_MS);
+  await run(t);
+}
 
 /**
  * Org A connected WABA_A an hour ago (Embedded Signup: PHONE_A routed and registered at Meta),
@@ -493,5 +506,116 @@ describe("Meta's answer", () => {
     });
     expect((await messages(t, conversationId))[0]).toMatchObject({ status: "submitted" });
     expect((await messages(t, conversationId))[0]!.failureReason).toBeUndefined();
+  });
+});
+
+describe("stuck sends", () => {
+  async function queuedReply(t: Backend, conversationId: string, clientMessageId = CLIENT_ID) {
+    const queued = await reply(as(t), conversationId, "On its way!", clientMessageId);
+    return queued.id as Id<"whatsappMessages">;
+  }
+
+  it("settles a send claimed but never recorded as unknown, and never sends it", async () => {
+    const { t, orgA, conversationId } = await setup();
+    const messageId = await queuedReply(t, conversationId);
+    // The delivery claimed the message, then failed before recording Meta's answer.
+    await t.mutation(internal.whatsapp.outbound.claimDelivery, { orgId: orgA, messageId });
+    await run(t); // the scheduled delivery finds the message already claimed
+    await overdue(t); // its watchdog settles it
+    expect(graph.calls("send")).toBe(0);
+    expect((await messages(t, conversationId))[0]).toMatchObject({
+      status: "unknown",
+      failureReason: "no_result",
+    });
+    // A repeated submit returns it as it is and sends nothing.
+    expect(await reply(as(t), conversationId)).toMatchObject({ status: "unknown" });
+    await run(t);
+    expect(graph.calls("send")).toBe(0);
+  });
+
+  it("fails a send never claimed as not sent, only once it is overdue", async () => {
+    const { t, orgA, conversationId } = await setup();
+    const messageId = await queuedReply(t, conversationId);
+    const args = { orgId: orgA, messageId };
+    await t.mutation(internal.whatsapp.outbound.settleStuckSend, args); // too early: nothing
+    expect((await messages(t, conversationId))[0]).toMatchObject({ status: "pending" });
+    vi.setSystemTime(Date.now() + STUCK_SEND_AFTER_MS);
+    await t.mutation(internal.whatsapp.outbound.settleStuckSend, args);
+    expect((await messages(t, conversationId))[0]).toMatchObject({
+      status: "failed",
+      failureReason: "not_sent",
+      failedAt: expect.any(String),
+    });
+    await run(t); // the delayed delivery runs now: the message is no longer pending
+    expect(graph.calls("send")).toBe(0);
+    expect((await messages(t, conversationId))[0]).toMatchObject({ failureReason: "not_sent" });
+  });
+
+  it("lets Meta's late answer replace the watchdog's guess", async () => {
+    const { t, orgA, conversationId } = await setup();
+    const [connection] = (await rows(t)).connections;
+    const accepted = await queuedReply(t, conversationId, "client-msg-0011");
+    const refused = await queuedReply(t, conversationId, "client-msg-0012");
+    for (const messageId of [accepted, refused]) {
+      await t.mutation(internal.whatsapp.outbound.claimDelivery, { orgId: orgA, messageId });
+    }
+    await run(t);
+    await overdue(t);
+    expect((await messages(t, conversationId)).slice(0, 2).map((m) => m.status)).toEqual([
+      "unknown",
+      "unknown",
+    ]);
+
+    await t.mutation(internal.whatsapp.outbound.recordSendResult, {
+      orgId: orgA,
+      messageId: accepted,
+      connectionId: connection!._id,
+      outcome: { kind: "accepted", wamid: "wamid.late-answer" },
+    });
+    await t.mutation(internal.whatsapp.outbound.recordSendResult, {
+      orgId: orgA,
+      messageId: refused,
+      connectionId: connection!._id,
+      outcome: { kind: "refused", reason: "meta_131026", metaCode: 131026, tokenRefused: false },
+    });
+    const byId = new Map((await messages(t, conversationId)).map((m) => [m.id, m]));
+    expect(byId.get(accepted)).toMatchObject({ status: "submitted" });
+    expect(byId.get(accepted)!.failureReason).toBeUndefined();
+    expect(byId.get(refused)).toMatchObject({
+      status: "failed",
+      errorCode: 131026,
+      failureReason: "meta_131026",
+    });
+    await statuses(t, "wamid.late-answer", [{ status: "delivered", at: nowSeconds() }]);
+    expect((await messages(t, conversationId)).find((m) => m.id === accepted)!.status).toBe(
+      "delivered",
+    );
+  });
+
+  it("keeps an unknown that came from Meta's own answer, and a finished send, as they are", async () => {
+    const { t, orgA, conversationId } = await setup();
+    const [connection] = (await rows(t)).connections;
+    graph.failNext("send", "hang");
+    const timedOut = await queuedReply(t, conversationId, "client-msg-0021");
+    await run(t);
+    const sent = await queuedReply(t, conversationId, "client-msg-0022");
+    await run(t);
+    const before = await messages(t, conversationId);
+    expect(before.slice(0, 2).map((m) => [m.status, m.failureReason])).toEqual([
+      ["submitted", undefined],
+      ["unknown", "timeout"],
+    ]);
+
+    await t.mutation(internal.whatsapp.outbound.recordSendResult, {
+      orgId: orgA,
+      messageId: timedOut,
+      connectionId: connection!._id,
+      outcome: { kind: "accepted", wamid: "wamid.too-late" },
+    });
+    vi.setSystemTime(Date.now() + STUCK_SEND_AFTER_MS);
+    for (const messageId of [timedOut, sent]) {
+      await t.mutation(internal.whatsapp.outbound.settleStuckSend, { orgId: orgA, messageId });
+    }
+    expect(await messages(t, conversationId)).toEqual(before);
   });
 });

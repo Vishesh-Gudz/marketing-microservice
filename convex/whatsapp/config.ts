@@ -216,6 +216,13 @@ export const MAX_OUTBOUND_TEXT_CHARS = 4096;
 /** A browser-chosen id for one outbound message (repeated submits send it once). */
 export const CLIENT_MESSAGE_ID = /^[A-Za-z0-9_-]{8,64}$/;
 
+/**
+ * A send still `pending` this long after it was queued is settled by its watchdog
+ * (convex/whatsapp/outbound.ts): far longer than one delivery takes (the Meta call times out
+ * after SIGNUP_TIMEOUT_MS).
+ */
+export const STUCK_SEND_AFTER_MS = 5 * 60 * 1000;
+
 /** Longest contact profile name stored. */
 export const MAX_CONTACT_NAME_CHARS = 256;
 
