@@ -55,7 +55,8 @@ export const webhookEventStatusValidator = v.union(
   v.literal("ignored"),
   /**
    * Processing kept failing: still pending after every recovery retry
-   * (convex/whatsapp/recovery.ts). The body is kept so an admin can requeue it after a fix.
+   * (convex/whatsapp/recovery.ts). The body is kept so an admin can requeue it after a fix,
+   * until retention deletes the event 30 days after receipt (convex/whatsapp/retention.ts).
    */
   v.literal("failed"),
 );
