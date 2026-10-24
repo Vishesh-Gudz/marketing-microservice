@@ -67,6 +67,18 @@ const FORBIDDEN_ARG_NAMES = new Set([
   "externalorgid",
 ]);
 
+/**
+ * The only secret-like ARGUMENTS v1 accepts, by (function, normalized argument name). ADR 0014:
+ * Meta's Embedded Signup hands the browser a 30-second, single-use `code` that only the server
+ * can exchange, so `completeSignup` must accept it. It is never returned, stored or logged.
+ * Nothing else may be added here without the same review; return fields have no exceptions.
+ */
+const SECRET_ARG_EXCEPTIONS = [{ fn: "v1/whatsapp:completeSignup", arg: "code" }] as const;
+
+function isSecretArgException(fnName: string, normalizedArg: string): boolean {
+  return SECRET_ARG_EXCEPTIONS.some((e) => e.fn === fnName && e.arg === normalizedArg);
+}
+
 describe("public API contract", () => {
   it("exposes the expected v1 surface", () => {
     expect(v1Fns.map((r) => r.name).sort()).toEqual([
@@ -98,9 +110,13 @@ describe("public API contract", () => {
       "v1/socialAccounts:list",
       "v1/socialPosts:get",
       "v1/socialPosts:list",
+      "v1/whatsapp:completeSignup",
       "v1/whatsapp:getConversation",
+      "v1/whatsapp:getSignupConfig",
+      "v1/whatsapp:listAccounts",
       "v1/whatsapp:listConversations",
       "v1/whatsapp:listMessages",
+      "v1/whatsapp:retrySetup",
     ]);
   });
 
@@ -134,6 +150,17 @@ describe("public API contract", () => {
     },
   );
 
+  it("allows exactly one secret-like argument: the Embedded Signup code", () => {
+    expect(SECRET_ARG_EXCEPTIONS).toEqual([{ fn: "v1/whatsapp:completeSignup", arg: "code" }]);
+    // The exception names a real argument (top level, a plain string), never a return field.
+    const fn = v1Fns.find((r) => r.name === "v1/whatsapp:completeSignup")!.fn;
+    const args = JSON.parse(fn.exportArgs());
+    expect(Object.keys(args.value).sort()).toEqual(["code", "phoneNumberId", "wabaId"]);
+    expect(args.value.code).toEqual({ fieldType: { type: "string" }, optional: false });
+    expect(fieldNames(args).filter((n) => n === "code")).toHaveLength(1);
+    expect(fieldNames(JSON.parse(fn.exportReturns()))).not.toContain("code");
+  });
+
   it("never returns or accepts secret-like fields in v1", () => {
     // Exact names (normalized) and substrings that indicate credential/OAuth material.
     const exact = new Set([
@@ -149,10 +176,14 @@ describe("public API contract", () => {
     ]);
     const fragments = ["secret", "cipher", "verifier", "nonce", "password"];
     for (const { name, fn } of v1Fns) {
-      for (const json of [fn.exportArgs(), fn.exportReturns()]) {
+      for (const [kind, json] of [
+        ["args", fn.exportArgs()],
+        ["returns", fn.exportReturns()],
+      ] as const) {
         for (const field of fieldNames(JSON.parse(json)).map((n) =>
           n.toLowerCase().replace(/[_-]/g, ""),
         )) {
+          if (kind === "args" && isSecretArgException(name, field)) continue;
           expect(exact.has(field), `${name}: ${field}`).toBe(false);
           expect(
             fragments.some((f) => field.includes(f)),
