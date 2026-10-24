@@ -37,13 +37,14 @@ and they are ignored.
 
 ## Configuration (Convex environment variables)
 
-| Name                            | Purpose                                               |
-| ------------------------------- | ----------------------------------------------------- |
-| `WHATSAPP_APP_SECRET`           | Meta app secret; verifies `X-Hub-Signature-256`.      |
-| `WHATSAPP_WEBHOOK_VERIFY_TOKEN` | Operator-chosen verify token entered in the Meta app. |
+| Name                            | Purpose                                                                                                                             |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `WHATSAPP_APP_SECRET`           | Meta app secret; verifies `X-Hub-Signature-256`.                                                                                    |
+| `WHATSAPP_WEBHOOK_VERIFY_TOKEN` | Operator-chosen verify token entered in the Meta app.                                                                               |
+| `WHATSAPP_CONNECTIONS_ENABLED`  | `true` (exactly) opens new WhatsApp connections on a cloud deployment ([ADR 0014](adr/0014-whatsapp-connections.md)); not a secret. |
 
-Both are secrets (8–512 characters, no whitespace) and are never logged or returned. Set them
-per deployment with `npx convex env set` or the Convex dashboard; never in source files or
+The first two are secrets (8–512 characters, no whitespace) and are never logged or returned. Set
+them per deployment with `npx convex env set` or the Convex dashboard; never in source files or
 `.env.local`.
 
 - The verify token is used only for Meta's GET handshake, which carries it in the URL query
@@ -81,16 +82,24 @@ application**: the check only keeps it apart from authenticated users and system
 
 ## Data
 
-| Table                   | Holds                                                                                                                                                    |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `whatsappPhoneNumbers`  | phone_number_id → org routing (WABA id, status, activation time). Global lookup index.                                                                   |
-| `whatsappWebhookEvents` | One row per received event (dedupe key; body cleared once applied; recovery state). Global recovery index. Deleted 30 days after receipt unless pending. |
-| `whatsappConversations` | One thread per (business number, customer wa_id); last inbound time; contact name from the newest message that carried one.                              |
-| `whatsappMessages`      | Inbound and outbound messages; delivery status and timestamps.                                                                                           |
+| Table                      | Holds                                                                                                                                                    |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `whatsappBusinessAccounts` | A WABA an org connected through Embedded Signup (connection, business id, onboarding type, status). One org per active WABA (global ownership index).    |
+| `whatsappPhoneNumbers`     | phone_number_id → org routing (WABA id, status, activation time, source, connected WABA). Global lookup index.                                           |
+| `whatsappWebhookEvents`    | One row per received event (dedupe key; body cleared once applied; recovery state). Global recovery index. Deleted 30 days after receipt unless pending. |
+| `whatsappConversations`    | One thread per (business number, customer wa_id); last inbound time; contact name from the newest message that carried one.                              |
+| `whatsappMessages`         | Inbound and outbound messages; delivery status and timestamps.                                                                                           |
 
 Phone numbers are registered only by internal functions: today an operator runs them (see
 Setup); later the Embedded Signup flow will. No public function routes a number or accepts an
 org id.
+
+**Connections (ADR 0014, B1 only).** The database side of Embedded Signup exists but nothing
+calls it yet: a WhatsApp connection (provider `whatsapp`, keyed by the Meta business id, its
+business token stored encrypted), one `whatsappBusinessAccounts` row per WABA, and
+`registerForConnection` for that WABA's numbers. The generic connection endpoints refuse
+WhatsApp connections (`whatsapp_connection`). Until B2, numbers are still registered by an
+operator as in Setup.
 
 ## Public API (read only so far)
 

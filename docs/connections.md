@@ -23,6 +23,11 @@ integration and no other credential store.
 > ([Callback ownership](#callback-ownership-s2)). Cloud deployments still refuse new connections
 > until an operator sets `OAUTH_CONNECTIONS_ENABLED=true` after S2 is deployed and verified.
 
+> **WhatsApp** connections (ADR 0014) are stored here too, with provider `whatsapp`, but never use
+> this OAuth flow: they come from Embedded Signup. `beginConnect` refuses `whatsapp`, and
+> `disconnect` / `refreshAssets` refuse WhatsApp connections (reason `whatsapp_connection`). See
+> [adr/0014-whatsapp-connections.md](adr/0014-whatsapp-connections.md).
+
 ## Flow
 
 ```text
