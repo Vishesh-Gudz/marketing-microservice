@@ -2,8 +2,9 @@
 
 - Status: in progress. B1 (data model, internal state changes, guards on the generic connection
   paths) and B2 (Embedded Signup action, WhatsApp Graph client, public API) are implemented and
-  tested in-process against a fake Graph. Nothing in this flow has run against Meta. The connect
-  UI (B3) is not built.
+  tested in-process against a fake Graph; B3 (the connect page `/whatsapp`, Meta's JavaScript
+  SDK and the signup hand-off) is implemented and tested against a fake SDK. Nothing in this flow
+  has run against Meta.
 - Date: 2026-10-24
 
 ## Context
@@ -130,6 +131,9 @@ registration):
 - `v1/connections:list` can return connections with provider `whatsapp` (additive enum value);
   four new `v1/whatsapp` functions (additive).
 - Nine approved global indexes (convex/schema.test.ts).
+- Meta's JavaScript SDK is loaded from `/whatsapp` only (admins, signup available) but, like any
+  script, stays in the page until a full reload, with the page's privileges; the app has no
+  Content Security Policy yet.
 - New Convex env vars (none secret): `WHATSAPP_CONNECTIONS_ENABLED`, `WHATSAPP_APP_ID`,
   `WHATSAPP_ES_CONFIG_ID`. The signup reuses `WHATSAPP_APP_SECRET`.
 - Unverified until a real signup: the exact `debug_token` shape for business integration
@@ -137,5 +141,6 @@ registration):
   endpoints (190 / 102 / 401 are assumed, as for Meta Ads), whether 133016 clears exactly 72
   hours after the limit was reached, whether re-subscribing is harmless, and the
   `granular_scopes` grants for a WABA shared with several apps.
-- Remaining work: B3 (connect UI), B4 (WhatsApp disconnect and token revocation, `account_update`
-  webhooks, token health), B5 (Meta data-deletion callback).
+- Remaining work: B4 (WhatsApp disconnect and token revocation, `account_update` webhooks, token
+  health), B5 (Meta data-deletion callback); then outbound messages and templates. A first real
+  signup needs the Meta configuration in docs/whatsapp.md ("Connect UI: Meta configuration").

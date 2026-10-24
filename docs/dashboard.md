@@ -78,13 +78,15 @@ lib/analytics/                    pure logic: types, format, filters, deltas, st
 | `/social` (nav "Organic")                       | One Instagram account: 6 headline + 7 detail KPIs, UTC series, posts (lifetime totals)   | `socialAccounts:list`/`get`, `organicAnalytics:overview`/`accountSeries`, `socialPosts:list`, `connections:list`          |
 | `/social/posts/[postId]`                        | One post: caption, latest lifetime totals, lifetime totals at each capture               | `socialPosts:get`                                                                                                         |
 | `/connections`                                  | Google Ads and Meta Ads: status, Connect/Reconnect/Disconnect, accounts, link, sync      | `connections:list`/`listDiscoveredAssets`/`beginConnect`/`linkAdAccounts`/`refreshAssets`/`disconnect`, `adAccounts:list` |
+| `/whatsapp`                                     | WhatsApp: Connect WhatsApp (Meta Embedded Signup), setup progress, connected accounts    | `whatsapp:getSignupConfig`/`completeSignup`/`retrySetup`/`listAccounts`, `connections:list`                               |
 
 There is no org-wide ads page: the API requires a campaign or ad-group parent for ads (read budget).
 Connection management is on `/connections` for the **ad platforms, Google Ads and Meta Ads**
 (ADR 0008, D17 amendments). Instagram (organic) connections stay out of the dashboard. An admin can
 disconnect a connection (after a confirmation); single accounts cannot be unlinked here. The
 "reconnect required" banner (Overview, Accounts, Organic) links to `/connections` for a Google
-Ads or Meta Ads connection; for Instagram it stays read-only. On `/accounts`, unlinked or
+Ads or Meta Ads connection and to `/whatsapp` for a WhatsApp connection; for Instagram it stays
+read-only. WhatsApp is connected on its own page, `/whatsapp` (see below). On `/accounts`, unlinked or
 reconnect-required Google Ads and Meta Ads accounts link to "Manage in Connections".
 
 A foreign, unknown or malformed entity id (API `NOT_FOUND`), or an ad group opened under the wrong
@@ -302,6 +304,60 @@ text. Unexpected errors never show their message.
   (`exchange_failed`), not during discovery; the notice can only suggest the cause.
 - Embedded (iframe) use is not a goal of the standalone SaaS (ADR 0012).
 
+## WhatsApp (Embedded Signup)
+
+`/whatsapp` ([ADR 0014](adr/0014-whatsapp-connections.md), B3) lets an organization admin connect
+a WhatsApp Business number through Meta's Embedded Signup and follow its setup; every member sees
+the connected accounts. It uses the public `v1/whatsapp` functions only; the **server** verifies
+every Meta asset and decides who may act ([whatsapp.md](whatsapp.md#connecting-a-number-embedded-signup-adr-0014)).
+
+| Part                                         | Admin | Editor, viewer                                                     |
+| -------------------------------------------- | ----- | ------------------------------------------------------------------ |
+| Connected accounts, setup status, numbers    | yes   | yes                                                                |
+| Connect WhatsApp, Retry setup, Connect again | yes   | no ("Only organization admins …"; `getSignupConfig` is not called) |
+
+1. **Availability.** The page asks `getSignupConfig`. When the server says WhatsApp is not
+   available (the deployment's `WHATSAPP_CONNECTIONS_ENABLED` gate is closed, or the Meta app is
+   not configured) it says so, and Meta's SDK is never loaded.
+2. **Meta's SDK.** Only then, and only for admins, `https://connect.facebook.net/en_US/sdk.js`
+   is loaded with `next/script` (`afterInteractive`, `crossOrigin="anonymous"`) and initialized
+   once with the app id and Graph version from `getSignupConfig` (no client environment
+   variables), with Meta's documented values (`autoLogAppEvents: true`, `xfbml: true`).
+   **Connect WhatsApp** stays disabled ("Preparing Meta sign-in…") until the SDK is ready:
+   `FB.login` has to run directly in the click, or pop-up blockers stop it. A blocked SDK shows
+   "Meta sign-in could not load".
+3. **Signup.** The click calls `FB.login` with `config_id`, `response_type: "code"`,
+   `override_default_response_type: true` and `extras: { setup: {} }`. While the Meta window is
+   open the page listens for Meta's `WA_EMBEDDED_SIGNUP` messages, but only from an exact https
+   origin on `facebook.com` or a subdomain (Meta's sample only checks the end of the origin, which
+   also accepts e.g. `evilfacebook.com`). The code (from the `FB.login` callback) and the ids
+   (from the `FINISH` message) are paired in memory, in either order, and sent once to
+   `completeSignup` as `{ code, wabaId, phoneNumberId }`; the code is then dropped. It is never
+   rendered, logged, stored or put in a URL. If the code arrives but Meta's `FINISH` does not
+   follow within 10 seconds, the attempt ends ("Signup did not finish"). `FINISH` itself may
+   come long before the code: Meta counts its final screen as finished, and the code only
+   arrives when the window closes, so the page waits for that without a limit. One attempt runs
+   at a time.
+4. **Outcomes, in fixed words** (`lib/whatsapp/messages.ts`): cancelled (with the step reached),
+   window closed or pop-up blocked, Meta error (with Meta's error code and session id for support,
+   never Meta's error text), unsupported variants (no number chosen, a number already in the
+   WhatsApp Business app, migration or API-access-only signups), every server refusal (another
+   organization's account or number, an operator-managed number, a concurrent signup, an expired
+   code, …), and the setup result: connected, setup not finished (with the next step), or connect
+   again. The latest outcome is shown at the top and receives focus.
+5. **Accounts.** `listAccounts` (live): each account with its name (from the connection), status
+   badge, WABA id, numbers (registered or not, and when registration may be retried after Meta's
+   rate limit) and the reason in words. Admins get **Retry setup** for an unfinished setup (one call
+   at a time) and **Connect again** for one that needs reauthorization (a new signup).
+
+Limits: Meta's SDK runs with the page's privileges (it can read what the page can, including the
+Clerk session cookie). It is loaded only from `/whatsapp`, for admins, when signup is available,
+but a script cannot be unloaded: once loaded it stays in the page, also after navigating to other
+pages, until a full reload. The
+app has no Content Security Policy yet. The real Meta flow needs an HTTPS origin listed in the Meta
+app's Allowed domains ([whatsapp.md](whatsapp.md#connect-ui-meta-configuration)); it has never run
+against Meta. There is no WhatsApp disconnect yet (ADR 0014 B4).
+
 ## Import guard (D23)
 
 The frontend consumes application data only through the generated public API with
@@ -374,10 +430,15 @@ If a dynamic route unexpectedly returns 404 in `next dev` after pulling new rout
   query results, plus per-function `mockMutation(name)` / `mockAction(name)`; unregistered
   mutations fall back to the org gate's `ensureMock`). The Connections journey is covered in
   `components/dashboard/views/connections-view.test.tsx`; `tests/unit/connections-parity.test.ts`
-  pins the dashboard's copies of the callback error codes and error reasons to the server's.
+  pins the dashboard's copies of the callback error codes and error reasons to the server's. The
+  WhatsApp page: `lib/whatsapp/*.test.ts` (sender check, message parsing, pairing, texts) and
+  `components/dashboard/views/whatsapp-view.test.tsx` (a stand-in for `next/script` and a fake
+  `FB`; nothing loads from Meta).
 - Lint guards: `tests/lint/frontend-imports.test.ts`, `tests/lint/organic-dashboard-boundary.test.ts`.
 - Playwright: `dashboard.spec.ts`, `social.spec.ts` and `smoke.spec.ts` are CI-safe (shell,
-  navigation, gate, mobile menu, not-found, axe on every page including `/connections`).
+  navigation, gate, mobile menu, not-found, axe on every page including `/connections` and
+  `/whatsapp`). `whatsapp.spec.ts` checks the WhatsApp page's admin states locally (opt-in, see
+  below).
   `dashboard-data.spec.ts`, `social-data.spec.ts` and `org-status.spec.ts` are local-only:
   `E2E_DASHBOARD_DATA=1 npx playwright test` after `dev:auth setup` and `dev:seed`. The organic
   data is mock data; no real Instagram account has been used.
@@ -483,3 +544,18 @@ E2E_CONNECTIONS_JOURNEY=1 npm run test:e2e:connections -- meta-ads-journey
 - **Cleanup:** setup and teardown disconnect every non-revoked connection of `e2e-meta-ads` (Meta
   and both fixtures). Residue is like the Google journey's: the org, revoked connections, unlinked
   accounts with their mock data and sync state, consumed OAuth states and audit entries.
+
+### WhatsApp page (local, opt-in)
+
+`tests/e2e/whatsapp.spec.ts` opens `/whatsapp` as the dev-org admin against the local backend
+(`npm run dev:backend`, `npm run dev:auth setup`), with every request to Meta's hosts blocked and
+recorded:
+
+```bash
+E2E_WHATSAPP_PAGE=1 npx playwright test whatsapp
+```
+
+Without the Meta app settings in the local Convex env the page says WhatsApp is not available and
+Meta's SDK is never requested; with them, the blocked SDK fails visibly and nothing can start. It
+checks accessibility (axe) too. It never runs a real signup: that needs the Meta configuration in
+[whatsapp.md](whatsapp.md#connect-ui-meta-configuration) and is a separate, manual test.

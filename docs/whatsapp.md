@@ -8,8 +8,9 @@ Development mode): webhook verification and one inbound text message, stored end
 inbound hardening that followed (activation cutoff, stuck-event recovery, retention, parser and
 contact-name fixes) is tested in-process only. The server side of Embedded Signup (connecting a
 number, [ADR 0014](adr/0014-whatsapp-connections.md)) is implemented and tested in-process
-against a fake Graph only; it has never run against Meta, and its connect UI is not built.
-Outbound replies, templates, quick replies and the dashboard are not implemented.
+against a fake Graph only, and its connect page (`/whatsapp`, B3) against a fake Meta SDK only;
+neither has run against Meta. Outbound replies, templates, quick replies and the inbox UI are not
+implemented.
 
 ## Webhook
 
@@ -102,8 +103,8 @@ org id.
 
 ## Connecting a number (Embedded Signup, ADR 0014)
 
-Server side only so far; tested against a fake Graph, never against Meta, and the connect UI
-(B3) is not built. A WhatsApp connection is provider `whatsapp`, keyed by the WABA id, with the
+Tested against a fake Graph and (the page) a fake Meta SDK only, never against Meta. Admins start
+it on `/whatsapp` ([dashboard.md](dashboard.md#whatsapp-embedded-signup)). A WhatsApp connection is provider `whatsapp`, keyed by the WABA id, with the
 business token and the registration PIN stored encrypted (connection credential, AAD
 `orgId|whatsapp|wabaId|v1`). The generic connection endpoints refuse WhatsApp connections
 (`whatsapp_connection`).
@@ -187,6 +188,37 @@ Limits (B2):
   HTTPS): the code exchange (`client_secret`, `code`) and `debug_token` (the business token).
   This application never logs a URL; whether anything between Convex and Meta records query
   strings is unverified.
+
+## Connect UI: Meta configuration
+
+The connect page ([dashboard.md](dashboard.md#whatsapp-embedded-signup)) uses Meta's JavaScript
+SDK as Meta documents it for Embedded Signup ("Embedded Signup implementation", read 2026-10-24).
+None of this is configured or tested yet; each step is an operator task with its own approval:
+
+1. In the Meta app, a **Facebook Login for Business** configuration with the **WhatsApp Embedded
+   Signup** login variation (Embedded Signup v4 is selected there). Its id goes into
+   `WHATSAPP_ES_CONFIG_ID`, the app id into `WHATSAPP_APP_ID` (Convex env, not secrets).
+2. Facebook Login for Business → Settings → Client OAuth settings set to **Yes**: Client OAuth
+   login, Web OAuth login, Enforce HTTPS, Embedded Browser OAuth Login, use Strict Mode for
+   redirect URIs, Login with the JavaScript SDK.
+3. The page's HTTPS origin in **Allowed domains** and **Valid OAuth redirect URIs** (for example
+   `https://marketing-microservice.vercel.app`). Otherwise Meta does not return the code or the
+   ids to the page. Only HTTPS domains are supported: plain `http://localhost` cannot run the real
+   flow; a local test needs an HTTPS origin that is listed there.
+4. While the app is in Development mode, only people with a role on the Meta app can finish a
+   signup. Real customers need the app Live with Advanced Access to `whatsapp_business_management`
+   and `whatsapp_business_messaging`, business verification and Tech Provider status.
+5. `WHATSAPP_CONNECTIONS_ENABLED=true` on the cloud deployment that serves the page. It opens new
+   connections for every organization there; until then the page says WhatsApp is not available.
+6. Meta recommends subscribing the `account_update` webhook field (ADR 0014 B4).
+
+Page behaviour worth knowing for a first real test: the browser shows Meta's error code and
+session id (never Meta's error text) when the signup fails in the Meta window; "Signup did not
+finish" means the code arrived but Meta's `FINISH` message did not follow within 10 seconds,
+or the window closed after `FINISH` without a code (the page waits for the window to close
+after `FINISH`, since Meta counts its final screen as finished); the signup variants Meta
+reports for a WABA without a number, a WhatsApp Business app number (coexistence), a migration or
+API-access-only signup are refused in the browser with an explanation.
 
 ## Public API
 
