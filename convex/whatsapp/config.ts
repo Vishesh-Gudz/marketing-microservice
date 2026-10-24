@@ -1,3 +1,5 @@
+import { apiError } from "../lib/errors";
+
 /**
  * WhatsApp Cloud API inbox configuration (ADR 0013, docs/whatsapp.md).
  *
@@ -30,6 +32,57 @@ export const MAX_EVENTS_PER_DELIVERY = 1000;
 
 /** Events handed to one processing mutation; larger deliveries are split into several jobs. */
 export const PROCESS_BATCH_SIZE = 100;
+
+/**
+ * Stuck-event recovery (convex/whatsapp/recovery.ts, cron every RECOVERY_INTERVAL_MINUTES): an
+ * event still pending this long after receipt is retried on its own, so one failing event
+ * cannot hold back the rest of its batch. A retry still queued or running is never duplicated.
+ */
+export const STUCK_EVENT_AFTER_MS = 5 * 60 * 1000;
+export const RECOVERY_INTERVAL_MINUTES = 5;
+/**
+ * Finished retries (after the original attempt) before an event becomes `failed`. A retry
+ * counts once its job is no longer queued, whatever its outcome or whether its record still
+ * exists; retries that have not run yet are never counted.
+ */
+export const MAX_RECOVERY_ATTEMPTS = 3;
+/**
+ * A retry still queued this long after it was scheduled is canceled and its event marked
+ * `failed`: no event waits on a job that never runs.
+ */
+export const RETRY_GIVE_UP_AFTER_MS = 24 * 60 * 60 * 1000;
+/** Stuck events examined per sweep run (bounded; the next run continues). */
+export const RECOVERY_BATCH_SIZE = 100;
+/**
+ * Audit subject for internal admin functions run by an operator (dashboard / CLI). Supplied by
+ * the operator, not verified by this application, so it gets its own namespace.
+ */
+export const OPERATOR_SUBJECT = /^operator:[A-Za-z0-9._@-]{1,64}$/;
+
+/**
+ * Refuses (INVALID_ARGUMENT) an operator-supplied `actorSubject` that is not `operator:<name>`.
+ * This only standardizes the label: it does not authenticate who typed it.
+ */
+export function requireOperatorSubject(actorSubject: string): void {
+  if (!OPERATOR_SUBJECT.test(actorSubject)) {
+    throw apiError("INVALID_ARGUMENT", "actorSubject must be operator:<name>.", {
+      field: "actorSubject",
+    });
+  }
+}
+
+/**
+ * Webhook events that are no longer pending (`processed`, `ignored`, `unmatched`, `failed`) are
+ * deleted once at least this old, counted from receipt. Far longer than Meta's retry period
+ * for a delivery (about 7 days, unverified), so a deleted dedupe key is not expected to be
+ * needed again. It is also how long a `failed` event can be requeued. `pending` events are
+ * never deleted by retention.
+ */
+export const EVENT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+/** Expired events examined per retention run (bounded; a full batch chains another run). */
+export const RETENTION_BATCH_SIZE = 200;
+/** Follow-up runs one scheduled retention run may chain; the next hourly run continues. */
+export const MAX_RETENTION_CONTINUATIONS = 20;
 
 /** Longest inbound text body stored (WhatsApp's own limit for a text message). */
 export const MAX_TEXT_BODY_CHARS = 65_536;

@@ -12,7 +12,9 @@ import { MAX_CONTACT_NAME_CHARS, MAX_EVENTS_PER_DELIVERY, MAX_TEXT_BODY_CHARS } 
  * - Only allowlisted fields are copied out. Everything else in the payload, including any
  *   organization identifier, is ignored: the tenant comes only from the server-side
  *   `phone_number_id` mapping (convex/whatsapp/ingest.ts).
- * - Only `field: "messages"` changes are read; other subscribed fields are counted and ignored.
+ * - Only `field: "messages"` changes are read; other subscribed fields are counted and ignored
+ *   whatever their `value` holds (their shapes are not validated, so a change to one of them
+ *   can never reject the messages delivered beside it).
  */
 
 export const STATUS_VALUES = ["sent", "delivered", "read", "failed"] as const;
@@ -223,7 +225,7 @@ export function parseWebhookPayload(body: unknown): ParseResult {
       return { ok: false, reason: "invalid_entry" };
     }
     for (const change of entry.changes) {
-      if (!isObject(change) || typeof change.field !== "string" || !isObject(change.value)) {
+      if (!isObject(change) || typeof change.field !== "string") {
         return { ok: false, reason: "invalid_change" };
       }
       if (change.field !== "messages") {
@@ -231,6 +233,7 @@ export function parseWebhookPayload(body: unknown): ParseResult {
         continue;
       }
       const value = change.value;
+      if (!isObject(value)) return { ok: false, reason: "invalid_change" };
       const metadata = value.metadata;
       const phoneNumberId = isObject(metadata) ? numericId(metadata.phone_number_id) : null;
       if (value.messaging_product !== "whatsapp" || phoneNumberId === null) {

@@ -3,7 +3,7 @@ import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { internalMutation } from "../_generated/server";
 import { PROCESS_BATCH_SIZE } from "./config";
-import { resolveWebhookNumber } from "./phoneNumbers";
+import { isBeforeActivation, resolveWebhookNumber } from "./phoneNumbers";
 import { webhookChangeValidator, type WebhookEventInput } from "./validators";
 
 /**
@@ -11,7 +11,8 @@ import { webhookChangeValidator, type WebhookEventInput } from "./validators";
  *
  * 1. Each change is routed ONLY through the registered phone_number_id (+ matching WABA id).
  *    Unknown, ambiguous or mismatched numbers are counted and dropped; the delivery is still
- *    acknowledged so Meta does not retry it forever.
+ *    acknowledged so Meta does not retry it forever. Events from before the number's current
+ *    activation (a previous ownership's late retries) are dropped the same way.
  * 2. Each event is stored once per org under its dedupe key. Retried or duplicated deliveries
  *    (and duplicates inside one delivery) find the key and are not stored or scheduled again.
  * 3. Processing (conversations, messages, statuses) is scheduled asynchronously in bounded
@@ -26,12 +27,18 @@ export function dedupeKeyOf(event: WebhookEventInput): string {
 
 export const recordDelivery = internalMutation({
   args: { changes: v.array(webhookChangeValidator) },
-  returns: v.object({ accepted: v.number(), duplicates: v.number(), unrouted: v.number() }),
+  returns: v.object({
+    accepted: v.number(),
+    duplicates: v.number(),
+    unrouted: v.number(),
+    beforeActivation: v.number(),
+  }),
   handler: async (ctx, { changes }) => {
     const now = Date.now();
     let accepted = 0;
     let duplicates = 0;
     let unrouted = 0;
+    let beforeActivation = 0;
     const stored: Id<"whatsappWebhookEvents">[] = [];
     const routes = new Map<string, Doc<"whatsappPhoneNumbers"> | null>();
 
@@ -47,6 +54,10 @@ export const recordDelivery = internalMutation({
         continue;
       }
       for (const event of change.events) {
+        if (isBeforeActivation(number, event.timestampMs)) {
+          beforeActivation++;
+          continue;
+        }
         const dedupeKey = dedupeKeyOf(event);
         const existing = await ctx.db
           .query("whatsappWebhookEvents")
@@ -77,6 +88,6 @@ export const recordDelivery = internalMutation({
         eventIds: stored.slice(i, i + PROCESS_BATCH_SIZE),
       });
     }
-    return { accepted, duplicates, unrouted };
+    return { accepted, duplicates, unrouted, beforeActivation };
   },
 });

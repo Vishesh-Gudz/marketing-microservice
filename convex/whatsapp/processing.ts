@@ -29,6 +29,18 @@ async function findMessage(db: DatabaseWriter, row: Doc<"whatsappWebhookEvents">
     .first();
 }
 
+/**
+ * Whether a message's contact name replaces the stored one. Meta does not guarantee delivery
+ * order, so a name is replaced only by one from a message at the same platform time or later
+ * (`at`, the same instant used for the service window). A message from the same second wins: its
+ * order cannot be known. Rows from before `contactNameAt` existed date their name by their latest
+ * inbound message.
+ */
+function replacesContactName(conversation: Doc<"whatsappConversations">, at: number): boolean {
+  if (conversation.contactName === undefined) return true;
+  return at >= (conversation.contactNameAt ?? conversation.lastInboundAt ?? 0);
+}
+
 async function applyInboundMessage(
   db: DatabaseWriter,
   row: Doc<"whatsappWebhookEvents">,
@@ -53,7 +65,9 @@ async function applyInboundMessage(
       orgId: row.orgId,
       numberId: number._id,
       contactWaId: event.from,
-      ...(event.contactName !== undefined ? { contactName: event.contactName } : {}),
+      ...(event.contactName !== undefined
+        ? { contactName: event.contactName, contactNameAt: at }
+        : {}),
       lastInboundAt: at,
       lastMessageAt: at,
       createdAt: now,
@@ -61,8 +75,12 @@ async function applyInboundMessage(
     });
   } else {
     conversationId = existing._id;
+    const name =
+      event.contactName !== undefined && replacesContactName(existing, at)
+        ? event.contactName
+        : undefined;
     await db.patch(existing._id, {
-      ...(event.contactName !== undefined ? { contactName: event.contactName } : {}),
+      ...(name !== undefined ? { contactName: name, contactNameAt: at } : {}),
       lastInboundAt: Math.max(existing.lastInboundAt ?? 0, at),
       lastMessageAt: Math.max(existing.lastMessageAt, at),
       updatedAt: now,

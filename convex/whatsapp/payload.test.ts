@@ -47,6 +47,37 @@ describe("parseWebhookPayload: envelope (rejected as a whole)", () => {
     expect(parseWebhookPayload(body)).toEqual({ ok: false, reason });
   });
 
+  it.each([
+    ["that is not an object", "account_update"],
+    ["without a field name", { value: {} }],
+    ["with a field name that is not a string", { field: 7, value: {} }],
+  ])("rejects a change %s, whatever else the entry holds", (_label, change) => {
+    const body = delivery(entry({ messages: [{ id: "wamid.1" }] }));
+    (body.entry as { changes: unknown[] }[])[0]!.changes.push(change);
+    expect(parseWebhookPayload(body)).toEqual({ ok: false, reason: "invalid_change" });
+  });
+
+  it.each([
+    ["null", null],
+    ["a string", "unexpected"],
+    ["an array", []],
+    ["missing", undefined],
+  ])("rejects a messages change whose value is %s, even beside other fields", (_label, value) => {
+    const body = {
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: WABA_A,
+          changes: [
+            { field: "account_update", value: { event: "ok" } },
+            { field: "messages", ...(value !== undefined ? { value } : {}) },
+          ],
+        },
+      ],
+    };
+    expect(parseWebhookPayload(body)).toEqual({ ok: false, reason: "invalid_change" });
+  });
+
   it("rejects a messages change without a numeric phone_number_id", () => {
     const body = delivery(entry({ messages: [{ id: "wamid.1" }] }));
     const value = (body.entry as { changes: { value: Record<string, unknown> }[] }[])[0]!
@@ -223,4 +254,25 @@ describe("parseWebhookPayload: events", () => {
     };
     expect(ok(body)).toEqual({ changes: [], skipped: 0, ignoredFields: 1 });
   });
+
+  it.each([
+    ["null", null],
+    ["a string", "unexpected"],
+    ["a number", 42],
+    ["a boolean", true],
+    ["an array", [{ id: "wamid.not-read" }]],
+    ["missing", undefined],
+    ["an object with messages-like fields", { messages: "not an array", metadata: 7 }],
+  ])(
+    "ignores another field whose value is %s and still reads the messages beside it",
+    (_label, value) => {
+      const body = delivery(entry({ messages: [{ id: "wamid.kept", text: "hi" }] }));
+      const changes = (body.entry as { changes: unknown[] }[])[0]!.changes;
+      changes.unshift({ field: "account_update", ...(value !== undefined ? { value } : {}) });
+      const parsed = ok(body);
+      expect(parsed.ignoredFields).toBe(1);
+      expect(parsed.skipped).toBe(0);
+      expect(parsed.changes.flatMap((c) => c.events.map((e) => e.wamid))).toEqual(["wamid.kept"]);
+    },
+  );
 });

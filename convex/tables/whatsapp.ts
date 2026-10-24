@@ -10,9 +10,9 @@ import {
 } from "../whatsapp/validators";
 import { orgIdField } from "./common";
 
-// WhatsApp inbox (ADR 0013). Every table is tenant-owned. The only global index is the
-// webhook's tenant lookup by Meta phone_number_id (approved in convex/schema.test.ts).
-// Message bodies are stored for the inbox but never logged.
+// WhatsApp inbox (ADR 0013). Every table is tenant-owned. The only global indexes are the
+// webhook's tenant lookup by Meta phone_number_id and the event recovery sweep (both approved
+// in convex/schema.test.ts). Message bodies are stored for the inbox but never logged.
 
 export const whatsappTables = {
   /**
@@ -29,6 +29,12 @@ export const whatsappTables = {
     displayPhoneNumber: v.optional(v.string()),
     status: phoneNumberStatusValidator,
     registeredBySubject: v.string(),
+    /**
+     * When this org's current ownership began (registration or re-activation). Webhook events
+     * timestamped before it are dropped, so a moved number's late retries never reach the new
+     * owner. Absent on rows registered before it existed: `createdAt` is used instead.
+     */
+    activatedAt: v.optional(v.number()),
     disconnectedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -55,7 +61,21 @@ export const whatsappTables = {
     status: webhookEventStatusValidator,
     receivedAt: v.number(),
     processedAt: v.optional(v.number()),
-  }).index("by_org_dedupe", ["orgId", "dedupeKey"]),
+    /** Recovery retries that finished without processing the event (absent = none). */
+    attempts: v.optional(v.number()),
+    /** Scheduled job of the latest recovery retry; its state decides what the sweep does. */
+    retryJobId: v.optional(v.id("_scheduled_functions")),
+    /** When the latest recovery retry was scheduled; bounds how long a queued retry is awaited. */
+    lastAttemptAt: v.optional(v.number()),
+    failedAt: v.optional(v.number()),
+  })
+    .index("by_org_dedupe", ["orgId", "dedupeKey"])
+    // GLOBAL (approved exception): the system recovery sweep finds events still pending long
+    // after receipt, across orgs. It checks each row it reads (and its retry job's state)
+    // before acting; the retry it schedules re-reads the row and processes it under its own
+    // orgId. The retention sweep reads it too, deleting rows no longer pending once older than
+    // EVENT_RETENTION_MS (never pending ones, nor any whose retry is still queued).
+    .index("by_status_received", ["status", "receivedAt"]),
 
   /** One customer thread per (business number, customer WhatsApp id). */
   whatsappConversations: defineTable({
@@ -64,6 +84,8 @@ export const whatsappTables = {
     /** Customer's WhatsApp id. */
     contactWaId: v.string(),
     contactName: v.optional(v.string()),
+    /** Platform time of the message that supplied `contactName`; older ones never replace it. */
+    contactNameAt: v.optional(v.number()),
     /** Latest inbound customer message (platform time): opens the 24-hour service window. */
     lastInboundAt: v.optional(v.number()),
     lastMessageAt: v.number(),

@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import { internalMutation, type DatabaseReader } from "../_generated/server";
 import { AUDIT_ACTIONS, writeAudit } from "../lib/audit";
+import { requireOperatorSubject } from "./config";
 import { isNumericId } from "./payload";
 
 /**
@@ -12,8 +13,11 @@ import { isNumericId } from "./payload";
  * number that another org holds active; the webhook additionally fails closed if it ever finds
  * more than one, or a WABA id that differs from the registered one.
  *
- * Internal only: rows are created by the connection flow (Stage 3, server-verified assets) and
- * by tests; no public function accepts an org id or a phone_number_id to route.
+ * Internal only: no public function accepts an org id or a phone_number_id to route. Today an
+ * operator runs `register` / `disconnect` (Convex dashboard, or a deploy key) and must pass an
+ * `operator:<name>` actorSubject, which is recorded but NOT verified by this application. The
+ * connection flow (Stage 3, server-verified assets) will need its own entry point that records
+ * its authenticated subject.
  */
 
 async function activeRows(db: DatabaseReader, phoneNumberId: string) {
@@ -40,6 +44,21 @@ export async function resolveWebhookNumber(
   return row.wabaId === change.wabaId ? row : null;
 }
 
+/**
+ * True when an event happened before the number's current activation, i.e. it belongs to a
+ * previous ownership (another org, or this org before a disconnect) and must not be stored.
+ * Meta timestamps have one-second resolution, so the cutoff is the activation's second: an
+ * event in that same second counts as at activation. Rows without `activatedAt` (registered
+ * before it existed) use `createdAt`.
+ */
+export function isBeforeActivation(
+  number: Pick<Doc<"whatsappPhoneNumbers">, "activatedAt" | "createdAt">,
+  timestampMs: number,
+): boolean {
+  const activatedAt = number.activatedAt ?? number.createdAt;
+  return timestampMs < Math.floor(activatedAt / 1000) * 1000;
+}
+
 /** Registers (or re-activates) a number for an org. Refuses numbers active in another org. */
 export const register = internalMutation({
   args: {
@@ -57,6 +76,7 @@ export const register = internalMutation({
     }),
   ),
   handler: async (ctx, args) => {
+    requireOperatorSubject(args.actorSubject);
     if (!isNumericId(args.wabaId) || !isNumericId(args.phoneNumberId)) {
       return { ok: false as const, reason: "invalid_id" as const };
     }
@@ -75,11 +95,15 @@ export const register = internalMutation({
         q.eq("orgId", args.orgId).eq("phoneNumberId", args.phoneNumberId),
       )
       .unique();
+    // A new or re-activated registration starts a new ownership; updating a number that is
+    // already active keeps its activation, so its own late deliveries are not dropped.
+    const activating = own === null || own.status !== "active";
     const fields = {
       wabaId: args.wabaId,
       displayPhoneNumber: args.displayPhoneNumber,
       status: "active" as const,
       registeredBySubject: args.actorSubject,
+      ...(activating ? { activatedAt: now } : {}),
       disconnectedAt: undefined,
       updatedAt: now,
     };
@@ -97,11 +121,12 @@ export const register = internalMutation({
           : {}),
         status: "active",
         registeredBySubject: args.actorSubject,
+        activatedAt: now,
         createdAt: now,
         updatedAt: now,
       });
     }
-    if (own === null || own.status !== "active") {
+    if (activating) {
       await writeAudit(
         ctx.db,
         { orgId: args.orgId, issuer: org.issuer, subject: args.actorSubject },
@@ -122,6 +147,7 @@ export const disconnect = internalMutation({
   args: { numberId: v.id("whatsappPhoneNumbers"), actorSubject: v.string() },
   returns: v.boolean(),
   handler: async (ctx, { numberId, actorSubject }) => {
+    requireOperatorSubject(actorSubject);
     const row = await ctx.db.get(numberId);
     if (row === null || row.status !== "active") return false;
     const now = Date.now();
