@@ -6,8 +6,10 @@ Multi-tenant WhatsApp inbox on the WhatsApp Cloud API. Decisions: [ADR 0013](adr
 fake deliveries. It was checked once against real Meta on 2026-10-23 (a Meta test app in
 Development mode): webhook verification and one inbound text message, stored end to end. The
 inbound hardening that followed (activation cutoff, stuck-event recovery, retention, parser and
-contact-name fixes) is tested in-process only. Embedded Signup (connecting a number), outbound
-replies, templates, quick replies and the dashboard are not implemented.
+contact-name fixes) is tested in-process only. The server side of Embedded Signup (connecting a
+number, [ADR 0014](adr/0014-whatsapp-connections.md)) is implemented and tested in-process
+against a fake Graph only; it has never run against Meta, and its connect UI is not built.
+Outbound replies, templates, quick replies and the dashboard are not implemented.
 
 ## Webhook
 
@@ -39,13 +41,17 @@ and they are ignored.
 
 | Name                            | Purpose                                                                                                                             |
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `WHATSAPP_APP_SECRET`           | Meta app secret; verifies `X-Hub-Signature-256`.                                                                                    |
+| `WHATSAPP_APP_SECRET`           | Meta app secret; verifies `X-Hub-Signature-256`. Embedded Signup also uses it (code exchange, `appsecret_proof`).                   |
 | `WHATSAPP_WEBHOOK_VERIFY_TOKEN` | Operator-chosen verify token entered in the Meta app.                                                                               |
 | `WHATSAPP_CONNECTIONS_ENABLED`  | `true` (exactly) opens new WhatsApp connections on a cloud deployment ([ADR 0014](adr/0014-whatsapp-connections.md)); not a secret. |
+| `WHATSAPP_APP_ID`               | Numeric id of the WhatsApp Meta app (Embedded Signup); not a secret.                                                                |
+| `WHATSAPP_ES_CONFIG_ID`         | Numeric id of its Facebook Login for Business configuration (Embedded Signup v4); not a secret.                                     |
 
 The first two are secrets (8–512 characters, no whitespace) and are never logged or returned. Set
 them per deployment with `npx convex env set` or the Convex dashboard; never in source files or
-`.env.local`.
+`.env.local`. Embedded Signup needs `WHATSAPP_APP_ID`, `WHATSAPP_ES_CONFIG_ID` and
+`WHATSAPP_APP_SECRET`; if any is missing or malformed, it is unavailable (fails closed). None of
+the Meta Ads variables (`META_*`) is read by the WhatsApp code.
 
 - The verify token is used only for Meta's GET handshake, which carries it in the URL query
   string. This application never logs it, but whether Convex's request logs keep query strings
@@ -57,7 +63,7 @@ them per deployment with `npx convex env set` or the Convex dashboard; never in 
 
 ## Setup (per deployment)
 
-1. Set both variables above.
+1. Set `WHATSAPP_APP_SECRET` and `WHATSAPP_WEBHOOK_VERIFY_TOKEN`.
 2. Deploy. An unsigned POST to the webhook then returns 401 if the app secret is set and well
    formed (503: missing or invalid).
 3. Register the number to its org before Meta sends anything: deliveries for a number that is
@@ -84,28 +90,115 @@ application**: the check only keeps it apart from authenticated users and system
 
 | Table                      | Holds                                                                                                                                                    |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `whatsappBusinessAccounts` | A WABA an org connected through Embedded Signup (connection, business id, onboarding type, status). One org per active WABA (global ownership index).    |
-| `whatsappPhoneNumbers`     | phone_number_id → org routing (WABA id, status, activation time, source, connected WABA). Global lookup index.                                           |
+| `whatsappBusinessAccounts` | A WABA an org connected through Embedded Signup (connection, onboarding type, status, setup progress). One org per active WABA (global ownership index). |
+| `whatsappPhoneNumbers`     | phone_number_id → org routing (WABA id, status, activation time, source, connected WABA, Meta registration). Global lookup index.                        |
 | `whatsappWebhookEvents`    | One row per received event (dedupe key; body cleared once applied; recovery state). Global recovery index. Deleted 30 days after receipt unless pending. |
 | `whatsappConversations`    | One thread per (business number, customer wa_id); last inbound time; contact name from the newest message that carried one.                              |
 | `whatsappMessages`         | Inbound and outbound messages; delivery status and timestamps.                                                                                           |
 
-Phone numbers are registered only by internal functions: today an operator runs them (see
-Setup); later the Embedded Signup flow will. No public function routes a number or accepts an
+Phone numbers are routed only by internal functions: an operator runs them (see Setup), or the
+Embedded Signup action does, for a number it verified with Meta. No public function accepts an
 org id.
 
-**Connections (ADR 0014, B1 only).** The database side of Embedded Signup exists but nothing
-calls it yet: a WhatsApp connection (provider `whatsapp`, keyed by the Meta business id, its
-business token stored encrypted), one `whatsappBusinessAccounts` row per WABA, and
-`registerForConnection` for that WABA's numbers. The generic connection endpoints refuse
-WhatsApp connections (`whatsapp_connection`). Until B2, numbers are still registered by an
-operator as in Setup.
+## Connecting a number (Embedded Signup, ADR 0014)
 
-## Public API (read only so far)
+Server side only so far; tested against a fake Graph, never against Meta, and the connect UI
+(B3) is not built. A WhatsApp connection is provider `whatsapp`, keyed by the WABA id, with the
+business token and the registration PIN stored encrypted (connection credential, AAD
+`orgId|whatsapp|wabaId|v1`). The generic connection endpoints refuse WhatsApp connections
+(`whatsapp_connection`).
 
-`v1/whatsapp:listConversations` (`{ paginationOpts }`), `v1/whatsapp:getConversation`
+1. The dashboard (an org admin) reads `v1/whatsapp:getSignupConfig`. With `available: true` it
+   gets the app id, the login configuration id and the Graph version for Meta's JavaScript SDK,
+   runs `FB.login`, and receives the `code` and the `WA_EMBEDDED_SIGNUP` `FINISH` message.
+2. Within 30 seconds it calls `v1/whatsapp:completeSignup` with `{ code, wabaId, phoneNumberId }`
+   (the browser's `business_id` is not used). The org and the admin come from the JWT.
+3. The action exchanges the code, inspects the token (valid, our app, both WhatsApp
+   permissions, the WABA among those granted), reads the WABA and lists its numbers. Any
+   mismatch is refused before anything is stored (`INVALID_ARGUMENT` with a `reason`, see
+   below). Another org's active WABA or number is `CONFLICT` (`waba_in_use`,
+   `phone_number_in_use`), and so is a number this org has from the operator path
+   (`phone_number_operator_managed`, see Limits).
+4. It stores the credential, the connection, the account and the number's routing (inbound
+   messages for the number reach the org from then on) in ONE transaction: if another org or
+   the operator path took the number meanwhile, nothing is written. Then it subscribes the app
+   to the WABA and registers the number, in that order.
+5. The result is `connected`, `action_required` with the missing `nextStep` (`subscribe` or
+   `register`) and a sanitized `reason` (`meta_<code>`, `http_<status>`, `network`, `timeout`,
+   `unexpected_response`, `registration_attempts_exhausted`, `registration_rate_limited`,
+   `registration_in_progress`), or `reauthorization_required` (see Token expiry). After
+   `action_required` an admin calls `v1/whatsapp:retrySetup` (`{ accountId }`), which resumes
+   only the missing steps with the stored token and PIN. Nothing retries on its own.
+
+Concurrent calls: a number's registration call needs a claim (one transaction, at most one
+caller wins; it counts the attempt and holds for 30 seconds, released by the result or expiring
+on its own). A retry that finds a live claim calls nothing and reports
+`registration_in_progress`. Two signups for the same WABA at the same time: the one that stores
+its credential first wins; the other writes nothing and is refused (`CONFLICT`,
+`signup_in_progress`), so a stored PIN is never replaced by a concurrent one. An account without
+an active number (its number was disconnected) is never subscribed and reports
+`no_active_number`; a new signup adds a number.
+
+Refusal reasons before anything is stored: `invalid_code`, `invalid_id`, `connections_disabled`,
+`signup_code_invalid` (expired, used or unknown code), `token_invalid`, `token_wrong_app`,
+`scopes_missing`, `waba_not_granted`, `waba_not_accessible`, `phone_number_not_in_waba`
+(`INVALID_ARGUMENT`); `waba_in_use`, `phone_number_in_use`, `phone_number_operator_managed`,
+`stored_pin_unavailable`, `signup_in_progress` (`CONFLICT`). A Meta outage at that stage is `PROVIDER_ERROR` (`stage`,
+`reason`, `retryable`); the user starts the signup again. Missing app configuration is
+`INTERNAL` (`not_configured`).
+
+**Token expiry and reauthorization.** No WhatsApp token is refreshed: the token refresh job
+handles Instagram only (its provider list is typed to OAuth providers, and it skips anything
+else). A connection moves to `needs_reauth` in two ways:
+
+- its `tokenExpiresAt` (from Meta's `expires_at`, if any) has passed: the hourly connection sweep
+  marks it, like every provider's (`Access token expired`, audited `connection.needs_reauth`,
+  reason `token_expired`);
+- Meta refuses the token during setup (Graph code 190 or 102, or HTTP 401, the Meta Ads
+  provider's classification): `Re-authorization required`, audited with reason
+  `whatsapp_token_invalid` and the admin's subject; the account records `token_invalid`.
+
+Then the setup status is `reauthorization_required`, `retrySetup` refuses (`reconnect_required`)
+without calling Meta, and the admin signs up again. That reconnect keeps the stored PIN.
+Inbound routing is unaffected.
+
+Limits (B2):
+
+- Numbers that already have a two-step verification PIN are not supported: their registration
+  fails and the reason is recorded. Coexistence numbers (already in the WhatsApp Business app)
+  are not supported.
+- A number this org has from the operator path (active or disconnected, including rows without
+  `source`) is refused (`phone_number_operator_managed`) before any write here or at Meta: its
+  two-step PIN at Meta is not ours, so registering it would overwrite that PIN or fail on it.
+  Its row and routing are unchanged. Moving such a number into Embedded Signup is not
+  supported.
+- At most 5 registration calls per number. After Meta's rate-limit error (133016; Meta allows
+  10 register / deregister calls per 72 hours), no registration call for that number for 72
+  hours (`registration_rate_limited`; `listAccounts` shows `registrationRetryAfter`).
+- One number per signup call; another number of the same WABA needs another signup.
+- A reconnect (a new signup for the same WABA in the same org, also after `needs_reauth`)
+  replaces the token, keeps the stored PIN, subscribes again and never re-registers a
+  registered number. A stored credential that cannot be read is never replaced: the signup is
+  refused (`stored_pin_unavailable`). Whether re-subscribing is harmless at Meta is not
+  documented.
+- No WhatsApp disconnect or token revocation yet (B4). If the connection is revoked, the stored
+  PIN is lost with its credential.
+- Two calls carry secrets in their query string, as Meta documents them (server to server,
+  HTTPS): the code exchange (`client_secret`, `code`) and `debug_token` (the business token).
+  This application never logs a URL; whether anything between Convex and Meta records query
+  strings is unverified.
+
+## Public API
+
+Inbox: `v1/whatsapp:listConversations` (`{ paginationOpts }`), `v1/whatsapp:getConversation`
 (`{ conversationId }`), `v1/whatsapp:listMessages` (`{ conversationId, paginationOpts }`). All
 `orgQuery` (viewer). Another org's conversation is `NOT_FOUND`.
+
+Connections: `v1/whatsapp:getSignupConfig` (`{}`, admin), `v1/whatsapp:completeSignup`
+(`{ code, wabaId, phoneNumberId }`, admin action), `v1/whatsapp:retrySetup` (`{ accountId }`,
+admin action; another org's account is `NOT_FOUND`) and `v1/whatsapp:listAccounts` (`{}`,
+viewer; accounts with their numbers and setup status, never the token or PIN).
+`completeSignup`'s `code` is the only secret-like argument the contract test allows.
 
 ## Open risks (Stage 1)
 
@@ -250,4 +343,9 @@ Everything below is still modeled on Meta's documentation and unverified:
 - `contacts[].profile.name`, message types other than text, `statuses[]` and `errors[].code`;
 - status values (`sent`, `delivered`, `read`, `failed`) and their real ordering;
 - batch sizes, the 3 MB payload ceiling and Meta's retry schedule for non-200 responses;
-- whether a WABA id ever differs between webhook `entry[].id` and the registered value.
+- whether a WABA id ever differs between webhook `entry[].id` and the registered value;
+- Embedded Signup end to end (never run): the code exchange, the `debug_token` fields for a
+  business integration token (`granular_scopes` WABA ids, `expires_at`), the `subscribed_apps`
+  and `register` answers, Meta's error codes for a reused code, a PIN mismatch, a rate limit or a
+  refused business token (190 / 102 / 401 assumed), when a 133016 limit clears, and whether
+  re-subscribing an already subscribed WABA is harmless.
