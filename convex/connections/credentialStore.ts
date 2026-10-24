@@ -34,7 +34,8 @@ import { OAUTH_GRANT_TTL_MS } from "./config";
  *   connection (claimGrant), once, before it expires.
  */
 
-const encryptedValidator = v.object({
+/** Ciphertext bundle from `encryptCredential` (validator for internal mutation arguments). */
+export const encryptedValidator = v.object({
   ciphertext: v.bytes(),
   iv: v.bytes(),
   keyVersion: v.number(),
@@ -445,6 +446,70 @@ export const claimGrant = internalMutation({
     return { ok: true as const, connectionId, reconnected: existing !== null };
   },
 });
+
+/**
+ * Creates or re-activates a connection and stores its credential, for providers that never use
+ * OAuth grants (WhatsApp Embedded Signup, ADR 0014: its action exchanges the code and encrypts
+ * the token itself). `encrypted` must be bound to exactly (orgId, provider, externalUserId); a
+ * ciphertext bound to anything else fails to decrypt on use. A reconnect replaces the
+ * credential and increments `credentialVersion`. The caller authorizes and audits.
+ */
+export async function upsertDirectConnection(
+  db: DatabaseWriter,
+  input: {
+    orgId: Id<"organizations">;
+    /** Never an OAuth provider: those connect only through grants (S2). */
+    provider: Exclude<StoredConnectionProvider, ConnectionProvider>;
+    externalUserId: string;
+    displayName?: string;
+    grantedScopes: string[];
+    connectedBySubject: string;
+    encrypted: EncryptedPayload;
+    now: number;
+  },
+): Promise<{ connectionId: Id<"connections">; reconnected: boolean }> {
+  const existing = await db
+    .query("connections")
+    .withIndex("by_org_provider_identity", (q) =>
+      q
+        .eq("orgId", input.orgId)
+        .eq("provider", input.provider)
+        .eq("externalUserId", input.externalUserId),
+    )
+    .unique();
+
+  let connectionId: Id<"connections">;
+  if (existing) {
+    connectionId = existing._id;
+    await db.patch(existing._id, {
+      displayName: input.displayName,
+      status: "active",
+      grantedScopes: input.grantedScopes,
+      credentialVersion: existing.credentialVersion + 1,
+      tokenExpiresAt: undefined,
+      lastError: undefined,
+      revokedAt: undefined,
+      connectedBySubject: input.connectedBySubject,
+      updatedAt: input.now,
+    });
+  } else {
+    connectionId = await db.insert("connections", {
+      orgId: input.orgId,
+      provider: input.provider,
+      externalUserId: input.externalUserId,
+      ...(input.displayName !== undefined ? { displayName: input.displayName } : {}),
+      status: "active",
+      grantedScopes: input.grantedScopes,
+      credentialVersion: 1,
+      connectedBySubject: input.connectedBySubject,
+      connectedAt: input.now,
+      createdAt: input.now,
+      updatedAt: input.now,
+    });
+  }
+  await writeCredential(db, input.orgId, connectionId, input.encrypted, input.now);
+  return { connectionId, reconnected: existing !== null };
+}
 
 /** Sweep step (connections/maintenance.ts): deletes unclaimed grants past their expiry. */
 export async function deleteExpiredGrants(

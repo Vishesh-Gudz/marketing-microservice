@@ -34,6 +34,10 @@ const APPROVED_GLOBAL_INDEXES = [
   "oauthStates.by_expires",
   "oauthStates.by_nonce_hash",
   "syncAccounts.by_next_plan",
+  // WhatsApp connections (ADR 0014): one org per WABA. Connecting checks whether another org
+  // has the WABA active; the row found is only compared, never returned or written. Covered by
+  // convex/whatsapp/accounts.test.ts.
+  "whatsappBusinessAccounts.by_waba_status",
   // WhatsApp (ADR 0013): webhook deliveries are authenticated as Meta, not as a tenant, so the
   // org is resolved from the registered phone_number_id. Rows are re-verified (active, unique,
   // WABA match) before any write; covered by convex/whatsapp/webhook.test.ts isolation tests.
@@ -55,7 +59,7 @@ function indexes(table: string) {
 }
 
 describe("schema inventory", () => {
-  it("contains exactly the Phase 1, 2, 4, 5, 6, 10 and WhatsApp inbox tables", () => {
+  it("contains exactly the Phase 1, 2, 4, 5, 6, 10 and WhatsApp tables", () => {
     expect(tableNames).toEqual(
       [
         "connections",
@@ -82,6 +86,7 @@ describe("schema inventory", () => {
         "syncAccounts",
         "syncRuns",
         "syncTasks",
+        "whatsappBusinessAccounts",
         "whatsappConversations",
         "whatsappMessages",
         "whatsappPhoneNumbers",
@@ -156,6 +161,7 @@ describe("tenant ownership", () => {
       "syncAccounts",
       "syncRuns",
       "syncTasks",
+      "whatsappBusinessAccounts",
       "whatsappPhoneNumbers",
       "whatsappWebhookEvents",
       "whatsappConversations",

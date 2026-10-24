@@ -1,4 +1,5 @@
 import { apiError } from "../lib/errors";
+import { isLocalDeployment } from "../providers/mode";
 
 /**
  * WhatsApp Cloud API inbox configuration (ADR 0013, docs/whatsapp.md).
@@ -19,7 +20,24 @@ export const WHATSAPP_WEBHOOK_PATH = "/whatsapp/webhook";
 export const WHATSAPP_ENV = {
   appSecret: "WHATSAPP_APP_SECRET",
   verifyToken: "WHATSAPP_WEBHOOK_VERIFY_TOKEN",
+  /** Not a secret: "true" (exactly) opens new WhatsApp connections on a cloud deployment. */
+  connectionsEnabled: "WHATSAPP_CONNECTIONS_ENABLED",
 } as const;
+
+/**
+ * ADR 0014 (D9): new WhatsApp connections stay closed on cloud deployments until an operator
+ * sets WHATSAPP_CONNECTIONS_ENABLED=true (exactly), independently of OAUTH_CONNECTIONS_ENABLED.
+ * Local deployments and in-process tests (loopback or absent CONVEX_CLOUD_URL) are open.
+ * Existing connections and the webhook are unaffected.
+ */
+export function whatsappConnectionsEnabled(
+  env: { enabled?: string; cloudUrl?: string } = {
+    enabled: process.env[WHATSAPP_ENV.connectionsEnabled],
+    cloudUrl: process.env.CONVEX_CLOUD_URL,
+  },
+): boolean {
+  return isLocalDeployment(env.cloudUrl) || env.enabled === "true";
+}
 
 /**
  * Upper bound on a delivery body. Meta documents webhook payloads of up to 3 MB; anything larger
@@ -66,6 +84,26 @@ export const OPERATOR_SUBJECT = /^operator:[A-Za-z0-9._@-]{1,64}$/;
 export function requireOperatorSubject(actorSubject: string): void {
   if (!OPERATOR_SUBJECT.test(actorSubject)) {
     throw apiError("INVALID_ARGUMENT", "actorSubject must be operator:<name>.", {
+      field: "actorSubject",
+    });
+  }
+}
+
+/** Operator and system-job audit namespaces; a signed-in user's subject is never one of them. */
+const NON_USER_SUBJECT = /^(operator|system):/;
+
+/**
+ * Refuses (INVALID_ARGUMENT) an `actorSubject` that is not a signed-in user's subject: the
+ * Embedded Signup path (ADR 0014) passes on the verified JWT subject of the org admin, so an
+ * operator or system label here would mean a caller is impersonating that path.
+ */
+export function requireUserSubject(actorSubject: string): void {
+  if (
+    actorSubject.trim() === "" ||
+    actorSubject.length > 256 ||
+    NON_USER_SUBJECT.test(actorSubject)
+  ) {
+    throw apiError("INVALID_ARGUMENT", "actorSubject must be a signed-in user's subject.", {
       field: "actorSubject",
     });
   }

@@ -172,6 +172,7 @@ import type * as v1_orgs from "../v1/orgs.js";
 import type * as v1_socialAccounts from "../v1/socialAccounts.js";
 import type * as v1_socialPosts from "../v1/socialPosts.js";
 import type * as v1_whatsapp from "../v1/whatsapp.js";
+import type * as whatsapp_accounts from "../whatsapp/accounts.js";
 import type * as whatsapp_config from "../whatsapp/config.js";
 import type * as whatsapp_ingest from "../whatsapp/ingest.js";
 import type * as whatsapp_payload from "../whatsapp/payload.js";
@@ -356,6 +357,7 @@ declare const fullApi: ApiFromModules<{
   "v1/socialAccounts": typeof v1_socialAccounts;
   "v1/socialPosts": typeof v1_socialPosts;
   "v1/whatsapp": typeof v1_whatsapp;
+  "whatsapp/accounts": typeof whatsapp_accounts;
   "whatsapp/config": typeof whatsapp_config;
   "whatsapp/ingest": typeof whatsapp_ingest;
   "whatsapp/payload": typeof whatsapp_payload;
