@@ -28,6 +28,12 @@ export const AUDIT_ACTIONS = {
   socialAccountRelinked: "socialAccount.relinked",
   socialAccountUnlinked: "socialAccount.unlinked",
   connectionTokenRefreshed: "connection.token_refreshed",
+  // YouTube retention (ADR 0016, Checkpoint 3b): a channel's stored data is hard-deleted. Entries
+  // carry the Convex row id, the reason, an allowlisted check outcome and counts only: never a
+  // YouTube id, title, handle, token or error message.
+  socialAccountPurgeStarted: "socialAccount.purge_started",
+  socialAccountPurged: "socialAccount.purged",
+  socialAccountAuthorizationInconclusive: "socialAccount.authorization_check_inconclusive",
   // Phase 5: sync. Routine runs are NOT audited (see syncRuns); only account-level
   // state changes are. Entries carry ids/kinds/counts only, never payloads.
   syncAccountBlocked: "sync.account_blocked",
@@ -61,6 +67,9 @@ export const SYSTEM_TOKEN_REFRESH_SUBJECT = "system:token-refresh";
 
 /** Actor used for audit entries written by the sync engine (Phase 5). */
 export const SYSTEM_SYNC_SUBJECT = "system:sync";
+
+/** Actor used for audit entries written by the YouTube retention jobs (ADR 0016). */
+export const SYSTEM_YOUTUBE_RETENTION_SUBJECT = "system:youtube-retention";
 
 export type AuditEntryInput = {
   action: string;

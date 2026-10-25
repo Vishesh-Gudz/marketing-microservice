@@ -212,6 +212,11 @@ exports[`schema inventory > declares the approved indexes 1`] = `
       "platform",
       "externalId",
     ],
+    "by_platform_status_seen": [
+      "platform",
+      "status",
+      "lastSeenAt",
+    ],
   },
   "socialPostMetricSnapshots": {
     "by_org_post_date": [
@@ -235,6 +240,10 @@ exports[`schema inventory > declares the approved indexes 1`] = `
       "orgId",
       "platform",
       "externalId",
+    ],
+    "by_platform_seen": [
+      "platform",
+      "lastSeenAt",
     ],
   },
   "syncAccounts": {

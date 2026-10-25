@@ -240,7 +240,16 @@ money semantics are implemented provisionally and require validation on a real a
 - `attributes` and `extras` maps are capped at 50 keys by the Phase 5 write path (attribute values at
   1,024 characters; `headlines`/`descriptions` at 20 items).
 
-## Retention (proposed future defaults only; not implemented)
+## Retention
+
+**Implemented for YouTube only (ADR 0016, Checkpoint 3b).** YouTube channels are the only synced
+rows that are hard-deleted. On disconnect, unlink or a confirmed authorization failure, the
+channel's videos, snapshots, day rows, sync runs, tasks and state go, then the channel row. Videos
+that no listing has refreshed for 25 days go with their snapshots. Rows of every other platform
+are kept on unlink and disconnect and are never deleted by sync. See
+[providers/youtube.md](providers/youtube.md#retention-checkpoint-3b).
+
+Proposed future defaults (not implemented):
 
 - Account- and campaign-level daily metrics: 37 months.
 - Ad-group and ad-level daily metrics: 25 months.

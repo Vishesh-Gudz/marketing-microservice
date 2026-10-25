@@ -164,7 +164,7 @@ describe("exchangeCode", () => {
         issuedAt: NOW,
         scopes: [FAKE_YT_READONLY_SCOPE, FAKE_YT_ANALYTICS_SCOPE],
       },
-      identity: { externalUserId: FAKE_CHANNEL_ID, displayName: "Fake Brand" },
+      identity: { externalUserId: FAKE_CHANNEL_ID }, // no title (ADR 0016, Checkpoint 3b)
       grantedScopes: [FAKE_YT_READONLY_SCOPE, FAKE_YT_ANALYTICS_SCOPE],
       refreshable: true,
     });
@@ -367,7 +367,6 @@ describe("discovery", () => {
         {
           platform: "youtube",
           externalId: FAKE_CHANNEL_ID,
-          username: "fakebrand",
           accountType: "channel",
         },
       ],
@@ -435,7 +434,6 @@ describe("mock OAuth and discovery", () => {
       {
         platform: "youtube",
         externalId: mockYouTubeChannelId("1"),
-        username: "mock_1",
         accountType: "channel",
       },
     ]);

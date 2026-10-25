@@ -4,7 +4,6 @@ import type { PageRequest, ProviderContext, ProviderPage } from "../types";
 import { YouTubeRequestBudget } from "./client";
 import { OAUTH_TIMEOUT_MS, YOUTUBE_PROVIDER_ID, type YouTubeAppConfig } from "./config";
 import { youtubeError } from "./errors";
-import { handleOf } from "./mapping";
 import { CHANNEL_ACCOUNT_TYPE } from "./semantics";
 import { createYouTubeSession, ownedChannelOf } from "./session";
 
@@ -12,9 +11,10 @@ import { createYouTubeSession, ownedChannelOf } from "./session";
  * YouTube channel discovery (ADR 0016, Y-D2), in the DEFAULT runtime (no Node hop, no SDK).
  * A YouTube consent belongs to exactly one channel (the credential's), so discovery is one
  * page: a fresh access token + `channels.list?mine=true` (budget 2), returning that channel's
- * minimum identity (id, handle, account type). It also proves the authorization still owns the
- * channel; if not, `permission` / account_mismatch. Profile details (title, subscribers) are
- * filled by the first sync preflight.
+ * minimum identity (id and account type; no handle: discovered rows outlive an unlink, ADR 0016
+ * Checkpoint 3b). It also proves the authorization still owns the channel; if not,
+ * `permission` / account_mismatch. Profile details (title, handle, subscribers) are filled by
+ * the first sync preflight.
  */
 export function createYouTubeDiscovery(
   app: YouTubeAppConfig & { timeoutMs?: number },
@@ -42,11 +42,9 @@ export function createYouTubeDiscovery(
         session.credential.channelId,
         operation,
       );
-      const username = handleOf(channel.snippet?.customUrl);
       const record: ProviderDiscoveredSocialAccount = {
         platform: "youtube",
         externalId: channel.id,
-        ...(username !== undefined ? { username } : {}),
         accountType: CHANNEL_ACCOUNT_TYPE,
       };
       assertValidSocialRecord("discoveredSocialAccount", record, "youtube", operation);

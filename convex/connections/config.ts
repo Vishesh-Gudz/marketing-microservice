@@ -21,6 +21,32 @@ export const OAUTH_GRANT_TTL_MS = 10 * 60 * 1000;
 /** Claim codes are randomToken() values (32 random bytes, base64url: 43 characters). */
 export const CLAIM_CODE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * YouTube data retention (ADR 0016, Checkpoint 3b; YouTube API Services Developer Policies
+ * III.D.2.3 and III.E.4). 25 days is OUR conservative operational cutoff inside the policy's
+ * 30-day intervals (re-verify authorization, refresh or delete metadata, delete the data of a
+ * revocation in Google's settings); the policy itself does not state 25 days. Disconnect and
+ * unlink purge at once (the policy allows 7 days after an in-app revocation).
+ */
+export const YOUTUBE_RETENTION = {
+  /** A channel whose authorization was last confirmed longer ago is re-checked once a day. */
+  authorizationCheckAfterMs: 25 * DAY_MS,
+  /** A video no listing has refreshed for longer is deleted with its snapshots. */
+  videoNotSeenMs: 25 * DAY_MS,
+  /** Rows one purge step deletes before it schedules its continuation. */
+  purgeStepDeletes: 500,
+  /** Purge steps one chain runs before the hourly sweep takes over (every step makes progress). */
+  maxPurgeSteps: 1000,
+  /** Rows the hourly sweep deletes per run (stale videos and their snapshots). */
+  sweepDeletes: 500,
+  /** Channels one sweep or check pass handles. */
+  accountsPerPass: 25,
+  /** Follow-up runs a sweep or check pass may schedule (the next cron run continues). */
+  maxContinuations: 20,
+} as const;
+
 export const OAUTH_CALLBACK_PATH = "/oauth/callback";
 
 /**

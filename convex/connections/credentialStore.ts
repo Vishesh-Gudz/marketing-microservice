@@ -81,7 +81,9 @@ export type ConnectionBinding = CredentialBinding & {
  * The ONLY way to use a stored credential: decrypts it, hands it to `handle`,
  * and never returns it. Refuses non-active connections unless `allowRevoked`
  * (used solely to revoke at the platform on disconnect) or `allowNeedsReauth` (used solely by
- * the WhatsApp signup to keep a number's registration PIN across a reconnect, ADR 0014).
+ * the WhatsApp signup to keep a number's registration PIN across a reconnect, ADR 0014, and by
+ * the YouTube authorization check, which must tell a revoked grant from a temporary failure
+ * before any purge, ADR 0016).
  */
 export async function withConnectionCredential<T>(
   ctx: ActionCtx,

@@ -317,6 +317,7 @@ window, are unchanged; any such run resets the streak to 0.
 | two workers on one task         | only one claim succeeds; a stale `claimSeq` commit is discarded                                                |
 | retry after partial completion  | resume from the committed cursor; pages are replaced by natural key                                            |
 | disconnect / unlink during sync | every claim and commit re-checks the pinned connection and the account link; the run is cancelled, no writes   |
+| YouTube purge during sync       | the purge cancels the active run and deletes its rows; a later claim or commit finds nothing to write          |
 | reconnect during sync           | each page re-reads the credential, so later pages use the new one                                              |
 | relink to another connection    | run cancelled (`account_relinked`); the next run syncs into the **same** canonical rows                        |
 | token expired                   | claim takes the `auth` path without calling the provider                                                       |

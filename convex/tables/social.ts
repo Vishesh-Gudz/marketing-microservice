@@ -40,7 +40,12 @@ export const socialTables = {
     ...entityLifecycleFields,
   })
     .index("by_org_platform_external", ["orgId", "platform", "externalId"])
-    .index("by_org_connection", ["orgId", "connectionId"]),
+    .index("by_org_connection", ["orgId", "connectionId"])
+    // GLOBAL (approved exception, ADR 0016): the YouTube retention jobs find, across orgs,
+    // channels marked for purge (status "disconnected") and channels whose authorization was
+    // last confirmed (lastSeenAt) more than 25 days ago. Every row read through it is
+    // re-verified (platform, org) before anything is deleted.
+    .index("by_platform_status_seen", ["platform", "status", "lastSeenAt"]),
 
   socialPosts: defineTable({
     orgId: orgIdField,
@@ -59,7 +64,11 @@ export const socialTables = {
   })
     .index("by_org_account_external", ["orgId", "socialAccountId", "externalId"])
     .index("by_org_account_published", ["orgId", "socialAccountId", "publishedAt"])
-    .index("by_org_platform_external", ["orgId", "platform", "externalId"]),
+    .index("by_org_platform_external", ["orgId", "platform", "externalId"])
+    // GLOBAL (approved exception, ADR 0016): the YouTube retention job finds, across orgs,
+    // videos no listing has refreshed (lastSeenAt) for 25 days. Every row read through it is
+    // re-verified (platform, org, owning channel) before it and its snapshots are deleted.
+    .index("by_platform_seen", ["platform", "lastSeenAt"]),
 
   /** Cumulative lifetime values per post, one row per capture day (UTC). */
   socialPostMetricSnapshots: defineTable({

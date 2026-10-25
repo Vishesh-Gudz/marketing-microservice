@@ -48,4 +48,22 @@ crons.hourly(
   {},
 );
 
+// YouTube retention (ADR 0016, Checkpoint 3b): resume interrupted channel purges and delete
+// videos no listing has refreshed for 25 days, with their snapshots (bounded batches).
+crons.hourly(
+  "youtube retention sweep",
+  { minuteUTC: 47 },
+  internal.connections.youtubeRetention.sweepYouTubeRetention,
+  {},
+);
+
+// YouTube retention: re-check channels whose authorization was last confirmed more than 25 days
+// ago; only a confirmed failure purges (inconclusive checks are audited and retried daily).
+crons.daily(
+  "youtube authorization check",
+  { hourUTC: 4, minuteUTC: 27 },
+  internal.connections.youtubeRetention.planYouTubeAuthorizationChecks,
+  {},
+);
+
 export default crons;

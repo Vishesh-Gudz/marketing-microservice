@@ -32,7 +32,8 @@ export function requireOAuthConnection(connection: Doc<"connections">): void {
 
 /**
  * Disconnects: revoked + unlink its ad accounts and (Phase 10) social accounts (rows and
- * data kept) + drop discovered assets + schedule platform revoke and credential deletion.
+ * data kept, except YouTube channels: purged, ADR 0016) + drop discovered assets + schedule
+ * platform revoke and credential deletion.
  * OAuth connections only (WhatsApp is refused, see `requireOAuthConnection`).
  */
 export async function disconnectConnection(
@@ -44,7 +45,13 @@ export async function disconnectConnection(
   if (connection.status === "revoked") return connection;
   const now = Date.now();
 
-  await ctx.db.patch(connection._id, { status: "revoked", revokedAt: now, updatedAt: now });
+  await ctx.db.patch(connection._id, {
+    status: "revoked",
+    revokedAt: now,
+    // ADR 0016 (Checkpoint 3b): no YouTube channel title outlives the connection.
+    ...(connection.provider === "youtube" ? { displayName: undefined } : {}),
+    updatedAt: now,
+  });
   const linked = await ctx.db
     .query("adAccounts")
     .withIndex("by_org_connection", (q) =>

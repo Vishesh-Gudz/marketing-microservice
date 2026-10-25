@@ -11,6 +11,7 @@ import { SOCIAL_RECORD_VALIDATORS } from "../providers/social/validate";
 import { ensureSocialSyncAccount } from "../sync/state";
 import { upsertLinkedSocialAccount } from "../sync/upsert";
 import { MAX_LINK_BATCH, providerRegistry } from "./config";
+import { markYouTubeAccountForPurge } from "./youtubeRetention";
 
 /**
  * Discovered organic social accounts (Phase 10) and linking them to the canonical
@@ -147,6 +148,26 @@ export async function linkSocialAccounts(
     if (discovered === null) {
       throw apiError("NOT_FOUND", "Account was not discovered by this connection.", { externalId });
     }
+    // ADR 0016 (Checkpoint 3b): a YouTube channel whose stored data is still being deleted is
+    // linked again only once the purge completed (then as a new channel, backfilled afresh).
+    if (connection.provider === "youtube") {
+      const pending = await ctx.db
+        .query("socialAccounts")
+        .withIndex("by_org_platform_external", (q) =>
+          q.eq("orgId", ctx.tenant.orgId).eq("platform", "youtube").eq("externalId", externalId),
+        )
+        .first();
+      if (pending?.status === "disconnected") {
+        throw apiError(
+          "CONFLICT",
+          "This channel's stored data is still being deleted. Try again shortly.",
+          {
+            reason: "purge_pending",
+            externalId,
+          },
+        );
+      }
+    }
 
     // The single canonical write path (convex/sync/upsert.ts), by natural key.
     const { socialAccountId, created, previousConnectionId } = await upsertLinkedSocialAccount(
@@ -189,28 +210,40 @@ export async function linkSocialAccounts(
   return linked;
 }
 
-/** Unlinks a social account (idempotent). The row and its data are kept. */
+/**
+ * Unlinks a social account (idempotent). The row and its data are kept, except for YouTube
+ * (ADR 0016, Checkpoint 3b): the channel is marked for purge and its stored data deleted
+ * (connections/youtubeRetention.ts), also when it was already unlinked.
+ */
 export async function unlinkSocialAccount(
   ctx: TenantCtx,
   socialAccountIdInput: string,
 ): Promise<Doc<"socialAccounts">> {
   const account = await getOwned(ctx, "socialAccounts", socialAccountIdInput);
-  if (account.connectionId === undefined) return account;
-  await ctx.db.patch(account._id, {
-    connectionId: undefined,
-    linkedAt: undefined,
-    updatedAt: Date.now(),
-  });
-  await writeAudit(ctx.db, ctx.tenant, {
-    action: AUDIT_ACTIONS.socialAccountUnlinked,
-    targetType: "socialAccount",
-    targetId: account._id,
-    changes: { connectionId: { from: account.connectionId, to: null } },
-  });
+  const now = Date.now();
+  if (account.connectionId !== undefined) {
+    await ctx.db.patch(account._id, {
+      connectionId: undefined,
+      linkedAt: undefined,
+      updatedAt: now,
+    });
+    await writeAudit(ctx.db, ctx.tenant, {
+      action: AUDIT_ACTIONS.socialAccountUnlinked,
+      targetType: "socialAccount",
+      targetId: account._id,
+      changes: { connectionId: { from: account.connectionId, to: null } },
+    });
+  }
+  if (account.platform === "youtube" && account.status !== "disconnected") {
+    await markYouTubeAccountForPurge(ctx, account, "unlinked", ctx.tenant, now);
+  }
   return (await ctx.db.get(account._id))!;
 }
 
-/** Disconnect path (lifecycle.ts): unlink every social account of the connection. */
+/**
+ * Disconnect path (lifecycle.ts): unlink every social account of the connection. YouTube
+ * channels are marked for purge (ADR 0016, Checkpoint 3b).
+ */
 export async function unlinkSocialAccountsOfConnection(
   ctx: TenantCtx,
   connectionId: Id<"connections">,
@@ -234,6 +267,9 @@ export async function unlinkSocialAccountsOfConnection(
       targetId: account._id,
       changes: { connectionId: { from: connectionId, to: null } },
     });
+    if (account.platform === "youtube") {
+      await markYouTubeAccountForPurge(ctx, account, "disconnected", ctx.tenant, now);
+    }
   }
   for (const row of await discoveredSocialAccountsOf(ctx.db, ctx.tenant.orgId, connectionId)) {
     await ctx.db.delete(row._id);

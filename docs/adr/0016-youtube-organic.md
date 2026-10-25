@@ -1,8 +1,9 @@
 # ADR 0016 — YouTube organic provider
 
-- Status: Checkpoints 1 (provider foundation), 2 (OAuth and account connection) and 3
-  (analytics sync and storage, after the policy review) implemented and tested against mock and
-  fake data only. Checkpoints 3b–6 (retention, public API, dashboard, verification) are planned.
+- Status: Checkpoints 1 (provider foundation), 2 (OAuth and account connection), 3 (analytics
+  sync and storage, after the policy review) and 3b (retention and deletion) implemented and
+  tested against mock and fake data only. Checkpoints 4–6 (public API, dashboard, verification)
+  are planned.
   Nothing was validated against a real YouTube channel or a real Google OAuth client (YR1–YR14
   provisional).
 - Date: 2026-10-25
@@ -115,6 +116,43 @@ Details: [docs/providers/youtube.md](../providers/youtube.md).
   below. (This also closes the org-wide follower total, which would otherwise have added the
   YouTube subscriber captures that Checkpoint 2's preflight already stores.)
 
+### Checkpoint 3b (implemented)
+
+Retention and deletion (`convex/connections/youtubeRetention.ts`; the exact rules are in
+[docs/providers/youtube.md](../providers/youtube.md#retention-checkpoint-3b)).
+
+- **Disconnect and unlink hard-delete** the channel's stored data: videos, snapshots, day rows,
+  sync runs, tasks and state, then the channel row. Disconnect also revokes at Google through the
+  existing flow. The deletion is bounded (500 rows per step), resumable (the hourly sweep resumes
+  every channel still marked `disconnected`) and idempotent.
+- **A sync that is in flight never writes after an unlink.** The engine's linkage check refuses
+  the commit, and the active run is cancelled. Relinking while a purge is pending is refused
+  (`purge_pending`).
+- **Daily authorization check** of every linked channel whose authorization (`lastSeenAt`) was
+  last confirmed more than 25 days ago. 25 days is our conservative operational cutoff, not a
+  policy deadline. Only a confirmed failure purges:
+  - `invalid_grant`;
+  - the channel is not owned;
+  - no credential;
+  - a revoked connection.
+
+  Network errors, outages, quota and configuration errors are inconclusive: the data is kept, the
+  outcome is audited and the check is retried daily.
+
+- **Stale videos:** the hourly sweep deletes videos that no listing has refreshed for 25 days,
+  with their snapshots. It never claims that a video was deleted on YouTube; the 5,000-upload
+  listing cap is one documented cause.
+- **Minimized identifiers:**
+  - the connection no longer stores the channel title (`displayName`), and disconnect clears an
+    old one;
+  - discovery no longer stores the handle;
+  - retention audit entries carry row ids, reasons, kinds and counts only.
+- **Two approved global indexes** (`socialAccounts.by_platform_status_seen`,
+  `socialPosts.by_platform_seen`): the system jobs have no tenant caller, and every row read
+  through these indexes is re-verified (platform, org) before any deletion.
+- **Deletion requests:** an operational runbook (admin API) is in place. **An in-product deletion
+  path must be provided in the dashboard phase (Checkpoint 5).**
+
 ## Policy review findings (Checkpoint 3)
 
 - **III.E.4.h:** no API Data replaced by independently calculated data and no "new or derived
@@ -146,13 +184,27 @@ Details: [docs/providers/youtube.md](../providers/youtube.md).
    channels of different owners?
 4. Are an organization's members "agents expressly approved" (III.E.3.b) by the person who
    connected the channel; is explicit consent wording needed at connect time?
-5. Is a 395-day history "as long as necessary"; must every analytics row go after a disconnect?
-6. Does the sync preflight (fresh token + `channels.list?mine=true` on every run) satisfy the
-   30-day authorization re-check?
+5. Is a 395-day history "as long as necessary"? (Checkpoint 3b answered the second half by
+   design: every row of a channel goes on disconnect and on unlink.)
+6. Do the sync preflight and the daily check (each a fresh token plus `channels.list?mine=true`)
+   satisfy the 30-day authorization re-check? Checkpoint 3b assumes so.
 7. Should the service apply for III.L (audit + quota extension) for ratios and growth metrics?
 8. Production: OAuth verification (whether the scopes are "sensitive" is unconfirmed), privacy
    policy and Terms-of-Service links (III.A), branding (III.F.2), quota extension via the API
    Compliance Audit (III.D.3).
+9. (Checkpoint 3b) An authorization check can stay inconclusive for days, for example after our
+   own misconfiguration or a long outage. The data is kept and the outcome is audited daily, but
+   nothing alerts an operator yet. Is there a maximum time after which unconfirmed data must go
+   anyway?
+10. (Checkpoint 3b) A closed or suspended channel (`channelClosed`, `channelSuspended`) is
+    inconclusive today, not a confirmed deauthorization. Should it purge?
+11. (Checkpoint 3b) A revoked connection row keeps the channel id (`externalUserId`) without
+    limit, for reconnect identity and for the audit trail. Is a channel id "Authorized Data" that
+    III.E.4.c requires us to delete or refresh after 30 days? If so, disconnected rows need a
+    scrub job.
+12. (Checkpoint 3b) For channels with more than 5,000 uploads, the oldest uploads are never stored,
+    and uploads pushed past the cap are deleted after 25 days. Is that acceptable for the product,
+    or should older uploads be read some other way?
 
 Until answered: only metrics YouTube reports are stored and exposed, nothing is derived, no
 multi-channel or cross-platform aggregation, and no period totals or comparisons for YouTube.
@@ -165,3 +217,6 @@ multi-channel or cross-platform aggregation, and no period totals or comparisons
   ([docs/providers/youtube.md](../providers/youtube.md#real-channel-validation-required)).
 - One schema inventory assertion changed additively (`socialAccounts.platform` includes
   `youtube`).
+- YouTube rows are the only synced rows that are hard-deleted: other platforms keep their rows
+  on unlink and disconnect, and sync itself never deletes. The approved global index list grows
+  by two (Checkpoint 3b).

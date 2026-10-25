@@ -33,6 +33,13 @@ const APPROVED_GLOBAL_INDEXES = [
   "oauthGrants.by_expires",
   "oauthStates.by_expires",
   "oauthStates.by_nonce_hash",
+  // YouTube retention (ADR 0016, Checkpoint 3b): system jobs (no tenant caller) find channels
+  // marked for purge or not authorization-confirmed for 25 days, and videos no listing has
+  // refreshed for 25 days, across orgs. Every row is re-verified (platform "youtube", org,
+  // owning channel) before anything is deleted; covered by
+  // convex/connections/youtubeRetention.test.ts.
+  "socialAccounts.by_platform_status_seen",
+  "socialPosts.by_platform_seen",
   "syncAccounts.by_next_plan",
   // WhatsApp connections (ADR 0014): one org per WABA. Connecting checks whether another org
   // has the WABA active; the row found is only compared. Covered by

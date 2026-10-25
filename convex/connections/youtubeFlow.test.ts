@@ -171,21 +171,22 @@ describe("YouTube connect flow (live, fake API)", () => {
     expect(rows.connections![0]).toMatchObject({
       provider: "youtube",
       externalUserId: FAKE_CHANNEL_ID,
-      displayName: "Fake Brand",
       status: "active",
       grantedScopes: [FAKE_YT_READONLY_SCOPE, FAKE_YT_ANALYTICS_SCOPE],
       credentialVersion: 1,
     });
     expect(rows.connections![0]).not.toHaveProperty("tokenExpiresAt");
+    // ADR 0016 (Checkpoint 3b): no channel title or handle on rows that outlive the data.
+    expect(rows.connections![0]).not.toHaveProperty("displayName");
     expect(rows.credentials).toHaveLength(1);
     expect(rows.oauthGrants).toEqual([]);
     expect(rows.discoveredSocialAccounts).toHaveLength(1);
     expect(rows.discoveredSocialAccounts![0]).toMatchObject({
       platform: "youtube",
       externalId: FAKE_CHANNEL_ID,
-      username: "fakebrand",
       accountType: "channel",
     });
+    expect(rows.discoveredSocialAccounts![0]).not.toHaveProperty("username");
     expect(rows.discoveredAssets).toEqual([]); // never ad-account discovery
     expect(rows.socialAccounts).toEqual([]); // discovery alone links nothing
     expectNoSecrets(rows);
@@ -387,7 +388,6 @@ describe("linking and lifecycle", () => {
       {
         externalId: FAKE_CHANNEL_ID,
         platform: "youtube",
-        username: "fakebrand",
         accountType: "channel",
         linked: false,
         discoveredAt: NOW.toISOString(),
@@ -444,7 +444,7 @@ describe("linking and lifecycle", () => {
     expect((await t.run((ctx) => ctx.db.query("connections").first()))!.status).toBe("active");
   });
 
-  it("disconnect revokes the token at Google, unlinks the channel and deletes the credential", async () => {
+  it("disconnect revokes the token at Google, purges the channel and deletes the credential", async () => {
     stubLiveYouTube(fake);
     const t = newBackend();
     const connectionId = await connectedBrand(t);
@@ -464,7 +464,8 @@ describe("linking and lifecycle", () => {
     const rows = await allRows(t);
     expect(rows.credentials).toEqual([]);
     expect(rows.discoveredSocialAccounts).toEqual([]);
-    expect((rows.socialAccounts![0] as { connectionId?: string }).connectionId).toBeUndefined();
+    // ADR 0016 (Checkpoint 3b): the channel row and its data are deleted (youtubeRetention.test.ts).
+    expect(rows.socialAccounts).toEqual([]);
     const actions = (await auditActions(t)).map((e) => e.action);
     expect(actions).toContain("connection.disconnected");
     expect(actions).toContain("credential.deleted");

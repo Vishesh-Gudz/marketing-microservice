@@ -39,6 +39,7 @@ import type * as connections_oauthState from "../connections/oauthState.js";
 import type * as connections_returnUrls from "../connections/returnUrls.js";
 import type * as connections_socialAssets from "../connections/socialAssets.js";
 import type * as connections_tokenRefresh from "../connections/tokenRefresh.js";
+import type * as connections_youtubeRetention from "../connections/youtubeRetention.js";
 import type * as crons from "../crons.js";
 import type * as domain_identity from "../domain/identity.js";
 import type * as domain_metrics from "../domain/metrics.js";
@@ -230,6 +231,7 @@ declare const fullApi: ApiFromModules<{
   "connections/returnUrls": typeof connections_returnUrls;
   "connections/socialAssets": typeof connections_socialAssets;
   "connections/tokenRefresh": typeof connections_tokenRefresh;
+  "connections/youtubeRetention": typeof connections_youtubeRetention;
   crons: typeof crons;
   "domain/identity": typeof domain_identity;
   "domain/metrics": typeof domain_metrics;

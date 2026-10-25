@@ -10,7 +10,6 @@ import {
 } from "./config";
 import { isYouTubeCredential, type YouTubeCredential } from "./credential";
 import { classifyYouTubeFailure, youtubeError, youtubeProviderError } from "./errors";
-import { capTitle, handleOf } from "./mapping";
 import { parseRaw, rawGrantTokenResponse } from "./schemas";
 import { bodyOf, configError, createYouTubeSession } from "./session";
 
@@ -176,13 +175,11 @@ export function createYouTubeOAuthSpec(
         issuedAt: now,
         scopes: grantedScopes,
       };
-      const displayName = capTitle(channel.snippet?.title) ?? handleOf(channel.snippet?.customUrl);
+      // No display name (ADR 0016, Checkpoint 3b): the channel title would outlive the data on
+      // the kept connection row. The linked channel's title is synced and purged with it.
       return {
         credential,
-        identity: {
-          externalUserId: channel.id,
-          ...(displayName !== undefined ? { displayName } : {}),
-        },
+        identity: { externalUserId: channel.id },
         grantedScopes,
         refreshable: true,
       } satisfies OAuthGrant<YouTubeCredential>;

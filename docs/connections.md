@@ -145,7 +145,7 @@ platform error code itself is never returned. See [sync.md](sync.md).
 ```text
 (none) ─callback─► pending grant ─claim by the initiator─► active ─auth error / token expiry─► needs_reauth ─reconnect─► active
 pending grant ─claim by anyone else / expiry / reconnect identity mismatch─► deleted (nothing connected)
-active | needs_reauth ─disconnect─► revoked   (credential deleted; ad accounts unlinked, rows kept)
+active | needs_reauth ─disconnect─► revoked   (credential deleted; ad accounts unlinked, rows kept; YouTube channels purged)
 ```
 
 - **Reconnect** with the same identity updates the same connection: new credential,
@@ -265,19 +265,26 @@ Full details: [providers/instagram.md](providers/instagram.md).
   required, nothing that can write).
 - **Callback:** the YouTube OAuthSpec runs in the default runtime: code exchange (a refresh token
   is required), then `channels.list?mine=true`. The consent's channel is the identity
-  (`externalUserId` = channel id, `displayName` = channel title). Without `youtube.readonly`, with
-  no channel or with more than one channel the exchange fails closed (`exchange_failed`);
-  without `yt-analytics.readonly` the connection is created and reports the scope in
-  `missingScopes`.
-- **Discovery** returns that one channel into `discoveredSocialAccounts` (account type
-  `channel`); linking uses the same social link functions as Instagram, and ad and social paths
-  never cross.
+  (`externalUserId` = channel id; no `displayName`: no channel title outlives its data).
+  Without `youtube.readonly`, with no channel or with more than one channel the exchange fails
+  closed (`exchange_failed`); without `yt-analytics.readonly` the connection is created and
+  reports the scope in `missingScopes`.
+- **Discovery** returns that one channel into `discoveredSocialAccounts` (id and account type
+  `channel`, no handle); linking uses the same social link functions as Instagram, and ad and
+  social paths never cross.
 - **Tokens:** only the refresh token is stored (encrypted). Access tokens are minted per provider
   call and never stored; the token refresh job never touches YouTube. `invalid_grant` (revoked
   or expired, e.g. after 7 days in Google's Testing mode) moves the connection to `needs_reauth`.
 - **Disconnect:** revokes the refresh token at Google (`oauth2.googleapis.com/revoke`, token in
-  the form body), then always deletes the credential, unlinks the channel and drops discovery.
-  Deleting the channel's stored data is Checkpoint 3b.
+  the form body), then always deletes the credential and drops discovery; the channel and all its
+  stored data are hard-deleted (Checkpoint 3b).
+- **Unlink** (`unlinkSocialAccount`) hard-deletes the channel and its stored data too, keeping
+  the connection and the id-only discovered row. Relinking is refused (`CONFLICT`,
+  `purge_pending`) until the deletion has completed; the channel then links as a new row.
+- **Retention:** a daily check purges channels whose authorization is confirmed invalid
+  (`invalid_grant`, channel not owned, no credential); temporary failures never purge. Details,
+  decision logic and the deletion-request runbook:
+  [providers/youtube.md](providers/youtube.md#retention-checkpoint-3b).
 - **D28b:** the diagnostics allowlist the YouTube codes (`no_channel`, `youtube_scope_missing`,
   `multiple_channels`, `youtube_config_invalid` and the YouTube API reasons).
 

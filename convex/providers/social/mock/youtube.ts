@@ -5,13 +5,7 @@ import { fingerprint } from "../../hash";
 import type { OAuthGrant, OAuthSpec } from "../../oauth";
 import type { PageRequest, ProviderContext, ProviderOperation, ProviderPage } from "../../types";
 import { YOUTUBE_CAPABILITIES } from "../../youtube/capabilities";
-import {
-  handleOf,
-  mapChannel,
-  mapReportDays,
-  mapVideo,
-  mapVideoSnapshot,
-} from "../../youtube/mapping";
+import { mapChannel, mapReportDays, mapVideo, mapVideoSnapshot } from "../../youtube/mapping";
 import { YOUTUBE_READONLY_SCOPE, YOUTUBE_SCOPES } from "../../youtube/oauth";
 import type {
   ProviderDiscoveredSocialAccount,
@@ -239,7 +233,7 @@ export function createMockYouTubeOAuthSpec(): OAuthSpec<MockYouTubeCredential> {
       token: user === "revoked" ? "revoked" : `mock-yt-token-${user}`,
       user,
     },
-    identity: { externalUserId: mockYouTubeChannelId(user), displayName: `Mock ${user} channel` },
+    identity: { externalUserId: mockYouTubeChannelId(user) },
     grantedScopes: user === "limited" ? [YOUTUBE_READONLY_SCOPE] : [...YOUTUBE_SCOPES],
     refreshable: true,
   });
@@ -319,11 +313,9 @@ export function createMockYouTubeDiscovery(): SocialAccountDiscovery {
       }
       const user = mockUser(ctx, operation, mockYouTubeChannelId(credential.user));
       const channel = mockYouTubeChannel(user);
-      const username = handleOf(channel.snippet?.customUrl);
       const record: ProviderDiscoveredSocialAccount = {
         platform: "youtube",
         externalId: channel.id,
-        ...(username !== undefined ? { username } : {}),
         accountType: "channel",
       };
       assertValidSocialRecord("discoveredSocialAccount", record, "youtube", operation);

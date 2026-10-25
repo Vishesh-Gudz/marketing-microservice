@@ -83,9 +83,10 @@ and any token parameter (also on the revocation endpoint).
   reports itself unconfigured (so `beginConnect` refuses before any state exists), and the
   discovery, the sync provider and revocation fail closed with `youtube_config_invalid`. A
   credential issued to the Google Ads client is never revoked through YouTube.
-- **Identity:** the channel id is `connections.externalUserId` and the credential's `channelId`;
-  the channel title is the `displayName`. No `openid`, email or profile data is requested.
-  Reconnecting a different channel into a connection is an `identity_mismatch`.
+- **Identity:** the channel id is `connections.externalUserId` and the credential's `channelId`.
+  No `displayName` is stored (Checkpoint 3b: a connection row outlives the channel's data), and
+  discovery stores no handle. No `openid`, email or profile data is requested. Reconnecting a
+  different channel into a connection is an `identity_mismatch`.
 - **Granular consent:** without `youtube.readonly` the exchange fails
   (`identity:youtube_scope_missing`, nothing is requested from the Data API); without
   `yt-analytics.readonly` the connection is created and lists it in `missingScopes`.
@@ -94,8 +95,8 @@ and any token parameter (also on the revocation endpoint).
 - **Lifecycle:** `invalid_grant` (revoked in the Google account, expired, or the 7-day expiry of
   Google's Testing mode) on any call is `auth`: the sync engine moves the connection to
   `needs_reauth`; reconnecting the same channel makes it active again.
-- **Disconnect** revokes at Google, deletes the credential, unlinks the channel and drops
-  discovery. The channel's stored rows are kept until Checkpoint 3b implements the retention rules.
+- **Disconnect** revokes at Google, deletes the credential, drops discovery and hard-deletes the
+  channel's stored data; **unlink** hard-deletes it too ([Retention](#retention-checkpoint-3b)).
 - **D28b stages:** `config`, `token_exchange`, `identity`; the allowlisted codes are listed in
   `connections/oauthDiagnostics.ts`.
 
@@ -187,6 +188,174 @@ Until the open questions are settled in Checkpoint 4:
   out, so YouTube values are never summed, compared or combined with Instagram's
   (`convex/analytics/organic/queries.ts`);
 - `v1/socialPosts` shows each video's own lifetime snapshot (no aggregation).
+
+## Retention (Checkpoint 3b)
+
+`convex/connections/youtubeRetention.ts`, constants `YOUTUBE_RETENTION` in
+`convex/connections/config.ts`. Policy basis: YouTube API Services Developer Policies III.D.2.3
+and III.E.4 (last updated 2026-10-15).
+
+**25 days is our conservative operational cutoff, not a deadline the policy states.** The policy
+asks for a re-check of authorization, and a refresh or deletion of metadata, within 30-day
+intervals, and for deletion within 30 days after a revocation in Google's settings. 25 days
+leaves room for a failed daily run before the 30 days are reached.
+
+### What a purge deletes
+
+A purge HARD-deletes one YouTube channel's stored data, in this order:
+
+1. its videos, each after its lifetime snapshots;
+2. its day rows;
+3. its sync tasks and runs;
+4. its sync state;
+5. the channel row, last.
+
+Deleting the channel row last keeps the resume marker until everything else is gone. Each step
+deletes at most 500 rows and schedules the next one. A chain of steps stops after 1,000 steps,
+and the hourly sweep resumes every channel still marked (status `disconnected`). Every step
+re-reads what is left, so repeated, retried or overlapping runs never delete anything twice.
+
+A purge never touches:
+
+- an Instagram row, or a row of another org (each row's platform and org are re-verified);
+- the connection row or the credential (the connection lifecycle owns those);
+- the audit log.
+
+### When a purge starts
+
+| Trigger                                       | Reason recorded          | When the deletion runs                               |
+| --------------------------------------------- | ------------------------ | ---------------------------------------------------- |
+| `v1/connections:disconnect`                   | `disconnected`           | at once; Google revocation through the existing flow |
+| `v1/connections:unlinkSocialAccount`          | `unlinked`               | at once; the grant stays (other channels unaffected) |
+| daily check, `invalid_grant` from Google      | `authorization_invalid`  | at once                                              |
+| daily check, the channel is not owned         | `channel_not_authorized` | at once                                              |
+| daily check, no stored credential             | `credential_missing`     | at once                                              |
+| daily check, connection `revoked`             | `disconnected`           | at once                                              |
+| daily check, a stale channel already unlinked | `unlinked`               | at once                                              |
+
+Disconnect and unlink mark the channel and unlink it in the admin's own transaction. The
+policy allows 7 days after an in-app revocation; we delete at once.
+
+**Relinking while a purge is pending** is refused (`CONFLICT`, `reason: "purge_pending"`). Once
+the purge has completed, the channel links as a new row and is backfilled from scratch. No
+partially deleted history is ever resumed.
+
+**In-flight sync work** never writes after a purge has started:
+
+- the purge cancels the channel's active run;
+- a page fetched before an unlink is refused at commit, because the engine checks the linkage
+  in the commit's own transaction;
+- a commit after the run's rows are gone finds no claim.
+
+Tests cover both orders.
+
+### Daily authorization check: the exact decision logic
+
+**Candidates.** Linked channels with status `active` whose authorization was last confirmed more
+than 25 days ago. `socialAccounts.lastSeenAt` records the last confirmation. It is set by:
+
+- every successful sync preflight (a fresh token plus `channels.list?mine=true`);
+- linking;
+- a check that found the channel.
+
+A channel that syncs normally is never checked. A channel whose sync stopped (`needs_reauth`,
+blocked, failing) is checked once a day until the check concludes.
+
+**The check.** One fresh token from the stored refresh token, plus `channels.list?mine=true`,
+through the existing discovery: 2 requests, and the token stays in memory. It runs also for
+`needs_reauth` connections (`allowNeedsReauth`).
+
+**Before acting.** The check and the purge each re-verify that the channel is still active,
+linked, YouTube, of the same org, and still unconfirmed since the cutoff. A sync that confirmed
+the authorization in the meantime wins: the check is skipped.
+
+| Outcome                                                                                                                                                             | Result                                               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| the channel is returned                                                                                                                                             | authorized: `lastSeenAt` = now, nothing else changes |
+| Google's token endpoint answers `invalid_grant` (HTTP 4xx)                                                                                                          | **confirmed** `authorization_invalid`: purge         |
+| the channel is not among the authorization's channels (`account_mismatch`)                                                                                          | **confirmed** `channel_not_authorized`: purge        |
+| no credential is stored, or the connection row is gone                                                                                                              | **confirmed** `credential_missing`: purge            |
+| the connection is `revoked`                                                                                                                                         | **confirmed** `disconnected`: purge                  |
+| network error, timeout, any 5xx (also an OAuth error with 5xx)                                                                                                      | inconclusive (`transient`)                           |
+| quota or rate limit (`quotaExceeded`, `rateLimitExceeded`, 429)                                                                                                     | inconclusive (`rate_limited`)                        |
+| our configuration: `invalid_client`, `unauthorized_client`, `youtube_config_invalid`                                                                                | inconclusive (`unknown`)                             |
+| any other `auth` or `permission` code (`authError` 401, `credential_invalid`, `client_id_mismatch`, `insufficientPermissions`, `channelClosed`, `channelSuspended`) | inconclusive (`auth` / `permission`)                 |
+| any other kind (`not_found` such as `channelNotFound`, `invalid_request`, `data`), an undecryptable credential, an internal error                                   | inconclusive (that kind / `internal`)                |
+
+An inconclusive check:
+
+- keeps every row;
+- writes an audit entry `socialAccount.authorization_check_inconclusive` with the failure kind
+  and an allowlisted code (`[A-Za-z0-9_:]{1,64}`) only;
+- is retried by the next daily run.
+
+`invalid_grant` means that Google refused the refresh token: it was revoked, it expired, or it
+hit the 7-day Testing-mode expiry. **We never claim which.** In particular, an outcome never
+claims that the user revoked access in Google's settings, only that the token can no longer be
+refreshed (III.D.2.3's "users whose tokens cannot be refreshed").
+
+### Videos no listing has refreshed
+
+The hourly sweep deletes YouTube videos whose `lastSeenAt` is more than 25 days old, together
+with their snapshots. The daily lookback runs a full listing that refreshes every listed upload.
+Before deleting, the sweep re-verifies that the row is a YouTube row, and that the owning channel
+is a YouTube channel of the same org.
+
+**Absence from the listing is not evidence that a video was deleted on YouTube.** The sweep
+records no audit entry and makes no such claim. It deletes the row because its metadata can no
+longer be refreshed (III.E.4.c), whatever the reason. The reasons are:
+
+- the video was deleted or made unavailable;
+- the channel's sync stopped (the channel's analytics days stay while its authorization is
+  confirmed);
+- the video is beyond the **5,000-upload listing cap** (`maxListingPages`).
+
+A consequence of the cap: on a channel with more than 5,000 uploads, the oldest uploads are never
+stored. Uploads that a newer upload pushes past the cap are deleted 25 days after their last
+listing, with their lifetime snapshots, even though they still exist on YouTube.
+`v1/socialPosts` then lists at most the newest 5,000 uploads.
+
+### Identifiers that remain after a purge
+
+| Where                                                             | What                                       | Why it is kept                                                                                                                                           |
+| ----------------------------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `connections.externalUserId` (revoked or active connection row)   | the channel id                             | the connection's identity: a reconnect of the same channel reuses the row, a different channel is an `identity_mismatch`; audit entries refer to the row |
+| `discoveredSocialAccounts` (unlink only, connection still active) | the channel id and account type, no handle | the admin can link the channel again without a new consent; deleted on disconnect                                                                        |
+| audit log                                                         | Convex row ids, reasons, kinds, counts     | the deletion record itself; it holds no YouTube id, title, handle, token or error text                                                                   |
+
+Nothing else remains:
+
+- the connection stores no channel title; disconnect also clears a `displayName` stored by an
+  earlier version;
+- the credential is deleted on disconnect;
+- `syncRuns` (with their errors) and `syncAccounts` go with the purge.
+
+The purge's audit counts are the rows deleted by the chain that completed the purge. A chain that
+was interrupted and resumed reports only what it deleted itself.
+
+### Deletion requests (operational runbook)
+
+A user who asks for their YouTube data to be deleted (III.E.4.g: within 7 days) gets it through
+the existing admin API until the dashboard offers it.
+
+**An in-product deletion path must be provided in the dashboard phase (Checkpoint 5).**
+
+1. Identify the org and the channel's `socialAccounts` id (`v1/socialAccounts:list` as an org
+   admin). Confirm that the requester is entitled to the channel's data.
+2. Delete:
+   - **everything, and revoke Google access:** `v1/connections:disconnect` with the YouTube
+     connection id;
+   - **one channel, keeping the connection:** `v1/connections:unlinkSocialAccount` with the
+     `socialAccountId`.
+3. Verify. The audit log holds `socialAccount.purge_started` with the reason, then
+   `socialAccount.purged` with the counts. `socialAccounts`, `socialPosts`,
+   `socialPostMetricSnapshots`, `socialAccountMetricsDaily`, `syncRuns` and `syncAccounts` hold
+   no row for that `socialAccountId`. For a large channel the purge may take a few minutes;
+   `socialAccount.purged` marks completion. If the sweep is still resuming after an hour,
+   check the Convex logs.
+4. After a disconnect, the connection row keeps only the channel id (see above). Removing it too
+   is not supported yet (open question in ADR 0016).
+5. Record the request date and the `socialAccount.purged` time in the support ticket.
 
 ## Errors (`errors.ts`)
 
