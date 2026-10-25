@@ -65,6 +65,30 @@ describe("sanitizeOAuthDiagnostics (D28b allowlist)", () => {
     expect(out).not.toHaveProperty("providerCode");
   });
 
+  it("keeps the allowlisted YouTube codes and drops anything else (ADR 0016)", () => {
+    for (const [stage, code] of [
+      ["identity", "no_channel"],
+      ["identity", "youtube_scope_missing"],
+      ["identity", "multiple_channels"],
+      ["identity", "accessNotConfigured"],
+      ["config", "youtube_config_invalid"],
+      ["token_exchange", "no_refresh_token"],
+    ] as const) {
+      expect(
+        sanitizeOAuthDiagnostics({ kind: "permission", providerCode: `${stage}:${code}` }),
+      ).toEqual({
+        failureKind: { from: null, to: "permission" },
+        failureStage: { from: null, to: stage },
+        providerCode: { from: null, to: code },
+      });
+    }
+    for (const code of ["identity:schema", "identity:somethingNewFromGoogle", "revoke:http_503"]) {
+      expect(sanitizeOAuthDiagnostics({ kind: "data", providerCode: code })).not.toHaveProperty(
+        "providerCode",
+      );
+    }
+  });
+
   it("returns nothing for missing diagnostics", () => {
     expect(sanitizeOAuthDiagnostics(undefined)).toEqual({});
     expect(sanitizeOAuthDiagnostics({})).toEqual({});

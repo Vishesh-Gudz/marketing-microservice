@@ -1,20 +1,37 @@
 import { todayIn } from "../../../lib/dates";
+import { pkceChallengeS256 } from "../../../lib/crypto";
 import { ProviderError } from "../../errors";
 import { fingerprint } from "../../hash";
-import type { ProviderContext, ProviderOperation } from "../../types";
+import type { OAuthGrant, OAuthSpec } from "../../oauth";
+import type { PageRequest, ProviderContext, ProviderOperation, ProviderPage } from "../../types";
 import { YOUTUBE_CAPABILITIES } from "../../youtube/capabilities";
-import { mapChannel, mapVideo } from "../../youtube/mapping";
-import type { ProviderSocialPost, SocialProvider } from "../types";
+import { handleOf, mapChannel, mapVideo } from "../../youtube/mapping";
+import { YOUTUBE_READONLY_SCOPE, YOUTUBE_SCOPES } from "../../youtube/oauth";
+import type {
+  ProviderDiscoveredSocialAccount,
+  ProviderSocialPost,
+  SocialAccountDiscovery,
+  SocialProvider,
+} from "../types";
 import { assertValidSocialRecord } from "../validate";
 import { mockYouTubeChannel, mockYouTubeChannelId, mockYouTubeVideos } from "./youtubeData";
 
 /**
- * Mock YouTube SocialProvider (ADR 0016, Y-D12), registered ONLY in PROVIDER_MODE=mock (local
- * development and tests), never in live or misconfigured modes. Deterministic; no network.
- * It serves the raw-shaped mock data (./youtubeData.ts) through the REAL YouTube mapping and
- * capabilities, with the same exclusions ("upcoming") and unresolved counts as the live
- * provider. User "revoked" holds a credential the mock rejects ("auth", as `invalid_grant`).
- * The mock OAuth spec and discovery that issue these credentials are Checkpoint 2.
+ * Mock YouTube (ADR 0016, Y-D12), registered ONLY in PROVIDER_MODE=mock (local development and
+ * tests), never in live or misconfigured modes. Deterministic; no network.
+ *
+ * - The SocialProvider serves the raw-shaped mock data (./youtubeData.ts) through the REAL
+ *   YouTube mapping and capabilities, with the same exclusions ("upcoming") and unresolved
+ *   counts as the live provider.
+ * - The OAuth spec is "instant consent" with PKCE (like the ads mock): the authorization URL
+ *   IS the callback URL carrying `mock-yt-code.<user>.<fingerprint(challenge, user)>`; the
+ *   scopes are the real YouTube scopes.
+ * - Discovery returns the credential's channel.
+ *
+ * Users: "<n>" a channel; "limited" grants youtube.readonly only (analytics scope missing);
+ * "noyoutube" grants no youtube.readonly (the exchange fails); "nochannel" has no channel;
+ * "norefresh" receives no refresh token; "revoked" holds a credential the mock rejects
+ * ("auth", as `invalid_grant`). See ./youtubeData.ts for the data users.
  */
 
 export const MOCK_YOUTUBE_PROVIDER_ID = "mock-youtube";
@@ -117,4 +134,122 @@ export function createMockYouTubeSocialProvider(): SocialProvider {
       return unsupported("fetchAccountMetrics", "account metrics");
     },
   } satisfies SocialProvider);
+}
+
+// ---------------------------------------------------------------------------
+// Mock OAuth (instant consent with PKCE) and discovery
+// ---------------------------------------------------------------------------
+
+const CODE = /^mock-yt-code\.([A-Za-z0-9_-]{1,32})\.([0-9a-z]+)$/;
+export const MOCK_YT_INVALID_CODE = "mock-yt-code-invalid";
+export const MOCK_YT_UNAVAILABLE_CODE = "mock-yt-code-5xx";
+
+function codeSignature(codeChallenge: string | undefined, user: string): string {
+  return fingerprint(["youtube", codeChallenge ?? "", user]);
+}
+
+/** Test helper: the code the mock issues for `user` with this PKCE challenge. */
+export function mockYouTubeCode(codeChallenge: string | undefined, user = "1"): string {
+  return `mock-yt-code.${user}.${codeSignature(codeChallenge, user)}`;
+}
+
+export function createMockYouTubeOAuthSpec(): OAuthSpec<MockYouTubeCredential> {
+  const operation = "oauthExchange" as const;
+  const grantFor = (user: string): OAuthGrant<MockYouTubeCredential> => ({
+    credential: {
+      kind: "mock_youtube",
+      token: user === "revoked" ? "revoked" : `mock-yt-token-${user}`,
+      user,
+    },
+    identity: { externalUserId: mockYouTubeChannelId(user), displayName: `Mock ${user} channel` },
+    grantedScopes: user === "limited" ? [YOUTUBE_READONLY_SCOPE] : [...YOUTUBE_SCOPES],
+    refreshable: true,
+  });
+
+  return Object.freeze({
+    platform: "youtube" as const,
+    providerId: MOCK_YOUTUBE_PROVIDER_ID,
+    requestedScopes: YOUTUBE_SCOPES,
+    requiredScopes: YOUTUBE_SCOPES,
+    usesPkce: true,
+
+    buildAuthorizationUrl({ state, redirectUri, codeChallenge }) {
+      const url = new URL(redirectUri);
+      url.searchParams.set("state", state);
+      url.searchParams.set("code", mockYouTubeCode(codeChallenge));
+      url.searchParams.set("scope", YOUTUBE_SCOPES.join(" "));
+      if (codeChallenge !== undefined) {
+        url.searchParams.set("code_challenge", codeChallenge);
+        url.searchParams.set("code_challenge_method", "S256");
+      }
+      return url.toString();
+    },
+
+    async exchangeCode({ code, codeVerifier }) {
+      if (code === MOCK_YT_UNAVAILABLE_CODE) {
+        return fail(
+          "transient",
+          operation,
+          "token_exchange:http_503",
+          "Token endpoint unavailable",
+        );
+      }
+      const match = CODE.exec(code);
+      const challenge =
+        codeVerifier !== undefined ? await pkceChallengeS256(codeVerifier) : undefined;
+      if (!match || match[2] !== codeSignature(challenge, match[1]!)) {
+        return fail(
+          "auth",
+          operation,
+          "token_exchange:invalid_grant",
+          "Invalid authorization code",
+        );
+      }
+      const user = match[1]!;
+      if (user === "norefresh") {
+        return fail("auth", operation, "token_exchange:no_refresh_token", "No refresh token");
+      }
+      if (user === "noyoutube") {
+        return fail("permission", operation, "identity:youtube_scope_missing", "Not granted");
+      }
+      if (user === "nochannel") {
+        return fail("permission", operation, "identity:no_channel", "No channel");
+      }
+      return grantFor(user);
+    },
+
+    // The mock has nothing to revoke at a platform.
+    async revoke() {},
+  } satisfies OAuthSpec<MockYouTubeCredential>);
+}
+
+export function createMockYouTubeDiscovery(): SocialAccountDiscovery {
+  const operation = "listSocialAccounts" as const;
+  return Object.freeze({
+    platform: "youtube" as const,
+    providerId: MOCK_YOUTUBE_PROVIDER_ID,
+    async listAccounts(
+      ctx: ProviderContext,
+      request: PageRequest,
+    ): Promise<ProviderPage<ProviderDiscoveredSocialAccount>> {
+      if (request.cursor !== undefined) {
+        return fail("invalid_request", operation, "cursor_invalid", "Unexpected cursor");
+      }
+      const credential = ctx.credential;
+      if (!isMockYouTubeCredential(credential) || !USER.test(credential.user)) {
+        return fail("auth", operation, "credential_invalid", "Unusable mock credential");
+      }
+      const user = mockUser(ctx, operation, mockYouTubeChannelId(credential.user));
+      const channel = mockYouTubeChannel(user);
+      const username = handleOf(channel.snippet?.customUrl);
+      const record: ProviderDiscoveredSocialAccount = {
+        platform: "youtube",
+        externalId: channel.id,
+        ...(username !== undefined ? { username } : {}),
+        accountType: "channel",
+      };
+      assertValidSocialRecord("discoveredSocialAccount", record, "youtube", operation);
+      return { items: [record] };
+    },
+  });
 }

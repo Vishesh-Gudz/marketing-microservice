@@ -1,9 +1,10 @@
 # ADR 0016 — YouTube organic provider
 
-- Status: Checkpoint 1 (provider foundation: channel and video metadata) implemented and tested
-  against mock and fake data only. Checkpoints 2–6 (OAuth and connection, analytics sync,
-  retention, public API, dashboard, verification) are planned. Nothing was validated against a
-  real YouTube channel (YR1–YR9 provisional).
+- Status: Checkpoint 1 (provider foundation: channel and video metadata) and Checkpoint 2
+  (OAuth and account connection) implemented and tested against mock and fake data only.
+  Checkpoints 3–6 (analytics sync, retention, public API, dashboard, verification) are planned.
+  Nothing was validated against a real YouTube channel or a real Google OAuth client (YR1–YR12
+  provisional).
 - Date: 2026-10-25
 
 ## Context
@@ -71,8 +72,26 @@ Details: [docs/providers/youtube.md](../providers/youtube.md).
   `fetchPostMetrics` / `fetchAccountMetrics` fail as `unsupported` before any request.
 - `providers/social/validate.ts` adds the YouTube id, handle, permalink and title rules;
   Instagram rules are unchanged.
-- The default registry (discovery, OAuth spec) and the connection provider are Checkpoint 2, so
-  no YouTube account can be connected or synced yet.
+- The default registry (discovery, OAuth spec) and the connection provider were left to
+  Checkpoint 2.
+
+### Checkpoint 2 (implemented)
+
+- `CONNECTION_PROVIDERS` and `SOCIAL_CONNECTION_PROVIDERS` gain `youtube` (additive validator
+  widening of `connections`, `oauthStates`, `oauthGrants`; no migration). The generic OAuth
+  state, PKCE, S2 claim, encrypted credential store, discovery and disconnect paths are reused
+  unchanged.
+- `providers/youtube/oauth.ts` (PKCE S256, offline, `prompt=consent`,
+  `include_granted_scopes=false`, both scopes required, the consent's single channel as
+  identity, revocation in the form body), `discovery.ts`, and `session.ts` (the config,
+  credential and token-minting checks shared with the sync provider).
+- `CLIENT_ENV.youtube` reads `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET`, plus `GOOGLE_CLIENT_ID`
+  only to refuse a client shared with Google Ads. Google Ads behavior is unchanged.
+- Registered in every `PROVIDER_MODE` (mock OAuth spec and discovery in mock mode). A linked
+  channel's metadata syncs through the existing engine; `invalid_grant` moves the connection to
+  `needs_reauth`. The token refresh job is unchanged and never sees YouTube.
+- D28b diagnostics allowlist the YouTube codes; the dashboard's reconnect notice names YouTube
+  (read-only until Checkpoint 5).
 
 ## Open compliance questions (to settle before Checkpoints 3, 3b and 4)
 

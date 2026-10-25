@@ -11,6 +11,12 @@ import {
   type FakeInstagram,
 } from "./providers/instagram/fakeInstagram.fixtures";
 import { mockInstagramCode } from "./providers/social/mock";
+import { mockYouTubeCode } from "./providers/social/mock/youtube";
+import {
+  FAKE_YT_CLIENT_ID,
+  FAKE_YT_CLIENT_SECRET,
+  type FakeYouTube,
+} from "./providers/youtube/fakeYouTube.fixtures";
 import { subjectOf } from "./sync/subject";
 import {
   FAKE_APP_ID,
@@ -671,4 +677,71 @@ export async function linkSocial(
     connectionId,
     externalIds,
   });
+}
+
+// ---------------------------------------------------------------------------
+// ADR 0016 helpers: YouTube (organic social) connect flows
+// ---------------------------------------------------------------------------
+
+/** PROVIDER_MODE=live with test-only YouTube OAuth values; `fetch` served by the fake API. */
+export function stubLiveYouTube(fake: FakeYouTube, env: Record<string, string> = {}) {
+  vi.stubEnv("PROVIDER_MODE", "live");
+  vi.stubEnv("YOUTUBE_CLIENT_ID", FAKE_YT_CLIENT_ID);
+  vi.stubEnv("YOUTUBE_CLIENT_SECRET", FAKE_YT_CLIENT_SECRET);
+  for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
+  vi.stubGlobal("fetch", fake.fetch);
+}
+
+/**
+ * Connects a YouTube channel through the REAL connect flow (beginConnect -> fake Google consent
+ * bound to the PKCE challenge and redirect URI -> /oauth/callback -> YouTube OAuthSpec +
+ * default-runtime discovery against the fake API). Returns the connect result (callback +
+ * claim, see claimResult).
+ */
+export async function connectYouTubeFake(
+  t: Backend,
+  fake: FakeYouTube,
+  user = "brand",
+  identityInput: IdentityInput = {},
+  extra: { reconnectConnectionId?: string } = {},
+): Promise<URLSearchParams> {
+  const { authorizeUrl } = await as(t, identityInput).action(api.v1.connections.beginConnect, {
+    provider: "youtube",
+    returnUrl: RETURN_URL,
+    ...extra,
+  });
+  const params = new URL(authorizeUrl).searchParams;
+  const code = fake.issueCode(user, params.get("code_challenge")!, params.get("redirect_uri")!);
+  return await claimResult(
+    t,
+    redirectParams(
+      await t.fetch(
+        `/oauth/callback?state=${encodeURIComponent(params.get("state")!)}&code=${encodeURIComponent(code)}`,
+        { method: "GET", redirect: "manual" },
+      ),
+    ),
+    identityInput,
+  );
+}
+
+/** Mock mode: connects a mock YouTube user ("1", "limited", "nochannel", "revoked", ...). */
+export async function connectMockYouTube(
+  t: Backend,
+  user = "1",
+  identityInput: IdentityInput = {},
+): Promise<URLSearchParams> {
+  const { authorizeUrl } = await as(t, identityInput).action(api.v1.connections.beginConnect, {
+    provider: "youtube",
+    returnUrl: RETURN_URL,
+  });
+  const url = new URL(authorizeUrl);
+  url.searchParams.set(
+    "code",
+    mockYouTubeCode(url.searchParams.get("code_challenge") ?? undefined, user),
+  );
+  return await claimResult(
+    t,
+    redirectParams(await followCallback(t, url.toString())),
+    identityInput,
+  );
 }

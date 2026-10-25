@@ -23,9 +23,10 @@ export type SocialPlatform = (typeof SOCIAL_PLATFORMS)[number];
 /**
  * What an org can connect through the generic OAuth flow (Phase 4 connections). The ad
  * platforms plus Instagram Login (Phase 10: organic Instagram only, never Instagram ads,
- * which stay Meta ads). OAuth states, grants and `beginConnect` accept only these.
+ * which stay Meta ads) and YouTube (ADR 0016: organic channel data through its own Google
+ * OAuth client, never Google Ads). OAuth states, grants and `beginConnect` accept only these.
  */
-export const CONNECTION_PROVIDERS = ["meta", "google_ads", "instagram"] as const;
+export const CONNECTION_PROVIDERS = ["meta", "google_ads", "instagram", "youtube"] as const;
 export type ConnectionProvider = (typeof CONNECTION_PROVIDERS)[number];
 
 /**
@@ -44,10 +45,10 @@ export function isOAuthConnectionProvider(value: string): value is ConnectionPro
  * Connection providers that grant access to organic social accounts (not ad accounts).
  * Each value is also the SocialPlatform of the accounts it discovers.
  */
-export const SOCIAL_CONNECTION_PROVIDERS = ["instagram"] as const satisfies readonly Extract<
-  ConnectionProvider,
-  SocialPlatform
->[];
+export const SOCIAL_CONNECTION_PROVIDERS = [
+  "instagram",
+  "youtube",
+] as const satisfies readonly Extract<ConnectionProvider, SocialPlatform>[];
 export type SocialConnectionProvider = (typeof SOCIAL_CONNECTION_PROVIDERS)[number];
 
 export function isAdPlatform(value: string): value is AdPlatform {

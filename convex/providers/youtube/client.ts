@@ -1,6 +1,7 @@
 import {
   isYouTubePlaylistId,
   isYouTubeVideoId,
+  OAUTH_REVOKE_URL,
   OAUTH_TOKEN_URL,
   YOUTUBE_DATA_BASE,
 } from "./config";
@@ -12,9 +13,10 @@ import {
  * - URLs come only from fixed templates, and EVERY request is checked against an exact
  *   allowlist BEFORE any network access: https only; no user info, port or fragment; a fixed
  *   method + URL per route; exactly the route's query parameter names, each value checked.
- *   Checkpoint 1 routes: the OAuth token endpoint (refresh grant) and three Data API reads
- *   (channels mine=true, playlistItems, videos snippet). Anything else, any write, any API
- *   key parameter and any other host is refused.
+ *   Routes: the OAuth token endpoint (authorization-code and refresh grants), token
+ *   revocation (disconnect, Checkpoint 2) and three Data API reads (channels mine=true,
+ *   playlistItems, videos snippet). Anything else, any write, any API key parameter and any
+ *   other host is refused.
  * - Tokens travel only in the Authorization header (Bearer) or a form body, never in a URL.
  * - Every request takes one unit from an explicit per-call request budget.
  * - Results never carry the URL, headers, tokens, messages or request ids; failures are
@@ -104,6 +106,7 @@ const videoIds: ParamCheck = (value) => {
 
 const ROUTES: readonly Route[] = [
   { method: "POST", url: OAUTH_TOKEN_URL, params: {}, required: [] },
+  { method: "POST", url: OAUTH_REVOKE_URL, params: {}, required: [] },
   {
     method: "GET",
     url: `${YOUTUBE_DATA_BASE}/channels`,
@@ -251,33 +254,75 @@ function bearer(accessToken: string): Record<string, string> {
   return { Authorization: `Bearer ${accessToken}`, Accept: "application/json" };
 }
 
+const FORM_HEADERS = {
+  "Content-Type": "application/x-www-form-urlencoded",
+  Accept: "application/json",
+};
+
 export function createYouTubeClient(options: { timeoutMs: number }) {
   const { timeoutMs } = options;
+  const postForm = async (
+    url: string,
+    form: Record<string, string>,
+    budget: YouTubeRequestBudget,
+  ): Promise<YouTubeResult> =>
+    await sendChecked(
+      "POST",
+      url,
+      { headers: FORM_HEADERS, body: new URLSearchParams(form).toString() },
+      timeoutMs,
+      budget,
+    );
+
   return {
+    /**
+     * OAuth authorization-code grant with the PKCE verifier (form body; no secret in the URL):
+     * access + refresh token.
+     */
+    async exchangeCode(
+      input: {
+        code: string;
+        redirectUri: string;
+        codeVerifier: string;
+        clientId: string;
+        clientSecret: string;
+      },
+      budget: YouTubeRequestBudget,
+    ): Promise<YouTubeResult> {
+      return await postForm(
+        OAUTH_TOKEN_URL,
+        {
+          grant_type: "authorization_code",
+          code: input.code,
+          redirect_uri: input.redirectUri,
+          code_verifier: input.codeVerifier,
+          client_id: input.clientId,
+          client_secret: input.clientSecret,
+        },
+        budget,
+      );
+    },
+
     /** OAuth refresh grant (form body; no secret in the URL): a fresh access token. */
     async refreshAccessToken(
       input: { refreshToken: string; clientId: string; clientSecret: string },
       budget: YouTubeRequestBudget,
     ): Promise<YouTubeResult> {
-      const form = new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: input.refreshToken,
-        client_id: input.clientId,
-        client_secret: input.clientSecret,
-      });
-      return await sendChecked(
-        "POST",
+      return await postForm(
         OAUTH_TOKEN_URL,
         {
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            Accept: "application/json",
-          },
-          body: form.toString(),
+          grant_type: "refresh_token",
+          refresh_token: input.refreshToken,
+          client_id: input.clientId,
+          client_secret: input.clientSecret,
         },
-        timeoutMs,
         budget,
       );
+    },
+
+    /** [doc] Revokes a token and the grant behind it (the token in the form body only). */
+    async revokeToken(token: string, budget: YouTubeRequestBudget): Promise<YouTubeResult> {
+      return await postForm(OAUTH_REVOKE_URL, { token }, budget);
     },
 
     /** [doc] `channels.list?mine=true`: the channels the authorizing user owns (1 unit). */

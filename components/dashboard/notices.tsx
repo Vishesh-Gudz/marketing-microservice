@@ -110,13 +110,15 @@ const PROVIDER_LABEL = {
   meta: "Meta",
   google_ads: "Google Ads",
   instagram: "Instagram",
+  youtube: "YouTube",
   whatsapp: "WhatsApp",
 } as const;
 
 /**
  * Connections whose credentials stopped working (needs_reauth). Google Ads and Meta Ads are
  * reconnected on the Connections page, WhatsApp on the WhatsApp page (Embedded Signup, ADR
- * 0014); Instagram stays read-only here (D17).
+ * 0014); Instagram stays read-only here (D17), and so does YouTube until its Connections section
+ * exists (ADR 0016).
  */
 export function ReauthBanner() {
   const { data: connections } = useAnalyticsQuery(api.v1.connections.list, {});

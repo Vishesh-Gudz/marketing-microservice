@@ -16,6 +16,8 @@ integration and no other credential store.
   and later the parent app through v1. Today the dashboard runs with the local development token
   only; hosted users cannot sign in or connect yet.
 - **Instagram:** the parent app through v1. The dashboard shows its status read-only.
+- **YouTube** (ADR 0016): the parent app through v1 for now; a `/connections` section is planned
+  (Checkpoint 5). The dashboard shows a reconnect notice read-only.
 
 > **Ownership (S2):** the OAuth callback never creates a connection. It stores the consented,
 > encrypted grant and returns a one-time claim code to the return URL; only the user who started
@@ -192,6 +194,7 @@ browser-binding trade-offs:
 | `OAUTH_CONNECTIONS_ENABLED`                              | Cloud deployments only: `beginConnect` / `completeConnect` refuse unless exactly `true`; set only after S2 is deployed and verified |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`               | Phase 9 (real Google spec)                                                                                                          |
 | `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET`               | Phase 10 (Instagram Login, organic Instagram; see [providers/instagram.md](providers/instagram.md))                                 |
+| `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`             | ADR 0016 (organic YouTube; its own Google OAuth client, never `GOOGLE_CLIENT_ID`; see [providers/youtube.md](providers/youtube.md)) |
 
 **Meta redirect origin (`META_OAUTH_REDIRECT_ORIGIN`).** Facebook Login for Business only accepts
 HTTPS redirect URIs, except `http://localhost`, which Meta allows automatically while the app is in
@@ -206,8 +209,8 @@ else is refused, including every `https` origin (even the deployment's own), oth
 deployment. A refused value makes `beginConnect` fail with `INTERNAL` naming the variable (never its
 value) before any OAuth state exists, and a callback that finds it invalid fails with `internal`
 without calling Meta. `beginConnect` and the callback's code exchange compute the URI the same way,
-so authorization and exchange always send the same `redirect_uri`. Google Ads and Instagram always
-use `CONVEX_SITE_URL`. **Cloud deployments leave it unset**: Meta then uses the HTTPS
+so authorization and exchange always send the same `redirect_uri`. Google Ads, Instagram and
+YouTube always use `CONVEX_SITE_URL`. **Cloud deployments leave it unset**: Meta then uses the HTTPS
 `<CONVEX_SITE_URL>/oauth/callback`, which a published app must register exactly.
 
 Per app, the return-URL allowlist is set with
@@ -250,6 +253,35 @@ not allowlisted: `beginConnect` refuses them with `INVALID_ARGUMENT` (`field: "r
   codes.
 
 Full details: [providers/instagram.md](providers/instagram.md).
+
+### YouTube (ADR 0016, organic)
+
+- **Separate connection:** `provider: "youtube"`, through YouTube's own Google OAuth client
+  (`YOUTUBE_CLIENT_ID`), never the Google Ads connection or client. A YouTube client id equal to
+  `GOOGLE_CLIENT_ID` is refused (`beginConnect` `INVALID_ARGUMENT`; provider calls
+  `youtube_config_invalid`), because revoking a YouTube grant must never revoke a Google Ads one.
+- **Consent:** PKCE S256, `access_type=offline`, `prompt=consent`,
+  `include_granted_scopes=false`; scopes `youtube.readonly` and `yt-analytics.readonly` (both
+  required, nothing that can write).
+- **Callback:** the YouTube OAuthSpec runs in the default runtime: code exchange (a refresh token
+  is required), then `channels.list?mine=true`. The consent's channel is the identity
+  (`externalUserId` = channel id, `displayName` = channel title). Without `youtube.readonly`, with
+  no channel or with more than one channel the exchange fails closed (`exchange_failed`);
+  without `yt-analytics.readonly` the connection is created and reports the scope in
+  `missingScopes`.
+- **Discovery** returns that one channel into `discoveredSocialAccounts` (account type
+  `channel`); linking uses the same social link functions as Instagram, and ad and social paths
+  never cross.
+- **Tokens:** only the refresh token is stored (encrypted). Access tokens are minted per provider
+  call and never stored; the token refresh job never touches YouTube. `invalid_grant` (revoked
+  or expired, e.g. after 7 days in Google's Testing mode) moves the connection to `needs_reauth`.
+- **Disconnect:** revokes the refresh token at Google (`oauth2.googleapis.com/revoke`, token in
+  the form body), then always deletes the credential, unlinks the channel and drops discovery.
+  Deleting the channel's stored data is Checkpoint 3b.
+- **D28b:** the diagnostics allowlist the YouTube codes (`no_channel`, `youtube_scope_missing`,
+  `multiple_channels`, `youtube_config_invalid` and the YouTube API reasons).
+
+Full details: [providers/youtube.md](providers/youtube.md).
 
 ### Meta (Phase 8)
 

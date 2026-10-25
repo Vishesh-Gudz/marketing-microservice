@@ -175,6 +175,21 @@ to the platform; the callback refuses a state whose cookie is missing or differe
 - **social-sdk:** it sees the token only inside the `"use node"` adapter's closure. All its
   requests go through our allowlisted fetch.
 
+## YouTube provider (ADR 0016)
+
+- **Stored credential:** `{kind:"youtube", v:1, refreshToken, clientId, channelId, issuedAt,
+scopes}`, encrypted, in the existing store. Authorization codes, access tokens and the
+  exchange response never are.
+- **No refresh job:** access tokens are minted per provider call from the refresh token and live
+  only in that call's memory (as for Google Ads).
+- **No secret in any URL:** tokens travel in `Authorization: Bearer` or a form body (code
+  exchange, refresh, revocation); the allowlisted client (`providers/youtube/client.ts`) refuses
+  any token or key parameter before the network.
+- **Own OAuth client:** the credential's client must be `YOUTUBE_CLIENT_ID`, and a client shared
+  with Google Ads is refused, so a disconnect never revokes a Google Ads grant.
+- **Revocation:** disconnect revokes the refresh token at Google, best effort, then always
+  deletes the local credential.
+
 ## Operational notes
 
 - **Key rotation:** add version N+1 to `TOKEN_ENCRYPTION_KEYS`. New writes use it and old rows still

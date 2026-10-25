@@ -1,11 +1,15 @@
 # YouTube organic provider (ADR 0016)
 
-Status: **Checkpoint 1 (provider foundation) implemented against mock and fake data only.**
+Status: **Checkpoints 1–2 implemented against mock and fake data only.**
 
 - **Checkpoint 1:** the allowlisted read-only client, the `SocialProvider` for channel and video
   metadata, the mapping and boundary validation, the mock provider and the Node sync registry.
-- **Planned:** OAuth and connection (Checkpoint 2), analytics sync (3), retention (3b), the v1 API
-  (4), the `/social` dashboard and the connect UI (5), verification and setup docs (6).
+- **Checkpoint 2:** the `youtube` connection provider, the OAuth spec (PKCE, own client),
+  channel discovery, the credential lifecycle (`needs_reauth`, revocation on disconnect),
+  registration in every `PROVIDER_MODE`, the mock OAuth spec and discovery, D28b diagnostics.
+  A linked channel's **metadata** (channel, uploads) already syncs; no metric does yet.
+- **Planned:** analytics sync (3), retention (3b), the v1 API (4), the `/social` dashboard and
+  the connect UI (5), verification and setup docs (6).
 
 Nothing here has been validated against a real YouTube channel. Tests run against a fake Google
 API (`convex/providers/youtube/fakeYouTube.fixtures.ts`) and a deterministic mock provider
@@ -27,12 +31,15 @@ Legend: **[doc]** Google's official documentation; **ours** a decision of the Ch
 ## Architecture
 
 ```text
-sync/socialWorker.ts ("use node", entry point only)
-  └ providers/social/nodeRegistry.ts
-      └ providers/youtube/provider.ts      (plain fetch; no SDK; no "use node")
-          └ providers/youtube/client.ts    allowlist + budget + timeout, every request
-          └ providers/youtube/mapping.ts   ← semantics.ts
-mock mode: providers/social/mock/youtube.ts (raw-shaped data → the REAL mapping)
+default runtime                                     sync (the "use node" social worker)
+v1/connections:beginConnect {provider:"youtube"}    sync/socialWorker.ts
+/oauth/callback (httpAction)                          └ providers/social/nodeRegistry.ts
+  └ providers/youtube/oauth.ts      (OAuthSpec)           └ providers/youtube/provider.ts
+v1/connections:completeConnect
+  └ providers/youtube/discovery.ts
+        all of them ─► providers/youtube/session.ts (config + credential checks, token minting)
+                       ─► providers/youtube/client.ts (allowlist + budget + timeout, every request)
+mock mode: providers/social/mock/youtube.ts (OAuth, discovery, provider; the REAL mapping)
 ```
 
 The YouTube modules import no Convex runtime API and no SDK; ESLint keeps them (and the YouTube
@@ -46,17 +53,48 @@ duplicates), each value checked; required parameters present. Tokens travel only
 `Authorization: Bearer` header (Data API) or the form body (token endpoint), never in a URL. Every
 request takes one unit of an explicit per-call budget. Fetch exceptions are never propagated.
 
-| Route                                      | Parameters                                                                                     |
-| ------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| `POST https://oauth2.googleapis.com/token` | none (form body: the refresh grant)                                                            |
-| `GET …/youtube/v3/channels`                | `part=snippet,statistics,contentDetails`, `mine=true`, `maxResults=50` (exact)                 |
-| `GET …/youtube/v3/playlistItems`           | `part=contentDetails`, `playlistId`, `maxResults` 1–50, optional `pageToken` (printable ASCII) |
-| `GET …/youtube/v3/videos`                  | `part=snippet`, `id` = 1–50 distinct video ids                                                 |
+| Route                                       | Parameters                                                                                     |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `POST https://oauth2.googleapis.com/token`  | none (form body: the authorization-code grant with the PKCE verifier, or the refresh grant)    |
+| `POST https://oauth2.googleapis.com/revoke` | none (form body: `token`; the documented `?token=` form is never used) [YR11]                  |
+| `GET …/youtube/v3/channels`                 | `part=snippet,statistics,contentDetails`, `mine=true`, `maxResults=50` (exact)                 |
+| `GET …/youtube/v3/playlistItems`            | `part=contentDetails`, `playlistId`, `maxResults` 1–50, optional `pageToken` (printable ASCII) |
+| `GET …/youtube/v3/videos`                   | `part=snippet`, `id` = 1–50 distinct video ids                                                 |
 
 Refused: every other path or host (search, comments, captions, writes, Analytics until
-Checkpoint 3, revocation until Checkpoint 2), API keys and any token parameter.
+Checkpoint 3), API keys and any token parameter (also on the revocation endpoint).
 
-## Operations (Checkpoint 1)
+## Connection and OAuth (Checkpoint 2)
+
+| Step           | Request                                                                                                                                | Notes                                                                                                 |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| consent        | `https://accounts.google.com/o/oauth2/v2/auth` with PKCE S256, `access_type=offline`, `prompt=consent`, `include_granted_scopes=false` | scopes `youtube.readonly` + `yt-analytics.readonly`, both required                                    |
+| token_exchange | `POST oauth2.googleapis.com/token` (code + verifier + client secret, form body)                                                        | a refresh token is required (`no_refresh_token`)                                                      |
+| identity       | `GET channels?mine=true` (Bearer)                                                                                                      | exactly one channel: none = `no_channel`, several = `multiple_channels` [YR10]                        |
+| discovery      | token + `channels?mine=true` from the stored credential                                                                                | returns the credential's channel; one not owned anymore = `permission` / `account_mismatch`           |
+| revoke         | `POST oauth2.googleapis.com/revoke` (form body)                                                                                        | on disconnect, best effort; an already revoked token counts as done; the credential is deleted anyway |
+
+- **Own OAuth client (Y-D3):** `YOUTUBE_CLIENT_ID` must not equal `GOOGLE_CLIENT_ID`. The spec
+  reports itself unconfigured (so `beginConnect` refuses before any state exists), and the
+  discovery, the sync provider and revocation fail closed with `youtube_config_invalid`. A
+  credential issued to the Google Ads client is never revoked through YouTube.
+- **Identity:** the channel id is `connections.externalUserId` and the credential's `channelId`;
+  the channel title is the `displayName`. No `openid`, email or profile data is requested.
+  Reconnecting a different channel into a connection is an `identity_mismatch`.
+- **Granular consent:** without `youtube.readonly` the exchange fails
+  (`identity:youtube_scope_missing`, nothing is requested from the Data API); without
+  `yt-analytics.readonly` the connection is created and lists it in `missingScopes`.
+- **Stored credential:** `{kind:"youtube", v:1, refreshToken, clientId, channelId, issuedAt, scopes}`,
+  encrypted. No expiry and no refresh job: access tokens are minted per call.
+- **Lifecycle:** `invalid_grant` (revoked in the Google account, expired, or the 7-day expiry of
+  Google's Testing mode) on any call is `auth`: the sync engine moves the connection to
+  `needs_reauth`; reconnecting the same channel makes it active again.
+- **Disconnect** revokes at Google, deletes the credential, unlinks the channel and drops
+  discovery. The channel's stored rows are kept until Checkpoint 3b implements the retention rules.
+- **D28b stages:** `config`, `token_exchange`, `identity`; the allowlisted codes are listed in
+  `connections/oauthDiagnostics.ts`.
+
+## Operations (sync)
 
 | Operation             | Requests                                                                                         |
 | --------------------- | ------------------------------------------------------------------------------------------------ |
@@ -129,30 +167,53 @@ task once).
 
 ## Mock mode
 
-`PROVIDER_MODE=mock` resolves the mock YouTube provider: one upload every second UTC day for 180
-days, every 8th an `upcoming` premiere. Users: `<n>` (a channel with a handle), `hidden` (hidden
-subscriber count), `empty` (no uploads), `edge` (an upload without a publish time), and a
-`revoked` credential (`auth`). The mock OAuth spec and discovery that issue these credentials are
-Checkpoint 2.
+`PROVIDER_MODE=mock` resolves the mock YouTube OAuth spec, discovery and provider (no network,
+no Google credentials): instant consent with PKCE (`mock-yt-code.<user>.<fingerprint>`), one
+upload every second UTC day for 180 days, every 8th an `upcoming` premiere. Users:
+
+- data: `<n>` (a channel with a handle), `hidden` (hidden subscriber count), `empty` (no
+  uploads), `edge` (an upload without a publish time);
+- consent: `limited` (`yt-analytics.readonly` unticked), `noyoutube` (`youtube.readonly`
+  unticked), `nochannel`, `norefresh` (no refresh token), `revoked` (a credential the mock
+  rejects as `invalid_grant`).
 
 ## Real-channel validation required
 
-| Item | What to verify                                                             |
-| ---- | -------------------------------------------------------------------------- |
-| YR1  | channel and video id formats                                               |
-| YR2  | the uploads playlist id format                                             |
-| YR3  | the page token alphabet and length                                         |
-| YR4  | the error reasons and statuses (quota, scope, revoked, deleted)            |
-| YR5  | `customUrl` carries the handle with "@"                                    |
-| YR6  | unlisted (and private) uploads appear in the owner's uploads playlist      |
-| YR7  | the uploads playlist lists newest first                                    |
-| YR8  | the `publishedAt` format                                                   |
-| YR9  | whether Analytics data is revised after it first appears (lookback length) |
+| Item | What to verify                                                                               |
+| ---- | -------------------------------------------------------------------------------------------- |
+| YR1  | channel and video id formats                                                                 |
+| YR2  | the uploads playlist id format                                                               |
+| YR3  | the page token alphabet and length                                                           |
+| YR4  | the error reasons and statuses (quota, scope, revoked, deleted)                              |
+| YR5  | `customUrl` carries the handle with "@"                                                      |
+| YR6  | unlisted (and private) uploads appear in the owner's uploads playlist                        |
+| YR7  | the uploads playlist lists newest first                                                      |
+| YR8  | the `publishedAt` format                                                                     |
+| YR9  | whether Analytics data is revised after it first appears (lookback length)                   |
+| YR10 | how Brand Accounts select the channel at consent; `mine=true` returns exactly one channel    |
+| YR11 | the revocation endpoint accepts the token in the form body and answers 200 / `invalid_token` |
+| YR12 | the consent screen shows both scopes; `scope` in the token response lists what was granted   |
 
 ## Configuration
 
-Planned for Checkpoint 2 (not read by anything a user can reach yet):
+| Convex env var                               | Purpose                                                                                                                                                                                                                                                       |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET` | Google OAuth web client of a dedicated Cloud project. With `PROVIDER_MODE=live`, setting either enables the YouTube OAuth spec, discovery and provider; invalid values, or a client id equal to `GOOGLE_CLIENT_ID`, fail closed with `youtube_config_invalid` |
 
-| Convex env var                               | Purpose                                                                                                                                                                                |
-| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET` | Google OAuth web client of a dedicated Cloud project. With `PROVIDER_MODE=live`, setting either enables the YouTube provider; invalid values fail closed with `youtube_config_invalid` |
+Nothing here is needed for mock mode or the tests. For a **real** connection (manual, not yet
+verified):
+
+1. A Google Cloud project of its own (not the Google Ads project), with the **YouTube Data API
+   v3** and the **YouTube Analytics API** enabled.
+2. An OAuth consent screen with both scopes. In **Testing** status only listed test users can
+   consent, and their refresh tokens expire after 7 days (the connection then needs reauth). An
+   app name without "YouTube", a privacy policy (Developer Policies III.A) and Google's
+   verification are needed before public use.
+3. An OAuth client of type **Web application** whose authorized redirect URI is exactly
+   `<CONVEX_SITE_URL>/oauth/callback` (the deployment's site URL; a local backend uses its
+   `http://127.0.0.1:<port>` site URL).
+4. `npx convex env set YOUTUBE_CLIENT_ID …` and `YOUTUBE_CLIENT_SECRET …`, plus
+   `PROVIDER_MODE=live` (and `OAUTH_CONNECTIONS_ENABLED=true` on a cloud deployment, see
+   [connections.md](../connections.md)).
+5. Start the connection through `v1/connections:beginConnect` with `provider: "youtube"` (the
+   `/connections` section is Checkpoint 5), then link the discovered channel.

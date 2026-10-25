@@ -9,10 +9,12 @@ import type { AuditChanges } from "../lib/validation";
  *   failureStage  code_exchange | long_lived_exchange | debug_token | identity | config
  *                 (Meta), token_exchange | identity | api_access | config (Google) and
  *                 token_exchange | long_lived_exchange | identity | config | token_refresh
- *                 (Instagram, Phase 10)
+ *                 (Instagram, Phase 10) and token_exchange | identity | config (YouTube,
+ *                 ADR 0016)
  *   providerCode  a Meta numeric code, optionally with a subcode ("190", "100/36009"),
  *                 one internal constant (INTERNAL_CODES), one allowlisted Google code
- *                 (GOOGLE_CODES) or one allowlisted Instagram code (INSTAGRAM_CODES)
+ *                 (GOOGLE_CODES), Instagram code (INSTAGRAM_CODES) or YouTube code
+ *                 (YOUTUBE_CODES)
  *
  * Input comes from a ProviderError's `kind` and `providerCode` ("<stage>:<code>").
  * Anything that does not match exactly is DROPPED, never stored. Tokens, codes,
@@ -79,6 +81,30 @@ const INSTAGRAM_CODES: ReadonlySet<string> = new Set([
   "request_budget_exceeded",
 ]);
 
+/**
+ * YouTube codes (ADR 0016): internal constants and the Google API error reasons the YouTube
+ * OAuth spec can stage (config, token_exchange, identity). OAuth error codes such as
+ * invalid_grant / no_refresh_token are shared with Google Ads (GOOGLE_CODES). Anything else is
+ * dropped.
+ */
+const YOUTUBE_CODES: ReadonlySet<string> = new Set([
+  "youtube_config_invalid",
+  "youtube_scope_missing",
+  "no_channel",
+  "multiple_channels",
+  "identity_invalid",
+  "authError",
+  "forbidden",
+  "insufficientPermissions",
+  "youtubeSignupRequired",
+  "accessNotConfigured",
+  "SERVICE_DISABLED",
+  "quotaExceeded",
+  "rateLimitExceeded",
+  "transport_blocked",
+  "request_budget_exceeded",
+]);
+
 const NUMERIC_CODE = /^\d{1,6}(\/\d{1,9})?$/;
 const STAGED = /^([a-z_]{1,32}):([A-Za-z0-9_/]{1,64})$/;
 
@@ -104,7 +130,8 @@ export function sanitizeOAuthDiagnostics(input: OAuthFailureDiagnostics | undefi
         NUMERIC_CODE.test(code) ||
         INTERNAL_CODES.has(code) ||
         GOOGLE_CODES.has(code) ||
-        INSTAGRAM_CODES.has(code)
+        INSTAGRAM_CODES.has(code) ||
+        YOUTUBE_CODES.has(code)
       ) {
         changes.providerCode = { from: null, to: code };
       }

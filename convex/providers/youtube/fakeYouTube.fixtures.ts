@@ -4,22 +4,29 @@
  * evidence of real-channel behavior. Served through the global `fetch` (tests stub it), so
  * every request has already passed our client allowlist.
  *
- *   POST https://oauth2.googleapis.com/token                 refresh grant -> access token
+ *   POST https://oauth2.googleapis.com/token                 code (+ PKCE) or refresh grant
+ *   POST https://oauth2.googleapis.com/revoke                revokes the grant of a token
  *   GET  https://www.googleapis.com/youtube/v3/channels      mine=true (Bearer)
  *   GET  https://www.googleapis.com/youtube/v3/playlistItems the uploads playlist (Bearer)
  *   GET  https://www.googleapis.com/youtube/v3/videos        video snippets by id (Bearer)
  *
  * Errors use the documented shapes: OAuth `{ error: "invalid_grant" }` and the Google API
- * `{ error: { code, status, errors: [{ reason }] } }`. Every request is logged (method, host,
- * path, parameter NAMES, whether it carried a Bearer token, the full URL and the body) so
- * tests can count requests and scan for leaks. Failures can be injected per route. All ids,
- * tokens and secrets are fake.
+ * `{ error: { code, status, errors: [{ reason }] } }`. Authorization codes are single-use and
+ * bound to their PKCE challenge and redirect URI. A user mapped to `null` is a Google account
+ * without a channel. Every request is logged (method, host, path, parameter NAMES, whether it
+ * carried a Bearer token, the full URL and the body) so tests can count requests and scan for
+ * leaks. Failures can be injected per route. All ids, tokens and secrets are fake.
  */
 
 export const FAKE_YT_CLIENT_ID = "100000000001-fakeyoutubeclient.apps.googleusercontent.com";
 export const FAKE_YT_CLIENT_SECRET = "fake-yt-client-secret-DO-NOT-USE";
 /** Every fake token starts with this marker (leak scans search for it). */
 export const FAKE_YT_TOKEN_MARKER = "ytfake";
+/** Every fake authorization code starts with this marker. */
+export const FAKE_YT_CODE_MARKER = "ytcodefake";
+
+export const FAKE_YT_READONLY_SCOPE = "https://www.googleapis.com/auth/youtube.readonly";
+export const FAKE_YT_ANALYTICS_SCOPE = "https://www.googleapis.com/auth/yt-analytics.readonly";
 
 export type FakeVideo = {
   id: string;
@@ -45,6 +52,12 @@ export type FakeChannel = {
   uploadsId?: string;
   /** Newest first (the uploads playlist order). */
   videos?: FakeVideo[];
+  /** The granted scopes the code exchange reports (default: both YouTube scopes). */
+  grantedScope?: string;
+  /** The code exchange issues no refresh token. */
+  omitRefreshToken?: boolean;
+  /** `channels.list?mine=true` also returns this second channel. */
+  alsoOwns?: FakeChannel;
 };
 
 export type FakeRequest = {
@@ -58,11 +71,11 @@ export type FakeRequest = {
 };
 
 export type FakeFailure = { status: number; body?: unknown; headers?: Record<string, string> };
-export type FakeRoute = "token" | "channels" | "playlistItems" | "videos";
+export type FakeRoute = "token" | "revoke" | "channels" | "playlistItems" | "videos";
 
 export const FAKE_CHANNEL_ID = "UCfakeChannel0000000000a";
 
-const DEFAULT_CHANNELS: Record<string, FakeChannel> = {
+const DEFAULT_CHANNELS: Record<string, FakeChannel | null> = {
   brand: {
     channelId: FAKE_CHANNEL_ID,
     title: "Fake Brand",
@@ -83,12 +96,40 @@ function apiError(status: number, reason: string, rpc: string) {
   return json(status, { error: { code: status, status: rpc, errors: [{ reason }] } });
 }
 
-export function createFakeYouTube(options: { channels?: Record<string, FakeChannel> } = {}) {
-  const channels: Record<string, FakeChannel> = { ...DEFAULT_CHANNELS, ...options.channels };
+async function s256(verifier: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  let binary = "";
+  for (const byte of new Uint8Array(digest)) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function channelResource(channel: FakeChannel, uploads: string) {
+  return {
+    id: channel.channelId,
+    snippet: {
+      title: channel.title,
+      ...(channel.customUrl !== undefined ? { customUrl: channel.customUrl } : {}),
+      thumbnails: { default: { url: "https://yt3.example.invalid/fake.jpg" } },
+    },
+    statistics: channel.hidden
+      ? { hiddenSubscriberCount: true, viewCount: "1" }
+      : { subscriberCount: channel.subscriberCount, hiddenSubscriberCount: false },
+    contentDetails: { relatedPlaylists: { uploads, likes: "" } },
+  };
+}
+
+export function createFakeYouTube(options: { channels?: Record<string, FakeChannel | null> } = {}) {
+  const channels: Record<string, FakeChannel | null> = { ...DEFAULT_CHANNELS, ...options.channels };
   const requests: FakeRequest[] = [];
   const failures = new Map<FakeRoute, FakeFailure[]>();
+  const codes = new Map<
+    string,
+    { user: string; challenge: string; redirectUri: string; used: boolean }
+  >();
   const refreshTokens = new Map<string, string>(); // refresh token -> user
   const accessTokens = new Map<string, string>(); // access token -> user
+  /** Users whose grant was revoked through the revocation endpoint. */
+  const revokedUsers: string[] = [];
   let issued = 0;
 
   const uploadsOf = (channel: FakeChannel) =>
@@ -107,51 +148,87 @@ export function createFakeYouTube(options: { channels?: Record<string, FakeChann
     return accessTokens.get(token);
   }
 
+  function issueAccess(user: string): string {
+    const accessToken = `${FAKE_YT_TOKEN_MARKER}-access-${user}-${++issued}`;
+    accessTokens.set(accessToken, user);
+    return accessToken;
+  }
+
+  function issueRefresh(user: string): string {
+    const token = `${FAKE_YT_TOKEN_MARKER}-refresh-${user}-${refreshTokens.size + 1}`;
+    refreshTokens.set(token, user);
+    return token;
+  }
+
+  function revokeUser(user: string): void {
+    for (const [token, owner] of [...refreshTokens]) {
+      if (owner === user) refreshTokens.delete(token);
+    }
+    for (const [token, owner] of [...accessTokens]) {
+      if (owner === user) accessTokens.delete(token);
+    }
+  }
+
+  async function token(form: URLSearchParams): Promise<Response> {
+    if (
+      form.get("client_id") !== FAKE_YT_CLIENT_ID ||
+      form.get("client_secret") !== FAKE_YT_CLIENT_SECRET
+    ) {
+      return json(401, { error: "invalid_client" });
+    }
+    if (form.get("grant_type") === "refresh_token") {
+      const user = refreshTokens.get(form.get("refresh_token") ?? "");
+      if (user === undefined) return json(400, { error: "invalid_grant" });
+      return json(200, { access_token: issueAccess(user), expires_in: 3599, token_type: "Bearer" });
+    }
+    const code = codes.get(form.get("code") ?? "");
+    if (
+      code === undefined ||
+      code.used ||
+      form.get("grant_type") !== "authorization_code" ||
+      form.get("redirect_uri") !== code.redirectUri ||
+      (await s256(form.get("code_verifier") ?? "")) !== code.challenge
+    ) {
+      return json(400, { error: "invalid_grant" });
+    }
+    code.used = true;
+    const channel = channels[code.user];
+    return json(200, {
+      access_token: issueAccess(code.user),
+      expires_in: 3599,
+      ...(channel?.omitRefreshToken ? {} : { refresh_token: issueRefresh(code.user) }),
+      scope: channel?.grantedScope ?? `${FAKE_YT_READONLY_SCOPE} ${FAKE_YT_ANALYTICS_SCOPE}`,
+      token_type: "Bearer",
+    });
+  }
+
   async function handle(url: URL, init: RequestInit | undefined): Promise<Response> {
     const route = `${url.host}${url.pathname}`;
+    const form = new URLSearchParams(String(init?.body ?? ""));
     if (route === "oauth2.googleapis.com/token") {
-      const failed = injected("token");
+      return injected("token") ?? (await token(form));
+    }
+    if (route === "oauth2.googleapis.com/revoke") {
+      const failed = injected("revoke");
       if (failed) return failed;
-      const form = new URLSearchParams(String(init?.body ?? ""));
-      if (
-        form.get("client_id") !== FAKE_YT_CLIENT_ID ||
-        form.get("client_secret") !== FAKE_YT_CLIENT_SECRET
-      ) {
-        return json(401, { error: "invalid_client" });
-      }
-      const user = refreshTokens.get(form.get("refresh_token") ?? "");
-      if (form.get("grant_type") !== "refresh_token" || user === undefined) {
-        return json(400, { error: "invalid_grant" });
-      }
-      const accessToken = `${FAKE_YT_TOKEN_MARKER}-access-${user}-${++issued}`;
-      accessTokens.set(accessToken, user);
-      return json(200, { access_token: accessToken, expires_in: 3599, token_type: "Bearer" });
+      const raw = form.get("token") ?? "";
+      const user = refreshTokens.get(raw) ?? accessTokens.get(raw);
+      if (user === undefined) return json(400, { error: "invalid_token" });
+      revokeUser(user);
+      revokedUsers.push(user);
+      return new Response(null, { status: 200 });
     }
 
     const user = bearerUser(init);
     if (user === undefined) return apiError(401, "authError", "UNAUTHENTICATED");
-    const channel = channels[user];
+    const channel = channels[user] ?? undefined;
     const path = url.pathname.replace("/youtube/v3/", "");
     if (path === "channels") {
       const failed = injected("channels");
       if (failed) return failed;
       if (channel === undefined) return json(200, { items: [] });
-      return json(200, {
-        items: [
-          {
-            id: channel.channelId,
-            snippet: {
-              title: channel.title,
-              ...(channel.customUrl !== undefined ? { customUrl: channel.customUrl } : {}),
-              thumbnails: { default: { url: "https://yt3.example.invalid/fake.jpg" } },
-            },
-            statistics: channel.hidden
-              ? { hiddenSubscriberCount: true, viewCount: "1" }
-              : { subscriberCount: channel.subscriberCount, hiddenSubscriberCount: false },
-            contentDetails: { relatedPlaylists: { uploads: uploadsOf(channel), likes: "" } },
-          },
-        ],
-      });
+      const owned = [channel, ...(channel.alsoOwns !== undefined ? [channel.alsoOwns] : [])];
+      return json(200, { items: owned.map((c) => channelResource(c, uploadsOf(c))) });
     }
     if (path === "playlistItems") {
       const failed = injected("playlistItems");
@@ -160,8 +237,8 @@ export function createFakeYouTube(options: { channels?: Record<string, FakeChann
         return apiError(404, "playlistNotFound", "NOT_FOUND");
       }
       const size = Number(url.searchParams.get("maxResults"));
-      const token = url.searchParams.get("pageToken");
-      const start = token === null ? 0 : Number(/^fakepage-(\d+)$/.exec(token)?.[1] ?? NaN);
+      const pageToken = url.searchParams.get("pageToken");
+      const start = pageToken === null ? 0 : Number(/^fakepage-(\d+)$/.exec(pageToken)?.[1] ?? NaN);
       if (!Number.isInteger(start)) return apiError(400, "invalidPageToken", "INVALID_ARGUMENT");
       const videos = channel.videos ?? [];
       const page = videos.slice(start, start + size);
@@ -217,20 +294,20 @@ export function createFakeYouTube(options: { channels?: Record<string, FakeChann
   return {
     fetch: fakeFetch as typeof fetch,
     requests,
+    revokedUsers,
+    /** A single-use code for `user`, bound to the PKCE challenge and redirect URI. */
+    issueCode(user: string, codeChallenge: string, redirectUri: string): string {
+      const code = `${FAKE_YT_CODE_MARKER}-${user}-${codes.size + 1}`;
+      codes.set(code, { user, challenge: codeChallenge, redirectUri, used: false });
+      return code;
+    },
     /** A refresh token the fake accepts for `user` (a key of the channels map). */
     issueRefreshToken(user: string): string {
-      const token = `${FAKE_YT_TOKEN_MARKER}-refresh-${user}-${refreshTokens.size + 1}`;
-      refreshTokens.set(token, user);
-      return token;
+      return issueRefresh(user);
     },
-    /** Revokes every token of `user` (the next refresh answers invalid_grant). */
+    /** Revokes every token of `user` on Google's side (the next refresh answers invalid_grant). */
     revoke(user: string): void {
-      for (const [token, owner] of [...refreshTokens]) {
-        if (owner === user) refreshTokens.delete(token);
-      }
-      for (const [token, owner] of [...accessTokens]) {
-        if (owner === user) accessTokens.delete(token);
-      }
+      revokeUser(user);
     },
     /** The next request on `route` answers `failure` (queued, one per call). */
     failNext(route: FakeRoute, failure: FakeFailure): void {

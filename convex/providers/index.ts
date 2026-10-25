@@ -15,8 +15,17 @@ import {
   createMockSocialDiscovery,
   MOCK_SOCIAL_PROVIDER_ID,
 } from "./social/mock";
+import {
+  createMockYouTubeDiscovery,
+  createMockYouTubeOAuthSpec,
+  MOCK_YOUTUBE_PROVIDER_ID,
+} from "./social/mock/youtube";
 import { createUnavailableSocialDiscovery } from "./social/unavailable";
 import { createUnavailableAdsProvider } from "./unavailable";
+import { YOUTUBE_CAPABILITIES } from "./youtube/capabilities";
+import { YOUTUBE_PROVIDER_ID, youtubeAppConfig, youtubeConfigured } from "./youtube/config";
+import { createYouTubeDiscovery } from "./youtube/discovery";
+import { createYouTubeOAuthSpec } from "./youtube/oauth";
 
 export {
   createProviderRegistry,
@@ -56,6 +65,20 @@ function instagramRegistration(
 }
 
 /**
+ * YouTube (ADR 0016, organic social; same matrix as Instagram): mock → the mock YouTube OAuth
+ * spec + discovery; live → the YouTube OAuth spec + default-runtime discovery when
+ * YOUTUBE_CLIENT_ID / YOUTUBE_CLIENT_SECRET are set (a client shared with Google Ads is refused
+ * per call as youtube_config_invalid), else an unavailable discovery ("auth" /
+ * provider_unavailable) and no OAuth spec; misconfigured → an unavailable discovery ("unknown").
+ */
+function youtubeRegistration(
+  providerId: string,
+  discovery: SocialRegistration["discovery"],
+): SocialRegistration {
+  return { platform: "youtube", providerId, capabilities: YOUTUBE_CAPABILITIES, discovery };
+}
+
+/**
  * Google counts as configured when either OAuth client value is present (Phase 9). There is
  * no developer token (sunset 2026-09-09; access belongs to the OAuth client's Cloud project).
  */
@@ -80,12 +103,17 @@ export function createDefaultRegistry(
           createMockOAuthSpec("meta"),
           createMockOAuthSpec("google_ads"),
           createMockInstagramOAuthSpec(),
+          createMockYouTubeOAuthSpec(),
         ],
-        social: [instagramRegistration(MOCK_SOCIAL_PROVIDER_ID, createMockSocialDiscovery())],
+        social: [
+          instagramRegistration(MOCK_SOCIAL_PROVIDER_ID, createMockSocialDiscovery()),
+          youtubeRegistration(MOCK_YOUTUBE_PROVIDER_ID, createMockYouTubeDiscovery()),
+        ],
       });
     case "live": {
       const google = googleConfigured(env);
       const instagram = instagramConfigured(env);
+      const youtube = youtubeConfigured(env);
       const googleVersion =
         env.GOOGLE_ADS_API_VERSION !== undefined ? { version: env.GOOGLE_ADS_API_VERSION } : {};
       return createProviderRegistry({
@@ -119,6 +147,7 @@ export function createDefaultRegistry(
           ),
           ...(google ? [createGoogleOAuthSpec(googleVersion)] : []),
           ...(instagram ? [createInstagramOAuthSpec()] : []),
+          ...(youtube ? [createYouTubeOAuthSpec()] : []),
         ],
         social: [
           instagram
@@ -130,6 +159,20 @@ export function createDefaultRegistry(
                   kind: "auth",
                   providerCode: "provider_unavailable",
                   message: "Instagram is not configured in this deployment",
+                }),
+              ),
+          youtube
+            ? youtubeRegistration(
+                YOUTUBE_PROVIDER_ID,
+                createYouTubeDiscovery(youtubeAppConfig(env)),
+              )
+            : youtubeRegistration(
+                "unavailable",
+                createUnavailableSocialDiscovery({
+                  platform: "youtube",
+                  kind: "auth",
+                  providerCode: "provider_unavailable",
+                  message: "YouTube is not configured in this deployment",
                 }),
               ),
         ],
@@ -159,6 +202,15 @@ export function createDefaultRegistry(
             "unavailable",
             createUnavailableSocialDiscovery({
               platform: "instagram",
+              kind: "unknown",
+              providerCode: mode.code,
+              message: "PROVIDER_MODE is missing or invalid",
+            }),
+          ),
+          youtubeRegistration(
+            "unavailable",
+            createUnavailableSocialDiscovery({
+              platform: "youtube",
               kind: "unknown",
               providerCode: mode.code,
               message: "PROVIDER_MODE is missing or invalid",

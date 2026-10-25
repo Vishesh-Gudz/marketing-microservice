@@ -20,6 +20,10 @@ const LIVE = {
   INSTAGRAM_APP_SECRET: "fake-secret-1",
 };
 const CLOUD = "https://happy-animal-123.convex.cloud";
+const YOUTUBE_ENV = {
+  YOUTUBE_CLIENT_ID: "100000000001-fakeyoutubeclient.apps.googleusercontent.com",
+  YOUTUBE_CLIENT_SECRET: "fake-secret-1",
+};
 
 async function rejection(promise: Promise<unknown>) {
   const error = await promise.catch((e: unknown) => e);
@@ -30,7 +34,7 @@ async function rejection(promise: Promise<unknown>) {
 describe("default registry: social family", () => {
   it("mock mode: mock discovery, mock Instagram OAuth, static capabilities", () => {
     const registry = createDefaultRegistry({});
-    expect(registry.socialPlatforms()).toEqual(["instagram"]);
+    expect(registry.socialPlatforms()).toEqual(["instagram", "youtube"]);
     expect(registry.socialProviderId("instagram")).toBe(MOCK_SOCIAL_PROVIDER_ID);
     expect(registry.socialCapabilities("instagram")).toBe(INSTAGRAM_CAPABILITIES);
     expect(registry.oauth("instagram").providerId).toBe(MOCK_SOCIAL_PROVIDER_ID);
@@ -61,6 +65,64 @@ describe("default registry: social family", () => {
       registry.socialDiscovery("instagram").listAccounts({ credential: {}, attempt: 1 }, {}),
     );
     expect([error.kind, error.providerCode]).toEqual(["unknown", "provider_mode_missing"]);
+  });
+
+  it("registers YouTube on the same matrix with its own OAuth client (ADR 0016)", async () => {
+    const mock = createDefaultRegistry({});
+    expect(mock.socialProviderId("youtube")).toBe(MOCK_YOUTUBE_PROVIDER_ID);
+    expect(mock.socialCapabilities("youtube")).toBe(YOUTUBE_CAPABILITIES);
+    expect(mock.oauth("youtube").providerId).toBe(MOCK_YOUTUBE_PROVIDER_ID);
+
+    const live = createDefaultRegistry({ ...LIVE, ...YOUTUBE_ENV });
+    expect(live.oauth("youtube").providerId).toBe(YOUTUBE_PROVIDER_ID);
+    expect(live.oauth("youtube").usesPkce).toBe(true);
+    expect(live.socialDiscovery("youtube").providerId).toBe(YOUTUBE_PROVIDER_ID);
+    // Instagram's registration is unchanged by YouTube's.
+    expect(live.oauth("instagram").providerId).toBe(INSTAGRAM_PROVIDER_ID);
+
+    const unconfigured = createDefaultRegistry({ PROVIDER_MODE: "live" });
+    expect(unconfigured.hasOAuth("youtube")).toBe(false);
+    const auth = await rejection(
+      unconfigured.socialDiscovery("youtube").listAccounts({ credential: {}, attempt: 1 }, {}),
+    );
+    expect([auth.kind, auth.providerCode]).toEqual(["auth", "provider_unavailable"]);
+
+    const misconfigured = createDefaultRegistry({ CONVEX_CLOUD_URL: CLOUD });
+    expect(misconfigured.hasOAuth("youtube")).toBe(false);
+    const unknown = await rejection(
+      misconfigured.socialDiscovery("youtube").listAccounts({ credential: {}, attempt: 1 }, {}),
+    );
+    expect([unknown.kind, unknown.providerCode]).toEqual(["unknown", "provider_mode_missing"]);
+  });
+
+  it("refuses a YouTube OAuth client shared with Google Ads (Y-D3)", async () => {
+    const shared = createDefaultRegistry({
+      PROVIDER_MODE: "live",
+      ...YOUTUBE_ENV,
+      GOOGLE_CLIENT_ID: YOUTUBE_ENV.YOUTUBE_CLIENT_ID,
+      GOOGLE_CLIENT_SECRET: "fake-ads-secret-1",
+    });
+    expect(
+      shared.oauth("youtube").isConfigured?.({
+        clientId: YOUTUBE_ENV.YOUTUBE_CLIENT_ID,
+        clientSecret: YOUTUBE_ENV.YOUTUBE_CLIENT_SECRET,
+        extra: { googleAdsClientId: YOUTUBE_ENV.YOUTUBE_CLIENT_ID },
+      }),
+    ).toBe(false);
+    const discovery = await rejection(
+      shared.socialDiscovery("youtube").listAccounts({ credential: {}, attempt: 1 }, {}),
+    );
+    expect([discovery.kind, discovery.providerCode]).toEqual(["unknown", "youtube_config_invalid"]);
+    const sync = await rejection(
+      socialProviderFor("youtube", {
+        PROVIDER_MODE: "live",
+        ...YOUTUBE_ENV,
+        GOOGLE_CLIENT_ID: YOUTUBE_ENV.YOUTUBE_CLIENT_ID,
+      }).getAccount({ credential: {}, attempt: 1 }, { accountExternalId: "UC1" }),
+    );
+    expect([sync.kind, sync.providerCode]).toEqual(["unknown", "youtube_config_invalid"]);
+    // Google Ads itself is unaffected by the YouTube settings.
+    expect(shared.hasOAuth("google_ads")).toBe(true);
   });
 
   it("facebook (organic) is not registered", () => {

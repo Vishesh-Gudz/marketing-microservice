@@ -127,6 +127,13 @@ const CLIENT_ENV: Record<
   google_ads: { clientId: "GOOGLE_CLIENT_ID", clientSecret: "GOOGLE_CLIENT_SECRET", extra: {} },
   // Phase 10: Instagram API with Instagram Login (organic Instagram only).
   instagram: { clientId: "INSTAGRAM_APP_ID", clientSecret: "INSTAGRAM_APP_SECRET", extra: {} },
+  // ADR 0016 (Y-D3): YouTube's OWN Google OAuth client. The Google Ads client id is read only
+  // to refuse a shared client (a YouTube revoke must never revoke a Google Ads grant).
+  youtube: {
+    clientId: "YOUTUBE_CLIENT_ID",
+    clientSecret: "YOUTUBE_CLIENT_SECRET",
+    extra: { googleAdsClientId: "GOOGLE_CLIENT_ID" },
+  },
 };
 
 export function oauthClientConfig(platform: ConnectionProvider): OAuthClientConfig {

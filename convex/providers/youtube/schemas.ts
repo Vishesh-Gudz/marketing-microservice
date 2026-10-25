@@ -20,6 +20,15 @@ export const rawTokenResponse = v.object({
   token_type: v.optional(v.string()),
 });
 
+/** [doc] The authorization-code grant also returns the refresh token (with access_type=offline). */
+export const rawGrantTokenResponse = v.object({
+  access_token: v.string(),
+  expires_in: v.optional(v.number()),
+  refresh_token: v.optional(v.string()),
+  scope: v.optional(v.string()),
+  token_type: v.optional(v.string()),
+});
+
 /** List envelopes: items are validated one by one (below). */
 export const rawListResponse = v.object({
   items: v.optional(v.array(v.any())),
@@ -73,15 +82,24 @@ export const rawVideo = v.object({
 });
 export type RawVideo = Infer<typeof rawVideo>;
 
-/** Validates a raw payload; failures become "data" errors without echoing the payload. */
+/**
+ * Validates a raw payload; failures become "data" errors without echoing the payload. OAuth
+ * flows pass their D28b `stage` (providerCode "<stage>:schema").
+ */
 export function parseRaw<T extends Validator<unknown, "required", string>>(
   validator: T,
   value: unknown,
   operation: ProviderOperation,
   what: string,
+  stage?: string,
 ): Infer<T> {
   if (!validate(validator, value, { allowUnknownFields: true })) {
-    throw youtubeError("data", operation, "schema", `Unexpected YouTube ${what} payload`);
+    throw youtubeError(
+      "data",
+      operation,
+      stage !== undefined ? `${stage}:schema` : "schema",
+      `Unexpected YouTube ${what} payload`,
+    );
   }
   return value as Infer<T>;
 }

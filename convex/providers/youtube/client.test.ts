@@ -21,6 +21,7 @@ afterEach(() => {
 describe("allowlist", () => {
   it.each([
     ["POST", "https://oauth2.googleapis.com/token"],
+    ["POST", "https://oauth2.googleapis.com/revoke"],
     ["GET", `${DATA}/channels?part=${CHANNEL_PARTS}&mine=true&maxResults=50`],
     ["GET", `${DATA}/playlistItems?part=contentDetails&playlistId=${PLAYLIST}&maxResults=50`],
     [
@@ -82,7 +83,8 @@ describe("allowlist", () => {
     ["comments", "GET", `${DATA}/commentThreads?part=snippet&videoId=${VIDEO}`],
     ["the token endpoint by GET", "GET", "https://oauth2.googleapis.com/token"],
     ["a token URL query", "POST", "https://oauth2.googleapis.com/token?refresh_token=x"],
-    ["revocation (Checkpoint 2)", "POST", "https://oauth2.googleapis.com/revoke"],
+    ["a token in the revocation URL", "POST", "https://oauth2.googleapis.com/revoke?token=x"],
+    ["revocation by GET", "GET", "https://oauth2.googleapis.com/revoke"],
     ["analytics (Checkpoint 3)", "GET", "https://youtubeanalytics.googleapis.com/v2/reports"],
   ])("refuses %s", (_label, method, url) => {
     expect(isAllowedRequest(method, url)).toBe(false);

@@ -57,6 +57,8 @@ const REASON_KIND: Readonly<Record<string, ProviderErrorKind>> = {
 const OAUTH_KIND: Readonly<Record<string, ProviderErrorKind>> = {
   invalid_grant: "auth",
   access_denied: "auth",
+  // [doc] the revocation endpoint's answer for an unknown or already revoked token.
+  invalid_token: "auth",
   invalid_client: "unknown",
   unauthorized_client: "unknown",
   redirect_uri_mismatch: "unknown",
@@ -160,17 +162,23 @@ export function classifyYouTubeFailure(failure: YouTubeFailure): YouTubeClassifi
   return withRetry(httpKind(failure.status), `http_${failure.status}`, failure.retryAfterMs);
 }
 
-/** The ProviderError for a classification (generic message; no payloads). */
+/**
+ * The ProviderError for a classification (generic message; no payloads). OAuth flows pass a
+ * D28b `stage` ("config", "token_exchange", "identity", "revoke"): providerCode
+ * "<stage>:<code>".
+ */
 export function youtubeProviderError(
   classification: YouTubeClassification,
   operation: ProviderOperation,
+  stage?: string,
 ): ProviderError {
   return new ProviderError({
     kind: classification.kind,
     platform: "youtube",
     operation,
     message: `YouTube request failed (${classification.kind})`,
-    providerCode: classification.providerCode,
+    providerCode:
+      stage !== undefined ? `${stage}:${classification.providerCode}` : classification.providerCode,
     ...(classification.retryAfterMs !== undefined
       ? { retryAfterMs: classification.retryAfterMs }
       : {}),

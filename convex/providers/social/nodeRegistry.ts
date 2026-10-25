@@ -7,7 +7,7 @@ import { createInstagramSocialProvider } from "../instagram/node/provider";
 import { resolveProviderMode } from "../mode";
 import { ProviderNotRegisteredError } from "../registry";
 import { YOUTUBE_CAPABILITIES } from "../youtube/capabilities";
-import { youtubeConfigured } from "../youtube/config";
+import { youtubeAppConfig, youtubeConfigured } from "../youtube/config";
 import { createYouTubeSocialProvider } from "../youtube/provider";
 import { createMockSocialProvider } from "./mock";
 import { createMockYouTubeSocialProvider } from "./mock/youtube";
@@ -65,12 +65,7 @@ function youtubeProviderFor(env: Record<string, string | undefined>): SocialProv
       return createMockYouTubeSocialProvider();
     case "live":
       return youtubeConfigured(env)
-        ? createYouTubeSocialProvider({
-            ...(env.YOUTUBE_CLIENT_ID !== undefined ? { clientId: env.YOUTUBE_CLIENT_ID } : {}),
-            ...(env.YOUTUBE_CLIENT_SECRET !== undefined
-              ? { clientSecret: env.YOUTUBE_CLIENT_SECRET }
-              : {}),
-          })
+        ? createYouTubeSocialProvider(youtubeAppConfig(env))
         : createUnavailableSocialProvider({
             platform: "youtube",
             capabilities: YOUTUBE_CAPABILITIES,

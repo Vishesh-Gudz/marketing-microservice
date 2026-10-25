@@ -2,43 +2,33 @@ import type { ProviderSocialPost, SocialProvider } from "../social/types";
 import { assertValidSocialRecord } from "../social/validate";
 import type { ProviderContext, ProviderOperation } from "../types";
 import { YOUTUBE_CAPABILITIES } from "./capabilities";
-import { createYouTubeClient, YouTubeRequestBudget, type YouTubeResult } from "./client";
+import { YouTubeRequestBudget } from "./client";
 import {
-  isValidYouTubeClientId,
-  isValidYouTubeClientSecret,
   isYouTubeChannelId,
   isYouTubePlaylistId,
   isYouTubeVideoId,
   SYNC_TIMEOUT_MS,
-  YOUTUBE_CONFIG_INVALID,
   YOUTUBE_PROVIDER_ID,
+  type YouTubeAppConfig,
 } from "./config";
-import { isYouTubeCredential, type YouTubeCredential } from "./credential";
 import { decodeYouTubeCursor, encodeYouTubeCursor, youtubeRequestFingerprint } from "./cursor";
-import { classifyYouTubeFailure, youtubeError, youtubeProviderError } from "./errors";
+import { youtubeError } from "./errors";
 import { mapChannel, mapVideo } from "./mapping";
-import {
-  parseRaw,
-  rawChannel,
-  rawListResponse,
-  rawPlaylistItem,
-  rawTokenResponse,
-  rawVideo,
-  type RawChannel,
-  type RawVideo,
-} from "./schemas";
+import { parseRaw, rawListResponse, rawPlaylistItem, rawVideo, type RawVideo } from "./schemas";
 import { LISTING_PAGE_SIZE } from "./semantics";
+import { bodyOf, createYouTubeSession, ownedChannelOf, type YouTubeSession } from "./session";
 
 /**
  * The YouTube SocialProvider (ADR 0016). Plain fetch through the allowlisted client
  * (./client.ts), so it runs in either runtime; the social worker resolves it through
  * providers/social/nodeRegistry.ts like every social sync provider.
  *
- * Every operation first checks, before any network access, the configuration (the
- * credential's OAuth client must be YOUTUBE_CLIENT_ID), the credential shape, and that the
- * requested channel is the one the consent was given for. Then, with an explicit per-call
- * request budget (capabilities.requestBudget), it mints a fresh access token from the stored
- * refresh token (memory only, Y-D5) and reads:
+ * Every operation first checks, before any network access (./session.ts), the configuration
+ * (a valid OAuth client of its own, not shared with Google Ads; the credential's client must be
+ * YOUTUBE_CLIENT_ID), the credential shape, and that the requested channel is the one the
+ * consent was given for. Then, with an explicit per-call request budget
+ * (capabilities.requestBudget), it mints a fresh access token from the stored refresh token
+ * (memory only, Y-D5) and reads:
  *
  *   getAccount        2 requests: token + `channels.list?mine=true` (the channel must be one
  *                     the authorization owns: the authorization is re-checked on every sync)
@@ -64,45 +54,24 @@ function unsupported(operation: ProviderOperation, what: string) {
   );
 }
 
-type Session = { credential: YouTubeCredential; clientId: string; clientSecret: string };
-
-export function createYouTubeSocialProvider(options: {
-  clientId?: string;
-  clientSecret?: string;
-  timeoutMs?: number;
-}): SocialProvider {
-  const client = createYouTubeClient({ timeoutMs: options.timeoutMs ?? SYNC_TIMEOUT_MS });
+export function createYouTubeSocialProvider(
+  options: YouTubeAppConfig & { timeoutMs?: number },
+): SocialProvider {
+  const youtube = createYouTubeSession(options, {
+    timeoutMs: options.timeoutMs ?? SYNC_TIMEOUT_MS,
+  });
+  const { client } = youtube;
 
   const verify = (
     operation: ProviderOperation,
     ctx: ProviderContext,
     accountExternalId: string,
-  ): Session => {
-    const { clientId, clientSecret } = options;
-    if (!isValidYouTubeClientId(clientId) || !isValidYouTubeClientSecret(clientSecret)) {
-      throw youtubeError(
-        "unknown",
-        operation,
-        YOUTUBE_CONFIG_INVALID,
-        "YouTube OAuth configuration is missing or invalid",
-      );
-    }
-    const credential: unknown = ctx.credential;
-    if (!isYouTubeCredential(credential)) {
-      throw youtubeError("auth", operation, "credential_invalid", "Unusable YouTube credential");
-    }
-    if (credential.clientId !== clientId) {
-      throw youtubeError(
-        "auth",
-        operation,
-        "client_id_mismatch",
-        "Credential belongs to a different OAuth client",
-      );
-    }
+  ): YouTubeSession => {
+    const session = youtube.open(operation, ctx.credential);
     if (!isYouTubeChannelId(accountExternalId)) {
       throw youtubeError("invalid_request", operation, "account_invalid", "Invalid channel id");
     }
-    if (accountExternalId !== credential.channelId) {
+    if (accountExternalId !== session.credential.channelId) {
       throw youtubeError(
         "permission",
         operation,
@@ -110,50 +79,8 @@ export function createYouTubeSocialProvider(options: {
         "The authorization does not belong to this channel",
       );
     }
-    return { credential, clientId, clientSecret };
+    return session;
   };
-
-  function bodyOf(result: YouTubeResult, operation: ProviderOperation): unknown {
-    if (!result.ok) throw youtubeProviderError(classifyYouTubeFailure(result.failure), operation);
-    return result.body;
-  }
-
-  async function accessToken(
-    session: Session,
-    operation: ProviderOperation,
-    budget: YouTubeRequestBudget,
-  ): Promise<string> {
-    const result = await client.refreshAccessToken(
-      {
-        refreshToken: session.credential.refreshToken,
-        clientId: session.clientId,
-        clientSecret: session.clientSecret,
-      },
-      budget,
-    );
-    return parseRaw(rawTokenResponse, bodyOf(result, operation), operation, "token").access_token;
-  }
-
-  /** The requested channel among the channels the authorization owns. */
-  async function ownedChannel(
-    token: string,
-    channelId: string,
-    operation: ProviderOperation,
-    budget: YouTubeRequestBudget,
-  ): Promise<RawChannel> {
-    const body = bodyOf(await client.listMyChannels(token, budget), operation);
-    const list = parseRaw(rawListResponse, body, operation, "channel list");
-    for (const item of list.items ?? []) {
-      const channel = parseRaw(rawChannel, item, operation, "channel");
-      if (channel.id === channelId) return channel;
-    }
-    throw youtubeError(
-      "permission",
-      operation,
-      "account_mismatch",
-      "The authorization does not own this channel",
-    );
-  }
 
   return Object.freeze({
     platform: "youtube" as const,
@@ -164,9 +91,9 @@ export function createYouTubeSocialProvider(options: {
       const operation = "getSocialAccount" as const;
       const session = verify(operation, ctx, request.accountExternalId);
       const budget = new YouTubeRequestBudget(2);
-      const token = await accessToken(session, operation, budget);
-      const channel = await ownedChannel(token, request.accountExternalId, operation, budget);
-      const record = mapChannel(channel);
+      const token = await youtube.accessToken(session, operation, budget);
+      const channels = await youtube.ownedChannels(token, operation, budget);
+      const record = mapChannel(ownedChannelOf(channels, request.accountExternalId, operation));
       assertValidSocialRecord("socialAccount", record, "youtube", operation);
       return record;
     },
@@ -181,12 +108,13 @@ export function createYouTubeSocialProvider(options: {
           ? undefined
           : decodeYouTubeCursor(request.cursor, fp, operation);
       const budget = new YouTubeRequestBudget(CAPS.requestBudget.maxRequestsPerProviderCall);
-      const token = await accessToken(session, operation, budget);
+      const token = await youtube.accessToken(session, operation, budget);
 
       let playlistId = position?.playlistId;
       if (playlistId === undefined) {
-        const channel = await ownedChannel(token, channelId, operation, budget);
-        const uploads = channel.contentDetails?.relatedPlaylists?.uploads;
+        const channels = await youtube.ownedChannels(token, operation, budget);
+        const uploads = ownedChannelOf(channels, channelId, operation).contentDetails
+          ?.relatedPlaylists?.uploads;
         if (!isYouTubePlaylistId(uploads)) {
           throw youtubeError("data", operation, "uploads_missing", "No uploads playlist");
         }
