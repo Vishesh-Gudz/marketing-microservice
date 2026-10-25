@@ -174,6 +174,8 @@ connect flow and encrypted credential store. Real credentials never carry these 
   discovery. The SDK-backed provider is resolved only in Node, by `social/nodeRegistry.ts`,
   under the same PROVIDER_MODE (D8) matrix.
 - **Instagram:** [instagram.md](instagram.md).
+- **YouTube** (ADR 0016; plain fetch, no SDK, resolved by the same node registry):
+  [youtube.md](youtube.md).
 
 ## How Meta and Google Ads plug in (Phases 8–9)
 

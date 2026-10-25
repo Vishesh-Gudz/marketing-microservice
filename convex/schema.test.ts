@@ -246,7 +246,7 @@ describe("generated types", () => {
     assert<Equals<Doc<"metricsDaily">["date"], string>>(true);
     assert<Equals<Doc<"metricsDaily">["placement"], Doc<"actionMetricsDaily">["placement"]>>(true);
     assert<Equals<Doc<"adAccounts">["platform"], "meta" | "google_ads">>(true);
-    assert<Equals<Doc<"socialAccounts">["platform"], "instagram" | "facebook">>(true);
+    assert<Equals<Doc<"socialAccounts">["platform"], "instagram" | "facebook" | "youtube">>(true);
     expect(true).toBe(true);
   });
 });

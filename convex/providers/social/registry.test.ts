@@ -4,7 +4,10 @@ import { isProviderError } from "../errors";
 import { INSTAGRAM_CAPABILITIES } from "../instagram/capabilities";
 import { INSTAGRAM_PROVIDER_ID } from "../instagram/config";
 import { createProviderRegistry, ProviderNotRegisteredError } from "../registry";
+import { YOUTUBE_CAPABILITIES } from "../youtube/capabilities";
+import { YOUTUBE_PROVIDER_ID } from "../youtube/config";
 import { createMockSocialDiscovery, MOCK_SOCIAL_PROVIDER_ID } from "./mock";
+import { MOCK_YOUTUBE_PROVIDER_ID } from "./mock/youtube";
 import { socialProviderFor } from "./nodeRegistry";
 
 // Phase 10 registry: the social family (default-runtime discovery + static capabilities),
@@ -95,5 +98,28 @@ describe("node registry (Node-only sync provider)", () => {
     );
     expect([unknown.kind, unknown.providerCode]).toEqual(["unknown", "provider_mode_invalid"]);
     expect(() => socialProviderFor("facebook", {})).toThrow(ProviderNotRegisteredError);
+  });
+
+  it("resolves YouTube on the same matrix (ADR 0016)", async () => {
+    expect(socialProviderFor("youtube", {}).providerId).toBe(MOCK_YOUTUBE_PROVIDER_ID);
+    const live = socialProviderFor("youtube", {
+      PROVIDER_MODE: "live",
+      YOUTUBE_CLIENT_ID: "100000000001-fakeyoutubeclient.apps.googleusercontent.com",
+      YOUTUBE_CLIENT_SECRET: "fake-secret-1",
+    });
+    expect(live.providerId).toBe(YOUTUBE_PROVIDER_ID);
+    expect(live.capabilities).toBe(YOUTUBE_CAPABILITIES);
+    const unconfigured = socialProviderFor("youtube", { PROVIDER_MODE: "live" });
+    const auth = await rejection(
+      unconfigured.getAccount({ credential: {}, attempt: 1 }, { accountExternalId: "UC1" }),
+    );
+    expect([auth.kind, auth.providerCode]).toEqual(["auth", "provider_unavailable"]);
+    const misconfigured = socialProviderFor("youtube", { CONVEX_CLOUD_URL: CLOUD });
+    const unknown = await rejection(
+      misconfigured.listPosts({ credential: {}, attempt: 1 }, { accountExternalId: "UC1" }),
+    );
+    expect([unknown.kind, unknown.providerCode]).toEqual(["unknown", "provider_mode_missing"]);
+    // Instagram is unaffected.
+    expect(socialProviderFor("instagram", {}).providerId).toBe(MOCK_SOCIAL_PROVIDER_ID);
   });
 });

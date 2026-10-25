@@ -7,6 +7,8 @@ import { socialTables } from "../../tables/social";
 import { ProviderError } from "../errors";
 import type { ProviderOperation } from "../types";
 import { allowedPermalink, CAPTION_MAX_CHARS } from "../instagram/semantics";
+import { isYouTubeChannelId, isYouTubeVideoId } from "../youtube/config";
+import { HANDLE, isAllowedYouTubePermalink, TITLE_MAX_CHARS } from "../youtube/semantics";
 import {
   SOCIAL_RECORD_DROPPED_FIELDS,
   type SocialRecordByKind,
@@ -69,9 +71,27 @@ const NUMERIC_ID = /^\d{1,32}$/;
 /** Instagram usernames: letters, digits, periods and underscores, at most 30 characters. */
 const INSTAGRAM_USERNAME = /^[A-Za-z0-9._]{1,30}$/;
 
-function idIssue(platform: SocialPlatform, value: string | undefined, label: string) {
+type IdKind = "account" | "post";
+
+/** Instagram ids are decimal; YouTube channel and video ids have their own forms (ADR 0016). */
+function idIssue(platform: SocialPlatform, value: string | undefined, label: string, of: IdKind) {
   if (value === undefined) return [];
-  return platform === "instagram" && !NUMERIC_ID.test(value) ? [`${label}: not an id`] : [];
+  const valid =
+    platform === "instagram"
+      ? NUMERIC_ID.test(value)
+      : platform === "youtube"
+        ? of === "account"
+          ? isYouTubeChannelId(value)
+          : isYouTubeVideoId(value)
+        : true;
+  return valid ? [] : [`${label}: not an id`];
+}
+
+/** The only permalinks a platform's posts may carry (F1 / R1b; YouTube: ADR 0016). */
+function permalinkAllowed(platform: SocialPlatform, permalink: string): boolean {
+  if (platform === "instagram") return allowedPermalink(permalink) === permalink;
+  if (platform === "youtube") return isAllowedYouTubePermalink(permalink);
+  return false;
 }
 
 function semanticIssues(kind: SocialRecordKind, record: Record<string, unknown>): string[] {
@@ -80,12 +100,12 @@ function semanticIssues(kind: SocialRecordKind, record: Record<string, unknown>)
   switch (kind) {
     case "discoveredSocialAccount":
     case "socialAccount": {
-      issues.push(...idIssue(platform, record.externalId as string, "externalId"));
+      issues.push(...idIssue(platform, record.externalId as string, "externalId", "account"));
       const username = record.username as string | undefined;
       if (
         username !== undefined &&
-        platform === "instagram" &&
-        !INSTAGRAM_USERNAME.test(username)
+        ((platform === "instagram" && !INSTAGRAM_USERNAME.test(username)) ||
+          (platform === "youtube" && !HANDLE.test(username)))
       ) {
         issues.push("username: not a username");
       }
@@ -95,28 +115,31 @@ function semanticIssues(kind: SocialRecordKind, record: Record<string, unknown>)
       break;
     }
     case "socialPost": {
-      issues.push(...idIssue(platform, record.externalId as string, "externalId"));
-      issues.push(...idIssue(platform, record.accountExternalId as string, "accountExternalId"));
-      // F1 / R1b: the permalink is the only URL a record may carry, and only an allowed
-      // (normalized) Instagram permalink; no other platform has a permalink rule yet.
+      issues.push(...idIssue(platform, record.externalId as string, "externalId", "post"));
+      issues.push(
+        ...idIssue(platform, record.accountExternalId as string, "accountExternalId", "account"),
+      );
+      // F1 / R1b: the permalink is the only URL a record may carry, and only the platform's
+      // allowed (normalized) permalink form; platforms without a rule carry none.
       const permalink = record.permalink as string | undefined;
-      if (
-        permalink !== undefined &&
-        (platform !== "instagram" || allowedPermalink(permalink) !== permalink)
-      ) {
+      if (permalink !== undefined && !permalinkAllowed(platform, permalink)) {
         issues.push("permalink: not an allowed permalink");
       }
       if (!isInstant(record.publishedAt)) issues.push("publishedAt: not an instant");
-      // F21: captions are capped at 2,200 characters (code points) before they get here.
+      // F21: captions are capped at 2,200 characters (code points) before they get here;
+      // YouTube captions are video titles (at most 100).
       const caption = record.caption as string | undefined;
-      if (caption !== undefined && Array.from(caption).length > CAPTION_MAX_CHARS) {
+      const maxCaption = platform === "youtube" ? TITLE_MAX_CHARS : CAPTION_MAX_CHARS;
+      if (caption !== undefined && Array.from(caption).length > maxCaption) {
         issues.push("caption: too long");
       }
       break;
     }
     case "socialPostSnapshot":
-      issues.push(...idIssue(platform, record.postExternalId as string, "postExternalId"));
-      issues.push(...idIssue(platform, record.accountExternalId as string, "accountExternalId"));
+      issues.push(...idIssue(platform, record.postExternalId as string, "postExternalId", "post"));
+      issues.push(
+        ...idIssue(platform, record.accountExternalId as string, "accountExternalId", "account"),
+      );
       if (!isDateKey(record.capturedDate as string)) issues.push("capturedDate: not a day");
       if (!isInstant(record.capturedAt)) issues.push("capturedAt: not an instant");
       else if (toDateKey(record.capturedAt as number, "UTC") !== record.capturedDate) {
@@ -125,7 +148,9 @@ function semanticIssues(kind: SocialRecordKind, record: Record<string, unknown>)
       issues.push(...countIssues(record, SNAPSHOT_COUNTS));
       break;
     case "socialAccountDay":
-      issues.push(...idIssue(platform, record.accountExternalId as string, "accountExternalId"));
+      issues.push(
+        ...idIssue(platform, record.accountExternalId as string, "accountExternalId", "account"),
+      );
       if (!isDateKey(record.date as string)) issues.push("date: not a day");
       // followerDelta is a signed net change; every other value is a count.
       issues.push(...countIssues(record, DAY_COUNTS));

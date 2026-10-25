@@ -58,3 +58,24 @@ describe("Google fixture scrub", () => {
     expect(findings(sample)).toContain(expected);
   });
 });
+
+// ADR 0016: the YouTube fixtures model the same Google OAuth endpoints, so the same rules
+// apply to every fixture file under providers/youtube.
+const YOUTUBE_ROOT = join(process.cwd(), "convex", "providers", "youtube");
+
+describe("YouTube fixture scrub", () => {
+  const files = fixtureFiles(YOUTUBE_ROOT);
+
+  it("scans the YouTube fixtures", () => {
+    expect(files.map((f) => f.replace(YOUTUBE_ROOT, "").replace(/\\/g, "/")).sort()).toEqual(
+      expect.arrayContaining(["/fakeYouTube.fixtures.ts"]),
+    );
+  });
+
+  it.each(files.map((f) => [f.replace(YOUTUBE_ROOT, "").replace(/\\/g, "/"), f]))(
+    "%s contains no token, secret, token URL, email or real client id",
+    (_label, file) => {
+      expect(findings(readFileSync(file, "utf8"))).toEqual([]);
+    },
+  );
+});

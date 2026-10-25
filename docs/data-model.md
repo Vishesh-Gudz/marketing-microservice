@@ -16,7 +16,7 @@ organizations (Phase 1, global)
  │   ├─ creatives              Meta: reusable object; Google: one per ad
  │   ├─ metricsDaily           wide: entity × date × placement
  │   └─ actionMetricsDaily     long: entity × date × placement × action type × attribution window
- └─ socialAccounts             platform: instagram | facebook (also owns future inbox threads)
+ └─ socialAccounts             platform: instagram | facebook | youtube (also owns future inbox threads)
      ├─ socialPosts
      │   └─ socialPostMetricSnapshots   cumulative lifetime values per capture day
      └─ socialAccountMetricsDaily

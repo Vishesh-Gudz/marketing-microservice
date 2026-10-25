@@ -283,6 +283,9 @@ const eslintConfig = defineConfig([
                 "**/providers/social/mock",
                 "**/providers/social/mock/**",
                 "**/sync/socialWorker",
+                // ADR 0016: no YouTube provider either.
+                "**/providers/youtube",
+                "**/providers/youtube/**",
               ],
               message:
                 "Analytics is query-time aggregation over canonical rows: no connections, credentials, sync writes or provider calls.",

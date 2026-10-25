@@ -13,8 +13,11 @@
 export const AD_PLATFORMS = ["meta", "google_ads"] as const;
 export type AdPlatform = (typeof AD_PLATFORMS)[number];
 
-/** Organic social platforms (separate data tree from paid ads). */
-export const SOCIAL_PLATFORMS = ["instagram", "facebook"] as const;
+/**
+ * Organic social platforms (separate data tree from paid ads). YouTube (ADR 0016) is organic
+ * channel data only; YouTube ads stay Google Ads (placement "youtube").
+ */
+export const SOCIAL_PLATFORMS = ["instagram", "facebook", "youtube"] as const;
 export type SocialPlatform = (typeof SOCIAL_PLATFORMS)[number];
 
 /**
@@ -197,7 +200,8 @@ export type AttributionBasis = (typeof ATTRIBUTION_BASES)[number];
 // Organic social
 // ---------------------------------------------------------------------------
 
-export const SOCIAL_ACCOUNT_TYPES = ["business", "creator", "page"] as const;
+/** "channel": a YouTube channel (ADR 0016). */
+export const SOCIAL_ACCOUNT_TYPES = ["business", "creator", "page", "channel"] as const;
 export type SocialAccountType = (typeof SOCIAL_ACCOUNT_TYPES)[number];
 
 export const SOCIAL_ACCOUNT_STATUSES = ["active", "disconnected", "unknown"] as const;
