@@ -259,9 +259,24 @@ function dayRows(
   );
 }
 
+/**
+ * ADR 0016 (Checkpoint 3 policy review): YouTube day rows are stored, but the organic analytics
+ * does not aggregate them until the open YouTube Developer Policies questions (period totals,
+ * comparisons, multi-channel sums, III.E.2 / III.E.4.h) are settled in Checkpoint 4. A YouTube
+ * account reads as "unsupported" here and its day rows are never read, so YouTube values are
+ * never summed, compared or combined with Instagram's; org-wide totals leave YouTube out.
+ */
+const NOT_AGGREGATED: ReadonlySet<SocialPlatform> = new Set(["youtube"]);
+
+function aggregated(account: Doc<"socialAccounts">): boolean {
+  return !NOT_AGGREGATED.has(account.platform);
+}
+
 function supportedAll(accounts: readonly Doc<"socialAccounts">[]): boolean {
   return accounts.every(
-    (account) => (socialCapabilitiesOf(account.platform)?.accountMetrics.length ?? 0) > 0,
+    (account) =>
+      aggregated(account) &&
+      (socialCapabilitiesOf(account.platform)?.accountMetrics.length ?? 0) > 0,
   );
 }
 
@@ -310,7 +325,9 @@ export async function organicOverview(
         ? previousPeriod(range)
         : validRange(args.compare, "compare");
   const budget = new SocialReadBudget();
-  const accounts = await scopedSocialAccounts(ctx, args.socialAccountIds, budget);
+  const scoped = await scopedSocialAccounts(ctx, args.socialAccountIds, budget);
+  // Org-wide totals never include a platform that is not aggregated (ADR 0016).
+  const accounts = args.socialAccountIds === undefined ? scoped.filter(aggregated) : scoped;
   const read = unionRange(range, compareRange);
   const perAccount: {
     account: Doc<"socialAccounts">;
@@ -320,7 +337,7 @@ export async function organicOverview(
   for (const account of accounts) {
     budget.charge(1); // the account's sync state
     const sync = await syncStateOf(ctx, account._id);
-    const rows = await dayRows(ctx, budget, account._id, read);
+    const rows = aggregated(account) ? await dayRows(ctx, budget, account._id, read) : [];
     perAccount.push({ account, sync, days: { accountId: account._id, rows } });
   }
   const supported = supportedAll(accounts);
@@ -384,7 +401,7 @@ export async function organicAccountSeries(
   const budget = new SocialReadBudget();
   const account = await getOwned(ctx, "socialAccounts", args.socialAccountId);
   budget.charge(1);
-  const rows = await dayRows(ctx, budget, account._id, range);
+  const rows = aggregated(account) ? await dayRows(ctx, budget, account._id, range) : [];
   const supported = supportedAll([account]);
   const days: AccountDays[] = [{ accountId: account._id, rows }];
   const points: SeriesPoint[] = bucketsOf(range, granularity).map((bucket) => ({

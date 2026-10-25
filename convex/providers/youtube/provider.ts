@@ -1,4 +1,9 @@
-import type { ProviderSocialPost, SocialProvider } from "../social/types";
+import { compareDateKeys, diffDays, isDateKey } from "../../lib/dates";
+import type {
+  ProviderSocialPost,
+  ProviderSocialPostSnapshot,
+  SocialProvider,
+} from "../social/types";
 import { assertValidSocialRecord } from "../social/validate";
 import type { ProviderContext, ProviderOperation } from "../types";
 import { YOUTUBE_CAPABILITIES } from "./capabilities";
@@ -13,8 +18,16 @@ import {
 } from "./config";
 import { decodeYouTubeCursor, encodeYouTubeCursor, youtubeRequestFingerprint } from "./cursor";
 import { youtubeError } from "./errors";
-import { mapChannel, mapVideo } from "./mapping";
-import { parseRaw, rawListResponse, rawPlaylistItem, rawVideo, type RawVideo } from "./schemas";
+import { mapChannel, mapReportDays, mapVideo, mapVideoSnapshot } from "./mapping";
+import { YOUTUBE_ANALYTICS_SCOPE } from "./oauth";
+import {
+  parseRaw,
+  rawListResponse,
+  rawPlaylistItem,
+  rawReport,
+  rawVideo,
+  type RawVideo,
+} from "./schemas";
 import { LISTING_PAGE_SIZE } from "./semantics";
 import { bodyOf, createYouTubeSession, ownedChannelOf, type YouTubeSession } from "./session";
 
@@ -30,28 +43,40 @@ import { bodyOf, createYouTubeSession, ownedChannelOf, type YouTubeSession } fro
  * (capabilities.requestBudget), it mints a fresh access token from the stored refresh token
  * (memory only, Y-D5) and reads:
  *
- *   getAccount        2 requests: token + `channels.list?mine=true` (the channel must be one
- *                     the authorization owns: the authorization is re-checked on every sync)
- *   listPosts         first page 4 requests: token + channel (the uploads playlist) +
- *                     `playlistItems.list` (50) + `videos.list` (those ids); later pages 3
- *                     (the playlist id travels in the cursor)
- *   fetchPostMetrics  unsupported until Checkpoint 3 (no network)
- *   fetchAccountMetrics  unsupported until Checkpoint 3 (no network)
+ *   getAccount           2 requests: token + `channels.list?mine=true` (the channel must be one
+ *                        the authorization owns: the authorization is re-checked on every sync)
+ *   listPosts            first page 4 requests: token + channel (the uploads playlist) +
+ *                        `playlistItems.list` (50) + `videos.list` (those ids); later pages 3
+ *                        (the playlist id travels in the cursor)
+ *   fetchPostMetrics     the same uploads pages, with `videos.list` statistics: one lifetime
+ *                        snapshot per upload published on or after `publishedFrom` (newest
+ *                        first; the listing ends at the first older upload)
+ *   fetchAccountMetrics  2 requests: token + ONE `reports.query` for the whole window (at most
+ *                        31 days); one record per requested day. Without the
+ *                        yt-analytics.readonly grant it fails as `permission` before any request.
  *
  * Semantics and mapping: ./semantics.ts, ./mapping.ts. "upcoming" broadcasts are skipped;
  * uploads that `videos.list` no longer returns (deleted or made inaccessible between the two
- * reads), or that cannot be mapped, are counted `unresolved`.
+ * reads), or that cannot be mapped, are counted `unresolved`. Only values YouTube reports are
+ * emitted (Developer Policies III.E.4.h); a missing value stays absent.
  */
 
 const CAPS = YOUTUBE_CAPABILITIES;
 
-function unsupported(operation: ProviderOperation, what: string) {
-  return youtubeError(
-    "unsupported",
-    operation,
-    "not_implemented",
-    `YouTube ${what} are not implemented`,
-  );
+/** One page of the uploads playlist with its `videos.list` resources. */
+type UploadsPage = {
+  playlistId: string;
+  /** Video ids of the page, in playlist order (newest first), once each. */
+  ids: string[];
+  videos: Map<string, RawVideo>;
+  /** Playlist items without a usable video id. */
+  unresolved: number;
+  nextPageToken?: string;
+};
+
+function dayStartMs(day: string): number {
+  const [y, m, d] = day.split("-").map(Number) as [number, number, number];
+  return Date.UTC(y, m - 1, d);
 }
 
 export function createYouTubeSocialProvider(
@@ -82,6 +107,68 @@ export function createYouTubeSocialProvider(
     return session;
   };
 
+  /** Token + (first page: the uploads playlist) + one playlist page + one `videos.list`. */
+  async function uploadsPage(
+    session: YouTubeSession,
+    operation: ProviderOperation,
+    position: { playlistId: string; pageToken: string } | undefined,
+    statistics: boolean,
+  ): Promise<UploadsPage> {
+    const channelId = session.credential.channelId;
+    const budget = new YouTubeRequestBudget(CAPS.requestBudget.maxRequestsPerProviderCall);
+    const token = await youtube.accessToken(session, operation, budget);
+
+    let playlistId = position?.playlistId;
+    if (playlistId === undefined) {
+      const channels = await youtube.ownedChannels(token, operation, budget);
+      const uploads = ownedChannelOf(channels, channelId, operation).contentDetails
+        ?.relatedPlaylists?.uploads;
+      if (!isYouTubePlaylistId(uploads)) {
+        throw youtubeError("data", operation, "uploads_missing", "No uploads playlist");
+      }
+      playlistId = uploads;
+    }
+
+    const pageBody = bodyOf(
+      await client.listPlaylistItems(
+        token,
+        {
+          playlistId,
+          maxResults: LISTING_PAGE_SIZE,
+          ...(position !== undefined ? { pageToken: position.pageToken } : {}),
+        },
+        budget,
+      ),
+      operation,
+    );
+    const page = parseRaw(rawListResponse, pageBody, operation, "playlist page");
+    let unresolved = 0;
+    const ids: string[] = [];
+    for (const item of page.items ?? []) {
+      const videoId = parseRaw(rawPlaylistItem, item, operation, "playlist item").contentDetails
+        .videoId;
+      if (!isYouTubeVideoId(videoId)) unresolved++;
+      else if (!ids.includes(videoId)) ids.push(videoId);
+    }
+
+    const videos = new Map<string, RawVideo>();
+    if (ids.length > 0) {
+      const body = bodyOf(await client.listVideos(token, ids, budget, { statistics }), operation);
+      for (const item of parseRaw(rawListResponse, body, operation, "video list").items ?? []) {
+        const video = parseRaw(rawVideo, item, operation, "video");
+        // Only the ids this page asked for.
+        if (ids.includes(video.id)) videos.set(video.id, video);
+      }
+    }
+    return {
+      playlistId,
+      ids,
+      videos,
+      unresolved,
+      ...(page.nextPageToken !== undefined ? { nextPageToken: page.nextPageToken } : {}),
+    };
+  }
+
   return Object.freeze({
     platform: "youtube" as const,
     providerId: YOUTUBE_PROVIDER_ID,
@@ -107,55 +194,12 @@ export function createYouTubeSocialProvider(
         request.cursor === undefined
           ? undefined
           : decodeYouTubeCursor(request.cursor, fp, operation);
-      const budget = new YouTubeRequestBudget(CAPS.requestBudget.maxRequestsPerProviderCall);
-      const token = await youtube.accessToken(session, operation, budget);
+      const page = await uploadsPage(session, operation, position, false);
 
-      let playlistId = position?.playlistId;
-      if (playlistId === undefined) {
-        const channels = await youtube.ownedChannels(token, operation, budget);
-        const uploads = ownedChannelOf(channels, channelId, operation).contentDetails
-          ?.relatedPlaylists?.uploads;
-        if (!isYouTubePlaylistId(uploads)) {
-          throw youtubeError("data", operation, "uploads_missing", "No uploads playlist");
-        }
-        playlistId = uploads;
-      }
-
-      const pageBody = bodyOf(
-        await client.listPlaylistItems(
-          token,
-          {
-            playlistId,
-            maxResults: LISTING_PAGE_SIZE,
-            ...(position !== undefined ? { pageToken: position.pageToken } : {}),
-          },
-          budget,
-        ),
-        operation,
-      );
-      const page = parseRaw(rawListResponse, pageBody, operation, "playlist page");
-      let unresolved = 0;
-      const ids: string[] = [];
-      for (const item of page.items ?? []) {
-        const videoId = parseRaw(rawPlaylistItem, item, operation, "playlist item").contentDetails
-          .videoId;
-        if (!isYouTubeVideoId(videoId)) unresolved++;
-        else if (!ids.includes(videoId)) ids.push(videoId);
-      }
-
-      const videos = new Map<string, RawVideo>();
-      if (ids.length > 0) {
-        const body = bodyOf(await client.listVideos(token, ids, budget), operation);
-        for (const item of parseRaw(rawListResponse, body, operation, "video list").items ?? []) {
-          const video = parseRaw(rawVideo, item, operation, "video");
-          // Only the ids this page asked for.
-          if (ids.includes(video.id)) videos.set(video.id, video);
-        }
-      }
-
+      let unresolved = page.unresolved;
       const items: ProviderSocialPost[] = [];
-      for (const id of ids) {
-        const video = videos.get(id);
+      for (const id of page.ids) {
+        const video = page.videos.get(id);
         const mapped =
           video === undefined ? { kind: "unresolved" as const } : mapVideo(video, channelId);
         if (mapped.kind === "unresolved") unresolved++;
@@ -168,7 +212,7 @@ export function createYouTubeSocialProvider(
         ...(page.nextPageToken !== undefined
           ? {
               nextCursor: encodeYouTubeCursor(fp, operation, {
-                playlistId,
+                playlistId: page.playlistId,
                 pageToken: page.nextPageToken,
               }),
             }
@@ -177,13 +221,103 @@ export function createYouTubeSocialProvider(
       };
     },
 
-    // Not declared in the capabilities, so never planned; a direct call fails before any request.
-    async fetchPostMetrics() {
-      throw unsupported("fetchPostMetrics", "post metrics");
+    async fetchPostMetrics(ctx, request) {
+      const operation = "fetchPostMetrics" as const;
+      const session = verify(operation, ctx, request.accountExternalId);
+      if (!isDateKey(request.publishedFrom)) {
+        throw youtubeError("invalid_request", operation, "window_invalid", "Invalid window");
+      }
+      const channelId = request.accountExternalId;
+      const windowStart = dayStartMs(request.publishedFrom);
+      const fp = youtubeRequestFingerprint(operation, [channelId, request.publishedFrom]);
+      const position =
+        request.cursor === undefined
+          ? undefined
+          : decodeYouTubeCursor(request.cursor, fp, operation);
+      const page = await uploadsPage(session, operation, position, true);
+      const capturedAt = Date.now();
+
+      let unresolved = page.unresolved;
+      let reachedWindowEnd = false;
+      const items: ProviderSocialPostSnapshot[] = [];
+      for (const id of page.ids) {
+        const video = page.videos.get(id);
+        const mapped =
+          video === undefined ? { kind: "unresolved" as const } : mapVideo(video, channelId);
+        if (mapped.kind === "excluded") continue; // "upcoming": no snapshot, never counted
+        if (mapped.kind === "unresolved") {
+          unresolved++;
+          continue;
+        }
+        if (mapped.record.publishedAt < windowStart) {
+          reachedWindowEnd = true; // newest first [YR7]: everything after is older
+          break;
+        }
+        const snapshot = mapVideoSnapshot({
+          operation,
+          accountExternalId: channelId,
+          video: video!,
+          capturedAt,
+        });
+        assertValidSocialRecord("socialPostSnapshot", snapshot, "youtube", operation);
+        items.push(snapshot);
+      }
+      return {
+        items,
+        ...(!reachedWindowEnd && page.nextPageToken !== undefined
+          ? {
+              nextCursor: encodeYouTubeCursor(fp, operation, {
+                playlistId: page.playlistId,
+                pageToken: page.nextPageToken,
+              }),
+            }
+          : {}),
+        ...(unresolved > 0 ? { unresolved } : {}),
+      };
     },
 
-    async fetchAccountMetrics() {
-      throw unsupported("fetchAccountMetrics", "account metrics");
+    async fetchAccountMetrics(ctx, request) {
+      const operation = "fetchAccountMetrics" as const;
+      const session = verify(operation, ctx, request.accountExternalId);
+      const { from, to } = request;
+      if (
+        !isDateKey(from) ||
+        !isDateKey(to) ||
+        compareDateKeys(from, to) > 0 ||
+        diffDays(from, to) + 1 > CAPS.maxAccountMetricsRangeDays
+      ) {
+        throw youtubeError("invalid_request", operation, "window_invalid", "Invalid window");
+      }
+      if (request.cursor !== undefined) {
+        // One report covers the whole window: any cursor is foreign.
+        throw youtubeError("invalid_request", operation, "cursor_invalid", "Unexpected cursor");
+      }
+      if (!session.credential.scopes.includes(YOUTUBE_ANALYTICS_SCOPE)) {
+        // Granular consent left the analytics scope out: never a request that must fail.
+        throw youtubeError(
+          "permission",
+          operation,
+          "analytics_scope_missing",
+          "YouTube Analytics access was not granted",
+        );
+      }
+      const budget = new YouTubeRequestBudget(2);
+      const token = await youtube.accessToken(session, operation, budget);
+      const body = bodyOf(
+        await client.queryChannelDays(token, { startDate: from, endDate: to }, budget),
+        operation,
+      );
+      const items = mapReportDays({
+        operation,
+        accountExternalId: request.accountExternalId,
+        from,
+        to,
+        report: parseRaw(rawReport, body, operation, "report"),
+      });
+      for (const item of items) {
+        assertValidSocialRecord("socialAccountDay", item, "youtube", operation);
+      }
+      return { items };
     },
   } satisfies SocialProvider);
 }

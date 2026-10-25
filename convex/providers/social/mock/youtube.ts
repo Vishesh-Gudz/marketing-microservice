@@ -1,20 +1,32 @@
-import { todayIn } from "../../../lib/dates";
+import { compareDateKeys, diffDays, isDateKey, todayIn } from "../../../lib/dates";
 import { pkceChallengeS256 } from "../../../lib/crypto";
 import { ProviderError } from "../../errors";
 import { fingerprint } from "../../hash";
 import type { OAuthGrant, OAuthSpec } from "../../oauth";
 import type { PageRequest, ProviderContext, ProviderOperation, ProviderPage } from "../../types";
 import { YOUTUBE_CAPABILITIES } from "../../youtube/capabilities";
-import { handleOf, mapChannel, mapVideo } from "../../youtube/mapping";
+import {
+  handleOf,
+  mapChannel,
+  mapReportDays,
+  mapVideo,
+  mapVideoSnapshot,
+} from "../../youtube/mapping";
 import { YOUTUBE_READONLY_SCOPE, YOUTUBE_SCOPES } from "../../youtube/oauth";
 import type {
   ProviderDiscoveredSocialAccount,
   ProviderSocialPost,
+  ProviderSocialPostSnapshot,
   SocialAccountDiscovery,
   SocialProvider,
 } from "../types";
 import { assertValidSocialRecord } from "../validate";
-import { mockYouTubeChannel, mockYouTubeChannelId, mockYouTubeVideos } from "./youtubeData";
+import {
+  mockYouTubeChannel,
+  mockYouTubeChannelId,
+  mockYouTubeReport,
+  mockYouTubeVideos,
+} from "./youtubeData";
 
 /**
  * Mock YouTube (ADR 0016, Y-D12), registered ONLY in PROVIDER_MODE=mock (local development and
@@ -22,13 +34,14 @@ import { mockYouTubeChannel, mockYouTubeChannelId, mockYouTubeVideos } from "./y
  *
  * - The SocialProvider serves the raw-shaped mock data (./youtubeData.ts) through the REAL
  *   YouTube mapping and capabilities, with the same exclusions ("upcoming") and unresolved
- *   counts as the live provider.
+ *   counts as the live provider; day reports and lifetime statistics run the same mapping.
  * - The OAuth spec is "instant consent" with PKCE (like the ads mock): the authorization URL
  *   IS the callback URL carrying `mock-yt-code.<user>.<fingerprint(challenge, user)>`; the
  *   scopes are the real YouTube scopes.
  * - Discovery returns the credential's channel.
  *
- * Users: "<n>" a channel; "limited" grants youtube.readonly only (analytics scope missing);
+ * Users: "<n>" a channel; "limited" grants youtube.readonly only (analytics scope missing:
+ * its day reports fail as `permission`, like the live provider);
  * "noyoutube" grants no youtube.readonly (the exchange fails); "nochannel" has no channel;
  * "norefresh" receives no refresh token; "revoked" holds a credential the mock rejects
  * ("auth", as `invalid_grant`). See ./youtubeData.ts for the data users.
@@ -82,10 +95,6 @@ function decodeCursor(operation: ProviderOperation, channelId: string, cursor: s
   return Number(match[1]);
 }
 
-function unsupported(operation: ProviderOperation, what: string): never {
-  return fail("unsupported", operation, "not_implemented", `YouTube ${what} are not implemented`);
-}
-
 export function createMockYouTubeSocialProvider(): SocialProvider {
   return Object.freeze({
     platform: "youtube" as const,
@@ -125,13 +134,82 @@ export function createMockYouTubeSocialProvider(): SocialProvider {
       };
     },
 
-    // Not declared in the capabilities (Checkpoint 3), exactly like the live provider.
-    async fetchPostMetrics() {
-      return unsupported("fetchPostMetrics", "post metrics");
+    async fetchPostMetrics(ctx, request) {
+      const operation = "fetchPostMetrics" as const;
+      const channelId = request.accountExternalId;
+      const user = mockUser(ctx, operation, channelId);
+      if (!isDateKey(request.publishedFrom)) {
+        return fail("invalid_request", operation, "window_invalid", "Invalid window");
+      }
+      const binding = `${channelId}|${request.publishedFrom}`;
+      const start =
+        request.cursor === undefined ? 0 : decodeCursor(operation, binding, request.cursor);
+      const now = Date.now();
+      const windowStart = Date.parse(`${request.publishedFrom}T00:00:00Z`);
+      const videos = mockYouTubeVideos(user, todayIn("UTC", now));
+      const page = videos.slice(start, start + CAPS.postMetricsPageSize);
+      const items: ProviderSocialPostSnapshot[] = [];
+      let unresolved = 0;
+      let ended = false;
+      for (const video of page) {
+        const mapped = mapVideo(video, channelId);
+        if (mapped.kind === "excluded") continue;
+        if (mapped.kind === "unresolved") {
+          unresolved++;
+          continue;
+        }
+        if (mapped.record.publishedAt < windowStart) {
+          ended = true;
+          break;
+        }
+        const snapshot = mapVideoSnapshot({
+          operation,
+          accountExternalId: channelId,
+          video,
+          capturedAt: now,
+        });
+        assertValidSocialRecord("socialPostSnapshot", snapshot, "youtube", operation);
+        items.push(snapshot);
+      }
+      const next = start + CAPS.postMetricsPageSize;
+      return {
+        items,
+        ...(!ended && next < videos.length
+          ? { nextCursor: encodeCursor(operation, binding, next) }
+          : {}),
+        ...(unresolved > 0 ? { unresolved } : {}),
+      };
     },
 
-    async fetchAccountMetrics() {
-      return unsupported("fetchAccountMetrics", "account metrics");
+    async fetchAccountMetrics(ctx, request) {
+      const operation = "fetchAccountMetrics" as const;
+      const user = mockUser(ctx, operation, request.accountExternalId);
+      const { from, to } = request;
+      if (
+        !isDateKey(from) ||
+        !isDateKey(to) ||
+        compareDateKeys(from, to) > 0 ||
+        diffDays(from, to) + 1 > CAPS.maxAccountMetricsRangeDays
+      ) {
+        return fail("invalid_request", operation, "window_invalid", "Invalid window");
+      }
+      if (request.cursor !== undefined) {
+        return fail("invalid_request", operation, "cursor_invalid", "Unexpected cursor");
+      }
+      if (user === "limited") {
+        return fail("permission", operation, "analytics_scope_missing", "Not granted");
+      }
+      const items = mapReportDays({
+        operation,
+        accountExternalId: request.accountExternalId,
+        from,
+        to,
+        report: mockYouTubeReport(user, from, to),
+      });
+      for (const item of items) {
+        assertValidSocialRecord("socialAccountDay", item, "youtube", operation);
+      }
+      return { items };
     },
   } satisfies SocialProvider);
 }

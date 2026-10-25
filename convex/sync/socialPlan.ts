@@ -17,10 +17,12 @@ import type { SocialSyncOperation } from "./subject";
  *   fetchPostMetrics     capabilities.postMetrics non-empty: initial and lookback (daily)
  *                        runs; window = the post snapshot window ending today
  *   fetchAccountMetrics  capabilities.accountMetrics non-empty, chunked by
- *                        maxAccountMetricsRangeDays, never older than the platform horizon:
- *                          initial      last min(30, horizon) days
- *                          incremental  yesterday .. today
- *                          lookback     last accountMetricsLookbackDays days
+ *                        maxAccountMetricsRangeDays, never older than the platform horizon,
+ *                        ending at `latest` = today - accountMetricsDelayDays (absent = 0:
+ *                        today; YouTube reports days late, ADR 0016):
+ *                          initial      the 30 days up to `latest` (within the horizon)
+ *                          incremental  the day before `latest` .. `latest`
+ *                          lookback     the accountMetricsLookbackDays days up to `latest`
  *                          backfill     the gap between the horizon and coveredFrom
  *
  * Stage B: Instagram declares posts, post metrics and account metrics
@@ -56,20 +58,22 @@ export function socialMetricWindow(input: {
   const { kind, state, capabilities, now } = input;
   const today = todayIn("UTC", now);
   const horizon = addDays(today, -(capabilities.accountMetricsHorizonDays - 1));
+  // ADR 0016: the newest day a window may request (today, unless the platform reports late).
+  const latest = addDays(today, -(capabilities.accountMetricsDelayDays ?? 0));
   const clamp = (window: DateWindow): DateWindow | undefined => {
     const from = laterOf(window.from, horizon);
     return compareDateKeys(from, window.to) <= 0 ? { from, to: window.to } : undefined;
   };
   switch (kind) {
     case "initial":
-      return clamp({ from: addDays(today, -(SYNC_LIMITS.initialWindowDays - 1)), to: today });
+      return clamp({ from: addDays(latest, -(SYNC_LIMITS.initialWindowDays - 1)), to: latest });
     case "incremental":
     case "manual":
-      return clamp({ from: addDays(today, -1), to: today });
+      return clamp({ from: addDays(latest, -1), to: latest });
     case "lookback":
       return clamp({
-        from: addDays(today, -(capabilities.accountMetricsLookbackDays - 1)),
-        to: today,
+        from: addDays(latest, -(capabilities.accountMetricsLookbackDays - 1)),
+        to: latest,
       });
     case "backfill": {
       if (state.coveredFrom === undefined) return undefined;

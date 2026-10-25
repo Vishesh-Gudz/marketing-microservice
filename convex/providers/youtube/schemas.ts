@@ -68,7 +68,7 @@ export const rawPlaylistItem = v.object({
 });
 export type RawPlaylistItem = Infer<typeof rawPlaylistItem>;
 
-/** [doc] `videos` resource, part snippet. */
+/** [doc] `videos` resource, part snippet (and statistics, Checkpoint 3). */
 export const rawVideo = v.object({
   id: v.string(),
   snippet: v.optional(
@@ -79,8 +79,31 @@ export const rawVideo = v.object({
       liveBroadcastContent: v.optional(v.string()),
     }),
   ),
+  statistics: v.optional(
+    v.object({
+      viewCount: v.optional(count),
+      likeCount: v.optional(count),
+      commentCount: v.optional(count),
+    }),
+  ),
 });
 export type RawVideo = Infer<typeof rawVideo>;
+
+/**
+ * [doc] Analytics `resultTable`: `columnHeaders` (dimensions first, then metrics) and `rows`
+ * (arrays in header order; omitted when there is no data). Cells are checked by the mapping.
+ */
+export const rawReport = v.object({
+  columnHeaders: v.array(
+    v.object({
+      name: v.string(),
+      columnType: v.optional(v.string()),
+      dataType: v.optional(v.string()),
+    }),
+  ),
+  rows: v.optional(v.array(v.array(v.any()))),
+});
+export type RawReport = Infer<typeof rawReport>;
 
 /**
  * Validates a raw payload; failures become "data" errors without echoing the payload. OAuth

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { eachDay } from "../../lib/dates";
 import { isProviderError } from "../errors";
 import { createMockYouTubeSocialProvider } from "../social/mock/youtube";
 import { mockYouTubeChannelId } from "../social/mock/youtubeData";
@@ -16,10 +17,11 @@ import {
 } from "./fakeYouTube.fixtures";
 import { createYouTubeSocialProvider } from "./provider";
 
-// ADR 0016, Checkpoint 1: the metadata contract both YouTube providers (the mock, and the
-// live provider against the fake API) must pass: valid canonical records only, no tenant,
-// internal, provenance or URL fields (other than the built permalink), bounded pagination
-// that terminates without repeats, typed errors, and no metric operation yet.
+// ADR 0016: the contract both YouTube providers (the mock, and the live provider against the
+// fake API) must pass: valid canonical records only, no tenant, internal, provenance or URL
+// fields (other than the built permalink), bounded pagination that terminates without repeats,
+// typed errors; Checkpoint 3: snapshots of listed in-window uploads only and exactly one record
+// per requested day carrying only values YouTube reports.
 
 const NOW = new Date("2026-10-20T12:00:00Z");
 const FORBIDDEN_KEYS = [
@@ -51,7 +53,15 @@ beforeEach(() => {
         title: "Fake Brand",
         customUrl: "@fakebrand",
         subscriberCount: "12300",
-        videos: fakeVideos(130, "2026-10-20T08:00:00Z"),
+        videos: fakeVideos(130, "2026-10-20T08:00:00Z").map((video, i) => ({
+          ...video,
+          statistics: { viewCount: String(i * 10), commentCount: "0" },
+        })),
+        days: Object.fromEntries(
+          eachDay("2026-09-17", "2026-10-17")
+            .filter((_day, i) => i % 4 !== 0)
+            .map((day, i) => [day, { views: i, likes: 0, subscribersGained: 1 }]),
+        ),
       },
     },
   });
@@ -94,7 +104,10 @@ const subjects: Subject[] = [
         clientId: FAKE_YT_CLIENT_ID,
         channelId: FAKE_CHANNEL_ID,
         issuedAt: 0,
-        scopes: [],
+        scopes: [
+          "https://www.googleapis.com/auth/youtube.readonly",
+          "https://www.googleapis.com/auth/yt-analytics.readonly",
+        ],
       },
       attempt: 1,
     }),
@@ -161,15 +174,77 @@ describe.each(subjects)("YouTube SocialProvider contract: $name", (subject) => {
     expect(isProviderError(cursor) && cursor.kind).toBe("invalid_request");
   });
 
-  it("does not offer metric operations yet", async () => {
+  it("fetchPostMetrics snapshots only listed, in-window uploads, captured today", async () => {
+    const provider = subject.provider();
+    const listed = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      const page = await provider.listPosts(subject.ctx(), {
+        accountExternalId: subject.account,
+        ...(cursor ? { cursor } : {}),
+      });
+      for (const post of page.items) listed.add(post.externalId);
+      cursor = page.nextCursor;
+    } while (cursor !== undefined);
+    let snapshots = 0;
+    do {
+      const page = await provider.fetchPostMetrics(subject.ctx(), {
+        accountExternalId: subject.account,
+        publishedFrom: "2026-07-22",
+        ...(cursor ? { cursor } : {}),
+      });
+      expect(page.items.length).toBeLessThanOrEqual(YOUTUBE_CAPABILITIES.postMetricsPageSize);
+      for (const snapshot of page.items) {
+        expectCanonical("socialPostSnapshot", snapshot);
+        expect(listed.has(snapshot.postExternalId)).toBe(true);
+        expect(snapshot.capturedDate).toBe("2026-10-20");
+        for (const key of Object.keys(snapshot)) {
+          expect([
+            "platform",
+            "accountExternalId",
+            "postExternalId",
+            "capturedDate",
+            "capturedAt",
+            "views",
+            "likes",
+            "comments",
+          ]).toContain(key);
+        }
+        snapshots++;
+      }
+      cursor = page.nextCursor;
+    } while (cursor !== undefined);
+    expect(snapshots).toBeGreaterThan(0);
+  });
+
+  it("fetchAccountMetrics returns exactly one record per requested day, reported values only", async () => {
+    const page = await subject.provider().fetchAccountMetrics(subject.ctx(), {
+      accountExternalId: subject.account,
+      from: "2026-09-17",
+      to: "2026-10-17",
+    });
+    expect(page.nextCursor).toBeUndefined();
+    expect(page.items.map((day) => day.date)).toEqual(eachDay("2026-09-17", "2026-10-17"));
+    let empty = 0;
+    for (const day of page.items) {
+      expectCanonical("socialAccountDay", day);
+      for (const never of ["followerDelta", "reach", "accountsEngaged", "totalInteractions"]) {
+        expect(day).not.toHaveProperty(never);
+      }
+      if (day.views === undefined && day.extras === undefined) empty++;
+    }
+    expect(empty).toBeGreaterThan(0); // days without a row stay empty, never 0
+  });
+
+  it("rejects windows over the capability limit with a typed error", async () => {
     const error = await subject
       .provider()
       .fetchAccountMetrics(subject.ctx(), {
         accountExternalId: subject.account,
-        from: "2026-10-01",
-        to: "2026-10-02",
+        from: "2026-08-01",
+        to: "2026-10-17",
       })
       .catch((e: unknown) => e);
-    expect(isProviderError(error) && error.kind).toBe("unsupported");
+    expect(isProviderError(error) && error.kind).toBe("invalid_request");
   });
 });

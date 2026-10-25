@@ -39,6 +39,12 @@ export type SocialProviderCapabilities = {
   accountMetricsHorizonDays: number;
   /** Days re-requested by lookback runs (platform reporting delay buffer). */
   accountMetricsLookbackDays: number;
+  /**
+   * ADR 0016: days the platform needs before a day's account metrics are available (YouTube
+   * Analytics: 48-72 h). Account-metric windows end this many days before today, so lagging
+   * days stay unknown instead of being synced as "not reported". Absent = 0 (Instagram).
+   */
+  accountMetricsDelayDays?: number;
   /** Longer account-metric ranges are rejected with invalid_request (the plan chunks). */
   maxAccountMetricsRangeDays: number;
   /** Posts published within this many UTC days get a daily lifetime snapshot. */

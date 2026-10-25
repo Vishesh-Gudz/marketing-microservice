@@ -1,9 +1,9 @@
 # ADR 0016 — YouTube organic provider
 
-- Status: Checkpoint 1 (provider foundation: channel and video metadata) and Checkpoint 2
-  (OAuth and account connection) implemented and tested against mock and fake data only.
-  Checkpoints 3–6 (analytics sync, retention, public API, dashboard, verification) are planned.
-  Nothing was validated against a real YouTube channel or a real Google OAuth client (YR1–YR12
+- Status: Checkpoints 1 (provider foundation), 2 (OAuth and account connection) and 3
+  (analytics sync and storage, after the policy review) implemented and tested against mock and
+  fake data only. Checkpoints 3b–6 (retention, public API, dashboard, verification) are planned.
+  Nothing was validated against a real YouTube channel or a real Google OAuth client (YR1–YR14
   provisional).
 - Date: 2026-10-25
 
@@ -93,16 +93,69 @@ Details: [docs/providers/youtube.md](../providers/youtube.md).
 - D28b diagnostics allowlist the YouTube codes; the dashboard's reconnect notice names YouTube
   (read-only until Checkpoint 5).
 
-## Open compliance questions (to settle before Checkpoints 3, 3b and 4)
+### Checkpoint 3 (implemented)
 
-- **Derived metrics (Developer Policies III.E.4.h, III.L):** whether summing daily values over a
-  range, period totals and period-over-period comparisons count as "derived data or metrics".
-  Until confirmed, only metrics YouTube reports directly are exposed and nothing is calculated.
-- **Retention (III.D, III.E.4.b/c/g):** the exact deletion deadlines after an in-app disconnect,
-  a revocation on Google's side and a user deletion request, and the 30-day refresh-or-delete
-  rule for metadata. Re-verified against the current policy before Checkpoint 3b.
-- **Production use:** OAuth app verification (whether the scopes are "sensitive" is unconfirmed),
-  the privacy-policy and Terms-of-Service requirements (III.A) and branding.
+- **Policy review first** (2026-10-25; YouTube API Services Developer Policies, last updated
+  2026-10-15; Developer Policies Guide and "Additional policies for derived metrics and data
+  storage", both last updated 2026-09-14). Findings below.
+- `fetchAccountMetrics`: ONE `reports.query` per window (`ids=channel==MINE`, `dimensions=day`,
+  views, likes, comments, shares, estimatedMinutesWatched, averageViewDuration,
+  subscribersGained, subscribersLost); one record per requested day; each value under its own
+  YouTube name (`views` in the column, the rest in `extras`). No follower change, ratio or
+  estimate is stored. Without the `yt-analytics.readonly` grant the task fails as `permission`
+  before any request.
+- `fetchPostMetrics`: `videos.list` statistics (views, likes, comments) of the uploads published
+  in the last 90 UTC days, 50 per request; hidden or disabled counts stay absent.
+- The optional capability `accountMetricsDelayDays` (YouTube 3) ends account-metric windows
+  before the platform's processing latency; Instagram declares none and is unchanged.
+- Pacific Time day keys are stored unchanged; DST days are single keys.
+- **Read guard:** `convex/analytics/organic/queries.ts` reads YouTube accounts as `unsupported`
+  and never reads their day rows; org-wide totals leave them out. YouTube values are therefore
+  never summed, compared or combined with Instagram's until Checkpoint 4 settles the questions
+  below. (This also closes the org-wide follower total, which would otherwise have added the
+  YouTube subscriber captures that Checkpoint 2's preflight already stores.)
+
+## Policy review findings (Checkpoint 3)
+
+- **III.E.4.h:** no API Data replaced by independently calculated data and no "new or derived
+  data or metrics"; own metrics only with a clear disclosure.
+- **Developer Policies Guide, "Acceptable metrics":** simple calculations on YouTube API data
+  only (addition, subtraction, averages, multiplication, division), e.g. "Average daily views in
+  a month", "Total views in a group of videos/channels", "Number of subscribers gained or
+  lost", graphs of increases. Not acceptable: estimating watch time or unique reach, custom
+  scores from averages or ratios, totals that differ from YouTube's, merging with other data.
+- **III.L (opt-in, audited analytics developers):** custom channel scores and ratios (e.g.
+  engagement ratios, growth rates) and 36-month statistics storage. This service is not in it.
+- **III.E.2 / III.E.3.b:** aggregation only across channels of the same content owner, viewable
+  only by that owner; Authorized Data only for the authorizing user or agents they approved.
+- **III.E.4.b/c/e/f:** analytics and statistics may be stored as long as necessary with a 30-day
+  authorization re-check (and a 30-day check that each video still exists); other authorized data
+  (titles, metadata) must be refreshed or deleted after 30 days; show current data, historical
+  data accurately in its time context.
+- **III.D.2.3 / III.E.4.g:** in-app revocation → revoke at Google and delete authorized data within
+  7 days; revocation in Google's settings → delete the user's API data within 30 days; delete the
+  data of users whose tokens cannot be refreshed; user deletion requests within 7 days.
+
+## Open compliance questions (for review before Checkpoint 4)
+
+1. Is the Guide's "acceptable metrics" list authoritative next to III.E.4.h, i.e. may a
+   date-range total be summed from stored daily rows?
+2. Are period-over-period percent changes simple calculations or III.L "ratios"? (Absolute
+   differences are subtraction.)
+3. What does "content owner" (III.E.2) mean for ordinary channels; may one organization sum
+   channels of different owners?
+4. Are an organization's members "agents expressly approved" (III.E.3.b) by the person who
+   connected the channel; is explicit consent wording needed at connect time?
+5. Is a 395-day history "as long as necessary"; must every analytics row go after a disconnect?
+6. Does the sync preflight (fresh token + `channels.list?mine=true` on every run) satisfy the
+   30-day authorization re-check?
+7. Should the service apply for III.L (audit + quota extension) for ratios and growth metrics?
+8. Production: OAuth verification (whether the scopes are "sensitive" is unconfirmed), privacy
+   policy and Terms-of-Service links (III.A), branding (III.F.2), quota extension via the API
+   Compliance Audit (III.D.3).
+
+Until answered: only metrics YouTube reports are stored and exposed, nothing is derived, no
+multi-channel or cross-platform aggregation, and no period totals or comparisons for YouTube.
 
 ## Consequences
 

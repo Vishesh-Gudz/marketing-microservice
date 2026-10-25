@@ -1,10 +1,13 @@
+import { isDateKey } from "../../lib/dates";
 import {
   isYouTubePlaylistId,
   isYouTubeVideoId,
   OAUTH_REVOKE_URL,
   OAUTH_TOKEN_URL,
+  YOUTUBE_ANALYTICS_BASE,
   YOUTUBE_DATA_BASE,
 } from "./config";
+import { ACCOUNT_REPORT_METRICS, REPORT_DIMENSION, REPORT_IDS } from "./semantics";
 
 /**
  * Minimal read-only YouTube HTTP client (ADR 0016, Y-D1). Plain `fetch` in either runtime; no
@@ -14,9 +17,10 @@ import {
  *   allowlist BEFORE any network access: https only; no user info, port or fragment; a fixed
  *   method + URL per route; exactly the route's query parameter names, each value checked.
  *   Routes: the OAuth token endpoint (authorization-code and refresh grants), token
- *   revocation (disconnect, Checkpoint 2) and three Data API reads (channels mine=true,
- *   playlistItems, videos snippet). Anything else, any write, any API key parameter and any
- *   other host is refused.
+ *   revocation (disconnect, Checkpoint 2), three Data API reads (channels mine=true,
+ *   playlistItems, videos snippet / snippet+statistics) and one Analytics report (the channel
+ *   day report with the exact metric list, Checkpoint 3). Anything else, any write, any API
+ *   key parameter and any other host is refused.
  * - Tokens travel only in the Authorization header (Bearer) or a form body, never in a URL.
  * - Every request takes one unit from an explicit per-call request budget.
  * - Results never carry the URL, headers, tokens, messages or request ids; failures are
@@ -70,6 +74,8 @@ export class YouTubeRequestBudget {
 export const CHANNEL_PARTS = "snippet,statistics,contentDetails";
 export const PLAYLIST_ITEM_PARTS = "contentDetails";
 export const VIDEO_PARTS = "snippet";
+/** Checkpoint 3: video metadata plus the lifetime statistics (one request per 50 ids). */
+export const VIDEO_STATISTICS_PARTS = "snippet,statistics";
 
 /** [doc] Data API list pages hold at most 50 items; `videos.list` takes ids in batches. */
 export const MAX_RESULTS = 50;
@@ -127,8 +133,23 @@ const ROUTES: readonly Route[] = [
   {
     method: "GET",
     url: `${YOUTUBE_DATA_BASE}/videos`,
-    params: { part: exactly(VIDEO_PARTS), id: videoIds },
+    params: {
+      part: (value) => value === VIDEO_PARTS || value === VIDEO_STATISTICS_PARTS,
+      id: videoIds,
+    },
     required: ["part", "id"],
+  },
+  {
+    method: "GET",
+    url: `${YOUTUBE_ANALYTICS_BASE}/reports`,
+    params: {
+      ids: exactly(REPORT_IDS),
+      startDate: isDateKey,
+      endDate: isDateKey,
+      metrics: exactly(ACCOUNT_REPORT_METRICS),
+      dimensions: exactly(REPORT_DIMENSION),
+    },
+    required: ["ids", "startDate", "endDate", "metrics", "dimensions"],
   },
 ];
 
@@ -244,8 +265,8 @@ async function sendChecked(
   return { ok: true, body };
 }
 
-function dataUrl(path: string, params: Record<string, string>): string {
-  const url = new URL(`${YOUTUBE_DATA_BASE}/${path}`);
+function dataUrl(path: string, params: Record<string, string>, base = YOUTUBE_DATA_BASE): string {
+  const url = new URL(`${base}/${path}`);
   url.search = new URLSearchParams(params).toString();
   return url.toString();
 }
@@ -356,11 +377,48 @@ export function createYouTubeClient(options: { timeoutMs: number }) {
       );
     },
 
-    /** [doc] Video metadata for up to 50 ids in one request (1 unit). */
-    async listVideos(accessToken: string, ids: readonly string[], budget: YouTubeRequestBudget) {
+    /**
+     * [doc] Video metadata for up to 50 ids in one request (1 unit), with the lifetime
+     * statistics when `statistics` is set.
+     */
+    async listVideos(
+      accessToken: string,
+      ids: readonly string[],
+      budget: YouTubeRequestBudget,
+      options: { statistics?: boolean } = {},
+    ) {
+      const part = options.statistics === true ? VIDEO_STATISTICS_PARTS : VIDEO_PARTS;
       return await sendChecked(
         "GET",
-        dataUrl("videos", { part: VIDEO_PARTS, id: ids.join(",") }),
+        dataUrl("videos", { part, id: ids.join(",") }),
+        { headers: bearer(accessToken) },
+        timeoutMs,
+        budget,
+      );
+    },
+
+    /**
+     * [doc] One channel `reports.query` (Analytics API, 1 unit): the requested core metrics per
+     * day for `ids=channel==MINE`, inclusive start and end days (Pacific Time days).
+     */
+    async queryChannelDays(
+      accessToken: string,
+      input: { startDate: string; endDate: string },
+      budget: YouTubeRequestBudget,
+    ) {
+      return await sendChecked(
+        "GET",
+        dataUrl(
+          "reports",
+          {
+            ids: REPORT_IDS,
+            startDate: input.startDate,
+            endDate: input.endDate,
+            metrics: ACCOUNT_REPORT_METRICS,
+            dimensions: REPORT_DIMENSION,
+          },
+          YOUTUBE_ANALYTICS_BASE,
+        ),
         { headers: bearer(accessToken) },
         timeoutMs,
         budget,

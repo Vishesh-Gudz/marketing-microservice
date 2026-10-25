@@ -8,7 +8,8 @@
  *   POST https://oauth2.googleapis.com/revoke                revokes the grant of a token
  *   GET  https://www.googleapis.com/youtube/v3/channels      mine=true (Bearer)
  *   GET  https://www.googleapis.com/youtube/v3/playlistItems the uploads playlist (Bearer)
- *   GET  https://www.googleapis.com/youtube/v3/videos        video snippets by id (Bearer)
+ *   GET  https://www.googleapis.com/youtube/v3/videos        snippets (+ statistics) by id (Bearer)
+ *   GET  https://youtubeanalytics.googleapis.com/v2/reports  the channel day report (Bearer)
  *
  * Errors use the documented shapes: OAuth `{ error: "invalid_grant" }` and the Google API
  * `{ error: { code, status, errors: [{ reason }] } }`. Authorization codes are single-use and
@@ -39,6 +40,8 @@ export type FakeVideo = {
   channelId?: string;
   /** Listed in the uploads playlist, but `videos.list` no longer returns it. */
   deleted?: boolean;
+  /** Lifetime statistics as the Data API sends them (strings); a missing count is hidden. */
+  statistics?: { viewCount?: string; likeCount?: string; commentCount?: string };
 };
 
 export type FakeChannel = {
@@ -58,6 +61,12 @@ export type FakeChannel = {
   omitRefreshToken?: boolean;
   /** `channels.list?mine=true` also returns this second channel. */
   alsoOwns?: FakeChannel;
+  /** Analytics values by (Pacific Time) day and metric name; a missing day has no row. */
+  days?: Record<string, Record<string, number | null>>;
+  /** [doc] endDate is cut back to the last processed day: no row after this day. */
+  processedThrough?: string;
+  /** Requested metric columns the report leaves out. */
+  omitMetrics?: string[];
 };
 
 export type FakeRequest = {
@@ -71,7 +80,7 @@ export type FakeRequest = {
 };
 
 export type FakeFailure = { status: number; body?: unknown; headers?: Record<string, string> };
-export type FakeRoute = "token" | "revoke" | "channels" | "playlistItems" | "videos";
+export type FakeRoute = "token" | "revoke" | "channels" | "playlistItems" | "videos" | "reports";
 
 export const FAKE_CHANNEL_ID = "UCfakeChannel0000000000a";
 
@@ -257,6 +266,7 @@ export function createFakeYouTube(options: { channels?: Record<string, FakeChann
       const failed = injected("videos");
       if (failed) return failed;
       const ids = new Set((url.searchParams.get("id") ?? "").split(","));
+      const withStatistics = (url.searchParams.get("part") ?? "").split(",").includes("statistics");
       const found = (channel?.videos ?? []).filter((video) => ids.has(video.id) && !video.deleted);
       return json(200, {
         items: found.map((video) => ({
@@ -269,10 +279,49 @@ export function createFakeYouTube(options: { channels?: Record<string, FakeChann
             description: "never stored",
             thumbnails: { default: { url: "https://i.ytimg.example.invalid/fake.jpg" } },
           },
+          ...(withStatistics && video.statistics !== undefined
+            ? { statistics: { ...video.statistics, favoriteCount: "0" } }
+            : {}),
         })),
       });
     }
+    if (url.host === "youtubeanalytics.googleapis.com" && url.pathname === "/v2/reports") {
+      const failed = injected("reports");
+      if (failed) return failed;
+      if (channel === undefined) return apiError(403, "forbidden", "PERMISSION_DENIED");
+      const granted =
+        channel.grantedScope ?? `${FAKE_YT_READONLY_SCOPE} ${FAKE_YT_ANALYTICS_SCOPE}`;
+      if (!granted.split(" ").includes(FAKE_YT_ANALYTICS_SCOPE)) {
+        return apiError(403, "insufficientPermissions", "PERMISSION_DENIED");
+      }
+      return json(200, reportOf(channel, url.searchParams));
+    }
     return apiError(404, "notFound", "NOT_FOUND");
+  }
+
+  /** [doc] A day report: headers (day + requested metrics), rows in day order, cut at processedThrough. */
+  function reportOf(channel: FakeChannel, params: URLSearchParams) {
+    const start = params.get("startDate") ?? "";
+    const end = params.get("endDate") ?? "";
+    const through =
+      channel.processedThrough !== undefined && channel.processedThrough < end
+        ? channel.processedThrough
+        : end;
+    const metrics = (params.get("metrics") ?? "")
+      .split(",")
+      .filter((metric) => !(channel.omitMetrics ?? []).includes(metric));
+    const rows = Object.entries(channel.days ?? {})
+      .filter(([day]) => day >= start && day <= through)
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([day, values]) => [day, ...metrics.map((metric) => values[metric] ?? null)]);
+    return {
+      kind: "youtubeAnalytics#resultTable",
+      columnHeaders: [
+        { name: "day", columnType: "DIMENSION", dataType: "STRING" },
+        ...metrics.map((name) => ({ name, columnType: "METRIC", dataType: "INTEGER" })),
+      ],
+      ...(rows.length > 0 ? { rows } : {}),
+    };
   }
 
   const fakeFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {

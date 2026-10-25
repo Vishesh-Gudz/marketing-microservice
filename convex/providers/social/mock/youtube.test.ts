@@ -55,8 +55,13 @@ describe("mock YouTube data", () => {
     expect(videos).toHaveLength(MOCK_YT_LISTING_DAYS / MOCK_YT_UPLOAD_EVERY_DAYS);
     expect(videos.every((video) => isYouTubeVideoId(video.id))).toBe(true);
     expect(new Set(videos.map((video) => video.id)).size).toBe(videos.length);
-    // A video keeps its id as days pass (anchored to the epoch).
-    expect(mockYouTubeVideos("1", "2026-10-22")).toContainEqual(videos[0]);
+    // A video keeps its id and snippet as days pass (anchored to the epoch); its lifetime
+    // statistics grow.
+    const later = mockYouTubeVideos("1", "2026-10-22").find((video) => video.id === videos[0]!.id);
+    expect(later?.snippet).toEqual(videos[0]!.snippet);
+    expect(Number(later?.statistics?.viewCount)).toBeGreaterThanOrEqual(
+      Number(videos[0]!.statistics?.viewCount),
+    );
   });
 });
 
@@ -118,12 +123,63 @@ describe("mock YouTube provider", () => {
       .listPosts(ctx("1"), { accountExternalId: mockYouTubeChannelId("1"), cursor: "mockyt1.50.x" })
       .catch((e: unknown) => e);
     expect(isProviderError(cursor) && cursor.kind).toBe("invalid_request");
-    const metrics = await provider
-      .fetchPostMetrics(ctx("1"), {
-        accountExternalId: mockYouTubeChannelId("1"),
-        publishedFrom: "2026-07-01",
+    const limited = await provider
+      .fetchAccountMetrics(ctx("limited"), {
+        accountExternalId: mockYouTubeChannelId("limited"),
+        from: "2026-10-01",
+        to: "2026-10-02",
       })
       .catch((e: unknown) => e);
-    expect(isProviderError(metrics) && metrics.kind).toBe("unsupported");
+    expect(isProviderError(limited) && [limited.kind, limited.providerCode]).toEqual([
+      "permission",
+      "analytics_scope_missing",
+    ]);
+  });
+
+  it("snapshots in-window uploads through the real mapping; hidden counts stay absent", async () => {
+    const provider = createMockYouTubeSocialProvider();
+    const snapshots = [];
+    let cursor: string | undefined;
+    do {
+      const page = await provider.fetchPostMetrics(ctx("1"), {
+        accountExternalId: mockYouTubeChannelId("1"),
+        publishedFrom: "2026-07-22",
+        ...(cursor ? { cursor } : {}),
+      });
+      snapshots.push(...page.items);
+      cursor = page.nextCursor;
+    } while (cursor !== undefined);
+    const window = mockYouTubeVideos("1", "2026-10-20").filter(
+      (video) =>
+        video.snippet?.liveBroadcastContent !== "upcoming" &&
+        Date.parse(video.snippet!.publishedAt!) >= Date.parse("2026-07-22T00:00:00Z"),
+    );
+    expect(snapshots.map((s) => s.postExternalId)).toEqual(window.map((video) => video.id));
+    expect(snapshots.every((s) => s.capturedDate === "2026-10-20")).toBe(true);
+    expect(snapshots.some((s) => s.likes === undefined)).toBe(true);
+    expect(snapshots.some((s) => s.comments === undefined)).toBe(true);
+    expect(snapshots.some((s) => s.views === 0)).toBe(true); // published today: an explicit 0
+  });
+
+  it("serves day reports with days that report nothing and days of explicit zeros", async () => {
+    const page = await createMockYouTubeSocialProvider().fetchAccountMetrics(ctx("1"), {
+      accountExternalId: mockYouTubeChannelId("1"),
+      from: "2026-09-17",
+      to: "2026-10-17",
+    });
+    expect(page.items).toHaveLength(31);
+    expect(page.items.some((day) => day.views === undefined && day.extras === undefined)).toBe(
+      true,
+    );
+    expect(page.items.some((day) => day.views === 0)).toBe(true);
+    expect(page.items.some((day) => (day.views ?? 0) > 0)).toBe(true);
+    for (const day of page.items) expect(day).not.toHaveProperty("followerDelta");
+    // Deterministic: the same window gives the same days.
+    const again = await createMockYouTubeSocialProvider().fetchAccountMetrics(ctx("1"), {
+      accountExternalId: mockYouTubeChannelId("1"),
+      from: "2026-09-17",
+      to: "2026-10-17",
+    });
+    expect(again).toEqual(page);
   });
 });

@@ -234,6 +234,11 @@ insert into the four social tables (ESLint).
 - **Sliding backfill horizon:** a social account's `backfillHorizon` follows the platform's
   retention (today's UTC day − 89 for Instagram's 90 days) and is moved forward in `completeRun`,
   so a gap that aged out of the platform window never keeps a backfill pending.
+- **Reporting delay (ADR 0016):** the optional capability `accountMetricsDelayDays` ends the
+  initial, incremental, manual and lookback account-metric windows that many days before today
+  (YouTube: 3, for its 48–72 h processing latency), so days the platform has not processed yet
+  stay unknown instead of being synced as "not reported". Absent (Instagram) = 0: unchanged.
+  Backfill windows and the post snapshot window are not delayed.
 
 ## Retry and error policy
 

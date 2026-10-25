@@ -23,9 +23,11 @@ export { AUTHORIZE_URL, OAUTH_TOKEN_URL } from "../google/config";
  */
 export const OAUTH_REVOKE_URL = "https://oauth2.googleapis.com/revoke";
 
-/** YouTube Data API v3 [doc]. The Analytics API (youtubeanalytics.googleapis.com) is Checkpoint 3. */
+/** YouTube Data API v3 [doc]. */
 export const YOUTUBE_DATA_HOST = "www.googleapis.com";
 export const YOUTUBE_DATA_BASE = `https://${YOUTUBE_DATA_HOST}/youtube/v3`;
+/** YouTube Analytics API v2 [doc] (`reports.query`). */
+export const YOUTUBE_ANALYTICS_BASE = "https://youtubeanalytics.googleapis.com/v2";
 
 /** Run metadata only (syncRuns.providerId); never part of an identity key. */
 export const YOUTUBE_PROVIDER_ID = "youtube-data-api/v3";

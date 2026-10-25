@@ -1,3 +1,4 @@
+import type { SocialAccountMetricKey, SocialPostMetricKey } from "../../domain/metrics";
 import type { SocialPostType } from "../../domain/types";
 
 /**
@@ -9,7 +10,10 @@ import type { SocialPostType } from "../../domain/types";
  * No value here was observed on a real channel. The client allowlist (client.ts) is checked
  * independently: everything requested here must also pass it (semantics.test.ts).
  *
- * Checkpoint 1 covers channel and video METADATA only; no metric is read or stored yet.
+ * Policy (YouTube API Services Developer Policies III.E.4.h, Checkpoint 3 review): ONLY values
+ * YouTube reports are stored, under their own meaning; nothing here is calculated (no net
+ * subscriber change, no ratio, no average of ours, no estimate). How stored values may be
+ * aggregated or compared is an open compliance question for Checkpoint 4 (ADR 0016).
  */
 
 // ---------------------------------------------------------------------------
@@ -90,3 +94,78 @@ export function isAllowedYouTubePermalink(value: unknown): value is string {
  * videos), 2 on every later page, plus 1 token request per provider call.
  */
 export const LISTING_PAGE_SIZE = 50;
+
+// ---------------------------------------------------------------------------
+// Video lifetime statistics (fetchPostMetrics, Checkpoint 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * [doc] `videos.list` part `statistics`: lifetime counts as of now (uint64 strings). A count the
+ * owner hides or disables (likes, comments) is simply absent and stays ABSENT, never 0.
+ * `favoriteCount` (deprecated, always 0) and `dislikeCount` are never read.
+ */
+export const VIDEO_STATISTICS_COLUMNS = {
+  viewCount: "views",
+  likeCount: "likes",
+  commentCount: "comments",
+} as const satisfies Record<string, SocialPostMetricKey>;
+
+/** The canonical post metric columns the YouTube provider fills (capabilities). */
+export const YOUTUBE_POST_METRICS: readonly SocialPostMetricKey[] =
+  Object.values(VIDEO_STATISTICS_COLUMNS);
+
+/** [Y-D8] Uploads published within this many UTC days get a daily lifetime snapshot. */
+export const POST_SNAPSHOT_WINDOW_DAYS = 90;
+
+// ---------------------------------------------------------------------------
+// Channel daily report (fetchAccountMetrics, Checkpoint 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * [doc] One `reports.query` per window: `ids=channel==MINE` (the channel of the consent; the
+ * provider has already checked it is the requested one), `dimensions=day`, these core
+ * metrics, which the channel "Time-based" report accepts together. Each value lands under its
+ * OWN YouTube name: `views` in the canonical column, the rest in `extras`.
+ * - `averageViewDuration` is YouTube's own per-day value (seconds); it is not additive and is
+ *   never recomputed by us.
+ * - Never requested: `dislikes`, `engagedViews`, `averageViewPercentage` (a ratio),
+ *   `videosAddedToPlaylists`, revenue, demographics, traffic sources.
+ * - Never stored: `followerDelta` (gained minus lost would be our calculation), reach,
+ *   accounts engaged, total interactions.
+ * [PROVISIONAL YR13] whether YouTube returns rows for days without activity.
+ */
+export const REPORT_IDS = "channel==MINE";
+export const REPORT_DIMENSION = "day";
+
+type ReportTarget = { column: SocialAccountMetricKey } | { extra: string };
+
+export const ACCOUNT_REPORT_TARGETS = {
+  views: { column: "views" },
+  likes: { extra: "likes" },
+  comments: { extra: "comments" },
+  shares: { extra: "shares" },
+  estimatedMinutesWatched: { extra: "estimatedMinutesWatched" },
+  averageViewDuration: { extra: "averageViewDuration" },
+  subscribersGained: { extra: "subscribersGained" },
+  subscribersLost: { extra: "subscribersLost" },
+} as const satisfies Record<string, ReportTarget>;
+
+/** The exact `metrics` parameter (the allowlist accepts only this string). */
+export const ACCOUNT_REPORT_METRICS = Object.keys(ACCOUNT_REPORT_TARGETS).join(",");
+
+/** The canonical account metric columns the YouTube provider fills (capabilities). */
+export const YOUTUBE_ACCOUNT_METRICS: readonly SocialAccountMetricKey[] = ["views"];
+
+/**
+ * [doc] "Data processing typically introduces a latency of 48 to 72 hours", and `endDate` is
+ * cut back to the last fully processed day: account-metric windows end 3 days before today
+ * (accountMetricsDelayDays), so lagging days stay unknown rather than "not reported".
+ */
+export const ACCOUNT_METRICS_DELAY_DAYS = 3;
+
+/**
+ * [doc] Analytics days are Pacific Time days ("12:00AM Pacific time (UTC-7 or UTC-8)"; DST days
+ * have 23 or 25 hours). The provider passes the requested date keys through unchanged and stores
+ * YouTube's day under the same key: a day is never converted to or from an instant.
+ */
+export const REPORT_DAY_BASIS = "America/Los_Angeles";

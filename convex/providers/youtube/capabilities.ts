@@ -1,35 +1,46 @@
 import type { SocialProviderCapabilities } from "../social/capabilities";
-import { CHANNEL_ACCOUNT_TYPE, LISTING_PAGE_SIZE } from "./semantics";
+import {
+  ACCOUNT_METRICS_DELAY_DAYS,
+  CHANNEL_ACCOUNT_TYPE,
+  LISTING_PAGE_SIZE,
+  POST_SNAPSHOT_WINDOW_DAYS,
+  YOUTUBE_ACCOUNT_METRICS,
+  YOUTUBE_POST_METRICS,
+} from "./semantics";
 
 /**
- * Static YouTube capabilities (ADR 0016). Checkpoint 1 implements the channel preflight and
- * the video listing only: `postMetrics` and `accountMetrics` are empty, so the social planner
- * never plans a metric task for YouTube (Checkpoint 3 declares them). Values:
+ * Static YouTube capabilities (ADR 0016). Checkpoint 3 declares the video lifetime statistics
+ * and the channel day report, so the social planner plans every operation. Values:
  * - accountTypes ["channel"]          every YouTube account is a channel (Y-D2)
- * - listing pages of 50               [doc] Data API list pages hold at most 50 items
+ * - postMetrics views/likes/comments  [doc] `videos.list` statistics (semantics.ts)
+ * - accountMetrics ["views"]          the canonical column of the day report; the other
+ *                                     reported values land in `extras` under YouTube's names
+ * - listing / snapshot pages of 50    [doc] Data API list pages hold at most 50 items
  * - maxListingPages 100               ours: 5,000 most recent uploads per listing; a longer
  *                                     listing is reported as truncated (never silent)
  * - maxRequestsPerProviderCall 4      1 token + 1 channel (first page) + 1 playlistItems +
- *                                     1 videos request
+ *                                     1 videos request; a day report needs 1 token + 1 report
  * - maxConcurrentRequests 1           the requests of one call run one after another
+ * - requestsPerPostSnapshot 1         an upper bound: one `videos.list` covers 50 videos
+ * - maxPostsPerSnapshotTask 1,000     20 snapshot pages per task; more is reported truncated
  * - accountMetricsHorizonDays 395     ours (Y-D7): the engine's backfill horizon; YouTube keeps
  *                                     channel history (no platform retention window [doc])
  * - accountMetricsLookbackDays 7      ours (Y-D7): [doc] 48-72 h processing latency; whether
  *                                     data is revised later is [PROVISIONAL YR9]
- * - maxAccountMetricsRangeDays 31     ours: one window chunk per task
+ * - accountMetricsDelayDays 3         [doc] 48-72 h latency: windows end 3 days before today
+ * - maxAccountMetricsRangeDays 31     ours: one window chunk = one `reports.query`
  * - postSnapshotWindowDays 90         ours (Y-D8)
- * The metric windows, snapshot window, requestsPerPostSnapshot and maxPostsPerSnapshotTask
- * take effect only once metrics are declared (Checkpoint 3).
  */
 export const YOUTUBE_CAPABILITIES: SocialProviderCapabilities = Object.freeze({
   accountTypes: Object.freeze([CHANNEL_ACCOUNT_TYPE] as const),
   posts: true,
-  postMetrics: Object.freeze([]),
-  accountMetrics: Object.freeze([]),
+  postMetrics: Object.freeze([...YOUTUBE_POST_METRICS]),
+  accountMetrics: Object.freeze([...YOUTUBE_ACCOUNT_METRICS]),
   accountMetricsHorizonDays: 395,
   accountMetricsLookbackDays: 7,
+  accountMetricsDelayDays: ACCOUNT_METRICS_DELAY_DAYS,
   maxAccountMetricsRangeDays: 31,
-  postSnapshotWindowDays: 90,
+  postSnapshotWindowDays: POST_SNAPSHOT_WINDOW_DAYS,
   defaultPageSize: LISTING_PAGE_SIZE,
   maxPageSize: LISTING_PAGE_SIZE,
   postMetricsPageSize: LISTING_PAGE_SIZE,

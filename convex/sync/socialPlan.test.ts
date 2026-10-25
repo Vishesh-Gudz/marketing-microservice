@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Id } from "../_generated/dataModel";
 import { INSTAGRAM_CAPABILITIES } from "../providers/instagram/capabilities";
+import { YOUTUBE_CAPABILITIES } from "../providers/youtube/capabilities";
 import type { SocialProviderCapabilities } from "../providers/social/capabilities";
 import type { PlanState } from "./plan";
 import { buildSocialRunPlan, socialMetricWindow } from "./socialPlan";
@@ -181,5 +182,77 @@ describe("buildSocialRunPlan", () => {
       "getSocialAccount",
       "fetchAccountMetrics",
     ]);
+  });
+});
+
+describe("reporting delay (ADR 0016, YouTube)", () => {
+  const YT = YOUTUBE_CAPABILITIES;
+  const window = (kind: "initial" | "incremental" | "lookback" | "manual", capabilities = YT) =>
+    socialMetricWindow({ kind, state: youtubeState, capabilities, now: NOW });
+  // today 2026-09-28 (UTC) - 394 days: the 395-day horizon starts on 2025-08-30.
+  const youtubeState: PlanState = { structureStale: false, backfillHorizon: "2025-08-30" };
+
+  it("ends every account-metric window accountMetricsDelayDays before today", () => {
+    expect(YT.accountMetricsDelayDays).toBe(3);
+    // today (UTC) is 2026-09-28: the newest day requested is 2026-09-25.
+    expect(window("initial")).toEqual({ from: "2026-08-27", to: "2026-09-25" });
+    expect(window("incremental")).toEqual({ from: "2026-09-24", to: "2026-09-25" });
+    expect(window("manual")).toEqual(window("incremental"));
+    expect(window("lookback")).toEqual({ from: "2026-09-19", to: "2026-09-25" }); // 7 days
+  });
+
+  it("chunks YouTube windows by month into single-report tasks, newest first", () => {
+    const initial = buildSocialRunPlan({
+      kind: "initial",
+      state: youtubeState,
+      capabilities: YT,
+      now: NOW,
+    });
+    expect(initial.tasks.map((t) => [t.operation, t.from, t.to])).toEqual([
+      ["getSocialAccount", undefined, undefined],
+      ["listSocialPosts", undefined, undefined],
+      ["fetchPostMetrics", "2026-07-01", "2026-09-28"], // the 90-day snapshot window, not delayed
+      ["fetchAccountMetrics", "2026-09-01", "2026-09-25"],
+      ["fetchAccountMetrics", "2026-08-27", "2026-08-31"],
+    ]);
+    const backfill = buildSocialRunPlan({
+      kind: "backfill",
+      state: { ...youtubeState, coveredFrom: "2026-08-27", coveredThrough: "2026-09-25" },
+      capabilities: YT,
+      now: NOW,
+    });
+    // One 31-day window before coverage, split at the month boundary.
+    expect(backfill.tasks.slice(1).map((t) => [t.operation, t.from, t.to])).toEqual([
+      ["fetchAccountMetrics", "2026-08-01", "2026-08-26"],
+      ["fetchAccountMetrics", "2026-07-27", "2026-07-31"],
+    ]);
+  });
+
+  it("never requests a day before the 395-day horizon", () => {
+    const atHorizon = socialMetricWindow({
+      kind: "backfill",
+      state: { ...youtubeState, coveredFrom: "2025-08-30" },
+      capabilities: YT,
+      now: NOW,
+    });
+    expect(atHorizon).toBeUndefined();
+    const nearHorizon = socialMetricWindow({
+      kind: "backfill",
+      state: { ...youtubeState, coveredFrom: "2025-09-10" },
+      capabilities: YT,
+      now: NOW,
+    });
+    expect(nearHorizon).toEqual({ from: "2025-08-30", to: "2025-09-09" });
+  });
+
+  it("leaves Instagram (no delay declared) exactly as before", () => {
+    expect(INSTAGRAM_CAPABILITIES.accountMetricsDelayDays).toBeUndefined();
+    expect(window("incremental", FULL)).toEqual({ from: "2026-09-27", to: "2026-09-28" });
+    expect(window("lookback", FULL)).toEqual({ from: "2026-09-26", to: "2026-09-28" });
+    expect(window("initial", FULL)).toEqual({ from: "2026-08-30", to: "2026-09-28" });
+    // An explicit 0 is the same as no delay.
+    expect(window("lookback", { ...FULL, accountMetricsDelayDays: 0 })).toEqual(
+      window("lookback", FULL),
+    );
   });
 });

@@ -6,6 +6,7 @@ import {
   parseErrorBody,
   YouTubeRequestBudget,
 } from "./client";
+import { ACCOUNT_REPORT_METRICS } from "./semantics";
 
 // ADR 0016: the YouTube client sends only allowlisted, read-only requests, checked before any
 // network access; tokens never travel in a URL; failures carry codes, never URLs or tokens.
@@ -13,6 +14,8 @@ import {
 const DATA = "https://www.googleapis.com/youtube/v3";
 const PLAYLIST = "UUfakeChannel0000000000a";
 const VIDEO = "vid00000000";
+const ANALYTICS = "https://youtubeanalytics.googleapis.com/v2/reports";
+const METRICS = ACCOUNT_REPORT_METRICS;
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -29,6 +32,11 @@ describe("allowlist", () => {
       `${DATA}/playlistItems?part=contentDetails&playlistId=${PLAYLIST}&maxResults=1&pageToken=EAAaBlBUOkNESQ`,
     ],
     ["GET", `${DATA}/videos?part=snippet&id=${VIDEO},vid00000001`],
+    ["GET", `${DATA}/videos?part=snippet,statistics&id=${VIDEO}`],
+    [
+      "GET",
+      `${ANALYTICS}?ids=channel==MINE&startDate=2026-10-01&endDate=2026-10-17&metrics=${METRICS}&dimensions=day`,
+    ],
   ])("allows %s %s", (method, url) => {
     expect(isAllowedRequest(method, url)).toBe(true);
   });
@@ -55,7 +63,8 @@ describe("allowlist", () => {
     ["a token parameter", "GET", `${DATA}/videos?part=snippet&id=${VIDEO}&access_token=abc`],
     ["a duplicate parameter", "GET", `${DATA}/videos?part=snippet&id=${VIDEO}&id=${VIDEO}`],
     ["a missing parameter", "GET", `${DATA}/videos?part=snippet`],
-    ["another part", "GET", `${DATA}/videos?part=snippet,statistics&id=${VIDEO}`],
+    ["another part", "GET", `${DATA}/videos?part=snippet,status&id=${VIDEO}`],
+    ["statistics alone", "GET", `${DATA}/videos?part=statistics&id=${VIDEO}`],
     ["a duplicate id", "GET", `${DATA}/videos?part=snippet&id=${VIDEO},${VIDEO}`],
     ["a malformed id", "GET", `${DATA}/videos?part=snippet&id=short`],
     [
@@ -85,7 +94,65 @@ describe("allowlist", () => {
     ["a token URL query", "POST", "https://oauth2.googleapis.com/token?refresh_token=x"],
     ["a token in the revocation URL", "POST", "https://oauth2.googleapis.com/revoke?token=x"],
     ["revocation by GET", "GET", "https://oauth2.googleapis.com/revoke"],
-    ["analytics (Checkpoint 3)", "GET", "https://youtubeanalytics.googleapis.com/v2/reports"],
+    ["a report without parameters", "GET", ANALYTICS],
+    [
+      "a report for another channel id",
+      "GET",
+      `${ANALYTICS}?ids=channel==MINE&startDate=2026-10-01&endDate=2026-10-17&metrics=${METRICS}&dimensions=day`.replace(
+        "channel==MINE",
+        "channel==UCfakeChannel0000000000a",
+      ),
+    ],
+    [
+      "a content-owner report",
+      "GET",
+      `${ANALYTICS}?ids=channel==MINE&startDate=2026-10-01&endDate=2026-10-17&metrics=${METRICS}&dimensions=day`.replace(
+        "channel==MINE",
+        "contentOwner==abc",
+      ),
+    ],
+    [
+      "another metric list",
+      "GET",
+      `${ANALYTICS}?ids=channel==MINE&startDate=2026-10-01&endDate=2026-10-17&metrics=${METRICS}&dimensions=day`.replace(
+        "metrics=views,",
+        "metrics=dislikes,views,",
+      ),
+    ],
+    [
+      "revenue",
+      "GET",
+      `${ANALYTICS}?ids=channel==MINE&startDate=2026-10-01&endDate=2026-10-17&metrics=${METRICS}&dimensions=day`.replace(
+        "metrics=views",
+        "metrics=estimatedRevenue",
+      ),
+    ],
+    [
+      "another dimension",
+      "GET",
+      `${ANALYTICS}?ids=channel==MINE&startDate=2026-10-01&endDate=2026-10-17&metrics=${METRICS}&dimensions=day`.replace(
+        "dimensions=day",
+        "dimensions=day,video",
+      ),
+    ],
+    [
+      "a filter",
+      "GET",
+      `${ANALYTICS}?ids=channel==MINE&startDate=2026-10-01&endDate=2026-10-17&metrics=${METRICS}&dimensions=day&filters=video==${VIDEO}`,
+    ],
+    [
+      "a malformed date",
+      "GET",
+      `${ANALYTICS}?ids=channel==MINE&startDate=2026-10-01&endDate=2026-10-17&metrics=${METRICS}&dimensions=day`.replace(
+        "2026-10-01",
+        "2026-10-1",
+      ),
+    ],
+    [
+      "a report by POST",
+      "POST",
+      `${ANALYTICS}?ids=channel==MINE&startDate=2026-10-01&endDate=2026-10-17&metrics=${METRICS}&dimensions=day`,
+    ],
   ])("refuses %s", (_label, method, url) => {
     expect(isAllowedRequest(method, url)).toBe(false);
   });

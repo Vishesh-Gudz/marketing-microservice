@@ -326,6 +326,13 @@ aggregation code, vocabularies or limits: the existing ESLint analytics block co
   `NOT_FOUND`. DTOs carry no credential, URL other than the permalink, media URL, biography or
   commenter data.
 
+**YouTube (ADR 0016, until Checkpoint 4):** the sync stores YouTube channel days and video
+snapshots, but these functions do not aggregate them yet, pending the YouTube Developer Policies
+review (period totals, comparisons, multi-channel sums). A YouTube account in `socialAccountIds`
+reads as `unsupported` with no values, its day rows are never read, and org-wide totals (no
+`socialAccountIds`) leave YouTube accounts out, so YouTube values are never summed, compared or
+combined with Instagram's. Posts (`v1/socialPosts`) show each video's own lifetime snapshot.
+
 Tests: `convex/analytics/organic/*.test.ts` (aggregation, dates),
 `convex/v1/organic.test.ts` (exact seeded totals, states and reasons, UTC vs org
 timezone, budget, pagination, tenant isolation), the v1 inventory in `convex/v1/contract.test.ts`,
