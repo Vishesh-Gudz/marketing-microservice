@@ -1,9 +1,9 @@
 # ADR 0016 — YouTube organic provider
 
 - Status: Checkpoints 1 (provider foundation), 2 (OAuth and account connection), 3 (analytics
-  sync and storage, after the policy review), 3b (retention and deletion) and 4 (tenant-scoped
-  v1 API) implemented and tested against mock and fake data only. Checkpoints 5–6 (dashboard,
-  verification) are planned.
+  sync and storage, after the policy review), 3b (retention and deletion), 4 (tenant-scoped v1
+  API) and 5 (dashboard and connection UI) implemented and tested against mock and fake data
+  only. Checkpoint 6 (verification) is planned.
   Nothing was validated against a real YouTube channel or a real Google OAuth client (YR1–YR14
   provisional).
 - Date: 2026-10-25
@@ -92,7 +92,7 @@ Details: [docs/providers/youtube.md](../providers/youtube.md).
   channel's metadata syncs through the existing engine; `invalid_grant` moves the connection to
   `needs_reauth`. The token refresh job is unchanged and never sees YouTube.
 - D28b diagnostics allowlist the YouTube codes; the dashboard's reconnect notice names YouTube
-  (read-only until Checkpoint 5).
+  (the `/connections` YouTube section followed in Checkpoint 5).
 
 ### Checkpoint 3 (implemented)
 
@@ -150,8 +150,8 @@ Retention and deletion (`convex/connections/youtubeRetention.ts`; the exact rule
 - **Two approved global indexes** (`socialAccounts.by_platform_status_seen`,
   `socialPosts.by_platform_seen`): the system jobs have no tenant caller, and every row read
   through these indexes is re-verified (platform, org) before any deletion.
-- **Deletion requests:** an operational runbook (admin API) is in place. **An in-product deletion
-  path must be provided in the dashboard phase (Checkpoint 5).**
+- **Deletion requests:** an operational runbook (admin API) is in place; Checkpoint 5 added the
+  in-product path (Connections → YouTube → Disconnect and delete data).
 
 ### Checkpoint 4 (implemented)
 
@@ -178,6 +178,23 @@ The tenant-scoped v1 API for YouTube: `v1/youtubeAnalytics`
   selection of several accounts that includes a YouTube channel is refused (`INVALID_ARGUMENT`,
   `platform_not_aggregated`). Before this checkpoint, such a mixed selection returned the
   Instagram sums labelled `unsupported`. Instagram-only requests are unchanged.
+
+### Checkpoint 5 (implemented)
+
+The dashboard ([docs/dashboard.md](../dashboard.md#organic-youtube-adr-0016-checkpoint-5)):
+
+- **`/social`:** an Instagram | YouTube switch. The Instagram view is unchanged, except that its
+  picker now lists Instagram accounts only. The YouTube view shows one channel: a Pacific Time
+  day table with each day's status and YouTube's own values (no total, average, rate, change or
+  comparison), access and coverage notices, and paginated lifetime video statistics with
+  "Watch on YouTube" links.
+- **`/connections`:** a YouTube section with Connect / Reconnect, Link channel (with
+  `purge_pending` explained), and **Disconnect and delete data**. It reports the deletion as
+  complete only once the server has removed the channel's row. This is the in-product deletion
+  path (III.E.4.g).
+- **The scope-less sync limitation (open question 13) is shown, not fixed:** both the YouTube
+  view and the card say that video statistics may stop updating while YouTube Analytics access is
+  missing.
 
 ## Policy review findings (Checkpoint 3)
 

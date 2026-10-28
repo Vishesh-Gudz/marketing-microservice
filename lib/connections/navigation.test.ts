@@ -131,3 +131,42 @@ describe("connection choice per provider", () => {
     expect(pickConnection(adConnections([old, recent], "meta"), "g2")).toBeUndefined();
   });
 });
+
+describe("YouTube connections (ADR 0016)", () => {
+  it("returns to /connections with the YouTube hint, and lists only YouTube connections", () => {
+    expect(
+      connectReturnUrl("http://localhost:3000", new URLSearchParams("preset=today"), "youtube"),
+    ).toBe("http://localhost:3000/connections?preset=today&connect=youtube");
+    const base = {
+      grantedScopes: [],
+      missingScopes: [],
+      expiresSoon: false,
+      updatedAt: "2026-10-01T00:00:00.000Z",
+    };
+    const all = [
+      {
+        ...base,
+        id: "g",
+        provider: "google_ads",
+        status: "active",
+        connectedAt: "2026-10-01T00:00:00.000Z",
+      },
+      {
+        ...base,
+        id: "y",
+        provider: "youtube",
+        status: "active",
+        connectedAt: "2026-10-02T00:00:00.000Z",
+      },
+      {
+        ...base,
+        id: "r",
+        provider: "youtube",
+        status: "revoked",
+        connectedAt: "2026-10-03T00:00:00.000Z",
+      },
+    ] as Connection[];
+    expect(adConnections(all, "youtube").map((c) => c.id)).toEqual(["y"]);
+    expect(pickConnection(adConnections(all, "youtube"), undefined)?.id).toBe("y");
+  });
+});

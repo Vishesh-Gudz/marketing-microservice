@@ -9,6 +9,9 @@ import { describe, expect, it } from "vitest";
 //   read-only reauth banner), never ad analytics, and the paid views never call organic ones;
 // - no metric arithmetic on API values (values, rates and deltas come from the API);
 // - no media, thumbnail or profile-picture URL and no image of a post is ever rendered.
+// ADR 0016 (Checkpoint 5): the YouTube view on /social is part of the organic UI, under the same
+// rules: it calls only v1/youtubeAnalytics (plus the social account list), and does no arithmetic
+// on YouTube's metrics either.
 
 const ROOT = process.cwd();
 
@@ -26,7 +29,11 @@ const ORGANIC_FILES = [
   ...walk("app/(dashboard)/social"),
   "components/dashboard/views/organic-view.tsx",
   "components/dashboard/views/social-post-detail-view.tsx",
-  ...walk("lib/analytics").filter((path) => /\/(organic-[^/]+|permalink)\.ts$/.test(path)),
+  "components/dashboard/views/social-view.tsx",
+  "components/dashboard/views/youtube-view.tsx",
+  ...walk("lib/analytics").filter((path) =>
+    /\/(organic-[^/]+|youtube-[^/]+|permalink)\.ts$/.test(path),
+  ),
 ].filter(isSource);
 
 const PAID_VIEWS = walk("components/dashboard/views")
@@ -37,11 +44,17 @@ const ORGANIC_ENDPOINT_MODULES = new Set([
   "socialAccounts",
   "socialPosts",
   "organicAnalytics",
+  "youtubeAnalytics",
   "connections",
 ]);
-const ORGANIC_ONLY_MODULES = ["socialAccounts", "socialPosts", "organicAnalytics"];
+const ORGANIC_ONLY_MODULES = [
+  "socialAccounts",
+  "socialPosts",
+  "organicAnalytics",
+  "youtubeAnalytics",
+];
 
-const METRIC = String.raw`(?:reach|views|likes|comments|shares|saves|replies|totalInteractions|accountsEngaged|followers|followerDelta|profileLinksTaps|engagementRate)`;
+const METRIC = String.raw`(?:reach|views|likes|comments|shares|saves|replies|totalInteractions|accountsEngaged|followers|followerDelta|profileLinksTaps|engagementRate|estimatedMinutesWatched|averageViewDuration|subscribersGained|subscribersLost)`;
 /** A metric member access used as an arithmetic operand (either side). */
 const ARITHMETIC = new RegExp(
   String.raw`\.${METRIC}\b\s*[-+*/%](?![/*=])|[-+*/%]\s*[\w.?]*\.${METRIC}\b`,
@@ -64,6 +77,9 @@ describe("organic dashboard boundary", () => {
         "components/dashboard/organic/social-posts-table.tsx",
         "lib/analytics/organic-values.ts",
         "lib/analytics/permalink.ts",
+        "components/dashboard/views/youtube-view.tsx",
+        "components/dashboard/organic/youtube-channel-days.tsx",
+        "lib/analytics/youtube-values.ts",
       ]),
     );
     expect(PAID_VIEWS.length).toBeGreaterThan(3);
@@ -109,6 +125,8 @@ describe("organic dashboard boundary", () => {
       "const total = a.views + b.views;",
       "const delta = now.followers - before.followers;",
       "const pct = value * row.engagementRate;",
+      "const net = day.metrics.subscribersGained - day.metrics.subscribersLost;",
+      "const hours = metrics.estimatedMinutesWatched / 60;",
     ]) {
       expect(ARITHMETIC.test(sample), sample).toBe(true);
     }

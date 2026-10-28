@@ -83,7 +83,7 @@ a second Google integration.
 
 **Decision.** D17 is revised **for Google Ads only**:
 
-- The dashboard gets a `/connections` page ([dashboard.md](../dashboard.md#connections-google-ads-and-meta-ads)).
+- The dashboard gets a `/connections` page ([dashboard.md](../dashboard.md#connections-google-ads-meta-ads-and-youtube)).
   Admins can connect, reconnect or disconnect Google Ads (`v1/connections:beginConnect`;
   `disconnect` after an explicit confirmation), see the discovered customer accounts
   (`listDiscoveredAssets`), link exactly one confirmed client account (`linkAdAccounts`) and

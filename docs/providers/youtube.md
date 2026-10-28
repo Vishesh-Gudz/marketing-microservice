@@ -348,7 +348,11 @@ was interrupted and resumed reports only what it deleted itself.
 A user who asks for their YouTube data to be deleted (III.E.4.g: within 7 days) gets it through
 the existing admin API until the dashboard offers it.
 
-**An in-product deletion path must be provided in the dashboard phase (Checkpoint 5).**
+**In product (Checkpoint 5):** an organization admin opens **Connections → YouTube → Disconnect
+YouTube** and confirms **Disconnect and delete data**. The card shows the deletion in progress,
+and "Stored YouTube data deleted" once the server has removed the channel
+([docs/dashboard.md](../dashboard.md#youtube-adr-0016-checkpoint-5)). The steps below remain the
+operator path (admin API) and the way to verify a deletion.
 
 1. Identify the org and the channel's `socialAccounts` id (`v1/socialAccounts:list` as an org
    admin). Confirm that the requester is entitled to the channel's data.
@@ -464,4 +468,4 @@ verified):
    `PROVIDER_MODE=live` (and `OAUTH_CONNECTIONS_ENABLED=true` on a cloud deployment, see
    [connections.md](../connections.md)).
 5. Start the connection through `v1/connections:beginConnect` with `provider: "youtube"` (the
-   `/connections` section is Checkpoint 5), then link the discovered channel.
+   `/connections` YouTube section), then link the discovered channel.

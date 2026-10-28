@@ -10,7 +10,7 @@ import {
   serializeFilters,
   type DashboardFilters,
 } from "./filters";
-import { useOrgToday, useUtcToday } from "./org-context";
+import { useOrgToday, usePacificToday, useUtcToday } from "./org-context";
 
 /**
  * Dashboard state lives in the URL (D3): shareable, reload-safe. Updates use
@@ -45,19 +45,28 @@ export function useDashboardFilters() {
   };
 }
 
-/** Which calendar presets resolve against: the org's days (paid) or UTC days (organic). */
-export type DayBasis = "org" | "utc";
+/**
+ * Which calendar presets resolve against: the org's days (paid), UTC days (organic Instagram)
+ * or Pacific Time days (YouTube channel days, ADR 0016).
+ */
+export type DayBasis = "org" | "utc" | "pacific";
 
 /**
  * The API arguments derived from the URL filters and "today": the org timezone's today by
  * default (paid analytics, unchanged); UTC's today with `dayBasis: "utc"` (organic account
- * metrics are keyed by UTC day).
+ * metrics are keyed by UTC day); Pacific Time's today with `dayBasis: "pacific"` (YouTube).
  */
 export function useAnalyticsScope(options: { dayBasis?: DayBasis } = {}) {
   const { filters } = useDashboardFilters();
   const orgToday = useOrgToday();
   const utcToday = useUtcToday();
-  const today = options.dayBasis === "utc" ? utcToday : orgToday;
+  const pacificToday = usePacificToday();
+  const today =
+    options.dayBasis === "utc"
+      ? utcToday
+      : options.dayBasis === "pacific"
+        ? pacificToday
+        : orgToday;
   const range = resolveRange(filters, today);
   const compare = resolveCompare(filters);
   return {

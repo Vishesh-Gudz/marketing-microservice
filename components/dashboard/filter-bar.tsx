@@ -372,7 +372,8 @@ function GranularityControl({
  * Global filters (D3/D12). Everything is URL state; each view enables only the
  * controls its API query accepts (e.g. entity views take no account filters).
  * `dayBasis="utc"` (organic Instagram) resolves presets against today in UTC and says so;
- * the default ("org") is the paid dashboard's behavior, unchanged.
+ * `dayBasis="pacific"` (YouTube) against today in Pacific Time; the default ("org") is the
+ * paid dashboard's behavior, unchanged.
  */
 export function FilterBar({
   accounts = true,
@@ -416,6 +417,11 @@ export function FilterBar({
       {dayBasis === "utc" ? (
         <p className="text-xs text-muted-foreground" data-testid="day-basis">
           Account metrics use UTC days and presets use UTC; post publish dates use {org.timezone}.
+        </p>
+      ) : dayBasis === "pacific" ? (
+        <p className="text-xs text-muted-foreground" data-testid="day-basis">
+          Channel metrics use YouTube&apos;s Pacific Time days and presets use Pacific Time; video
+          publish dates use {org.timezone}.
         </p>
       ) : (
         <p className="text-xs text-muted-foreground">

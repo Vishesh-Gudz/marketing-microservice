@@ -17,27 +17,30 @@ export function socialAccountLabel(account: SocialAccount): string {
 }
 
 /**
- * The single Instagram account the organic dashboard shows (keyboard-operable Select). The
- * selection lives in the URL (`account`); the list comes from v1/socialAccounts:list.
+ * The single account the organic dashboard shows (keyboard-operable Select): an Instagram
+ * account, or a YouTube channel in the YouTube view. The selection lives in the URL
+ * (`account`); the list comes from v1/socialAccounts:list.
  */
 export function SocialAccountPicker({
   accounts,
   selectedId,
   onSelect,
   truncated = false,
+  label = "Instagram account",
 }: {
   accounts: readonly SocialAccount[];
   selectedId: string | undefined;
   onSelect: (accountId: string) => void;
   /** The org has more accounts than the first page lists. */
   truncated?: boolean;
+  label?: string;
 }) {
   const id = useId();
   const known = accounts.some((account) => account.id === selectedId);
   return (
     <div className="grid gap-1" data-testid="social-account-picker">
       <span id={`${id}-label`} className="text-xs font-medium">
-        Instagram account
+        {label}
       </span>
       <Select value={known ? selectedId : undefined} onValueChange={onSelect}>
         <SelectTrigger size="sm" className="w-72 max-w-full" aria-labelledby={`${id}-label`}>

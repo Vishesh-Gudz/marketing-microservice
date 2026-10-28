@@ -212,7 +212,7 @@ explains these reasons in Meta words (`META_ERROR_REASON_MESSAGES` in `lib/conne
 ### Dashboard connection flow
 
 The dashboard's `/connections` page has a **Meta Ads** section
-([dashboard.md](../dashboard.md#connections-google-ads-and-meta-ads), ADR 0008 amendment):
+([dashboard.md](../dashboard.md#connections-google-ads-meta-ads-and-youtube), ADR 0008 amendment):
 **Connect Meta Ads** → Facebook Login for Business → `/oauth/callback` → discovery → choose one ad
 account → **Link selected account** → the first sync starts automatically → the linked account's
 sync status and **View analytics**. Reconnect only accepts the Facebook account that created the

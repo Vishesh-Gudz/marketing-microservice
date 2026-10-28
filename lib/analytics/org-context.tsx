@@ -41,20 +41,33 @@ export function useOrgToday(): string {
   return today.key;
 }
 
+/** Today in a fixed time zone; re-checked every minute so presets roll over at midnight. */
+function useZoneToday(timeZone: string): string {
+  const [today, setToday] = useState(() => todayIn(timeZone));
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setToday((previous) => {
+        const key = todayIn(timeZone);
+        return previous === key ? previous : key;
+      });
+    }, 60_000);
+    return () => clearInterval(timer);
+  }, [timeZone]);
+  return today;
+}
+
 /**
  * Today in UTC; re-checked every minute. Organic (Instagram) account metrics are keyed by UTC
  * day, so their presets resolve against this day, not the org's (Phase 10 Stage B, R12).
  */
 export function useUtcToday(): string {
-  const [today, setToday] = useState(() => todayIn("UTC"));
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setToday((previous) => {
-        const key = todayIn("UTC");
-        return previous === key ? previous : key;
-      });
-    }, 60_000);
-    return () => clearInterval(timer);
-  }, []);
-  return today;
+  return useZoneToday("UTC");
+}
+
+/**
+ * Today in Pacific Time; re-checked every minute. YouTube Analytics reports Pacific Time days
+ * (ADR 0016), so YouTube channel presets resolve against this day.
+ */
+export function usePacificToday(): string {
+  return useZoneToday("America/Los_Angeles");
 }

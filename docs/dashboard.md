@@ -44,16 +44,18 @@ app/(dashboard)/layout.tsx        Suspense + AppShell (OrgGate, nav, header)
   campaigns/page.tsx              Campaign table
   campaigns/[campaignId]/…        Campaign detail (+ ad-groups/[adGroupId])
   breakdowns/ conversions/ accounts/
-  social/page.tsx                 Organic Instagram (Phase 10 Stage B)
+  social/page.tsx                 Organic: Instagram (Phase 10 Stage B) | YouTube (ADR 0016)
   social/posts/[postId]/page.tsx  One Instagram post
-  connections/page.tsx            Google Ads + Meta Ads connections (ADR 0008 amendment)
+  connections/page.tsx            Google Ads + Meta Ads + YouTube connections
   loading.tsx error.tsx not-found.tsx
 components/dashboard/             shell, filters, KPI cards, charts, tables, notices, views/
 components/dashboard/organic/     organic-only KPI grid, series chart, posts table, account
-                                  picker, coverage notes, Instagram link
+                                  picker, coverage notes, Instagram link; platform switch and
+                                  YouTube channel days, videos table, YouTube link
 components/dashboard/connections/ one provider-aware card per ad platform (Google Ads, Meta Ads):
                                   status, Connect/Reconnect/Disconnect, discovered accounts +
-                                  link, linked accounts' sync status
+                                  link, linked accounts' sync status; the YouTube card
+                                  (youtube-connection.tsx): channel, link, disconnect + deletion
 lib/connections/                  pure, React-free connection helpers: per-provider wording and
                                   display rules (providers.ts), callback result, link rules,
                                   labels, messages, customer ids, return URL / navigation
@@ -61,7 +63,8 @@ lib/analytics/                    pure logic: types, format, filters, deltas, st
                                   errors, chart-data, labels; hooks: use-analytics-query,
                                   use-dashboard-filters; org-context
                                   organic-*: organic types, labels/reasons, values, chart rows,
-                                  URL params; permalink: the defensive Instagram link check
+                                  URL params; youtube-*: YouTube types and values; permalink:
+                                  the defensive Instagram and YouTube link checks
 ```
 
 ## Routes
@@ -76,15 +79,18 @@ lib/analytics/                    pure logic: types, format, filters, deltas, st
 | `/conversions`                                  | Action groups by action type, one row per attribution window; level account/campaign     | `actions`                                                                                                                 |
 | `/accounts`                                     | Accounts with KPIs, currency, time zone, link/connection health, coverage, last sync     | `breakdown(account)`, `adAccounts:list`, `connections:list`                                                               |
 | `/social` (nav "Organic")                       | One Instagram account: 6 headline + 7 detail KPIs, UTC series, posts (lifetime totals)   | `socialAccounts:list`/`get`, `organicAnalytics:overview`/`accountSeries`, `socialPosts:list`, `connections:list`          |
+| `/social?platform=youtube`                      | One YouTube channel: Pacific Time day table (as reported), videos (lifetime statistics)  | `socialAccounts:list`, `youtubeAnalytics:channelDays`/`videos`                                                            |
 | `/social/posts/[postId]`                        | One post: caption, latest lifetime totals, lifetime totals at each capture               | `socialPosts:get`                                                                                                         |
 | `/connections`                                  | Google Ads and Meta Ads: status, Connect/Reconnect/Disconnect, accounts, link, sync      | `connections:list`/`listDiscoveredAssets`/`beginConnect`/`linkAdAccounts`/`refreshAssets`/`disconnect`, `adAccounts:list` |
+|                                                 | YouTube: status, Connect/Reconnect, link the channel, Disconnect + data deletion         | `connections:list`/`listDiscoveredSocialAccounts`/`beginConnect`/`linkSocialAccounts`/`disconnect`, `socialAccounts:list` |
 | `/whatsapp`                                     | WhatsApp inbox: conversations, newest activity first, reply window                       | `whatsapp:listConversations`                                                                                              |
 | `/whatsapp/conversations/[conversationId]`      | One conversation: messages and statuses, reply window, reply, templates                  | `whatsapp:getConversation`/`listMessages`/`sendText`/`listTemplates`/`sendTemplate`                                       |
 | `/whatsapp/settings`                            | WhatsApp settings: Connect WhatsApp (Embedded Signup), setup, connected accounts         | `whatsapp:getSignupConfig`/`completeSignup`/`retrySetup`/`listAccounts`, `connections:list`                               |
 
 There is no org-wide ads page: the API requires a campaign or ad-group parent for ads (read budget).
 Connection management is on `/connections` for the **ad platforms, Google Ads and Meta Ads**
-(ADR 0008, D17 amendments). Instagram (organic) connections stay out of the dashboard. An admin can
+(ADR 0008, D17 amendments), and for **YouTube** (ADR 0016, Checkpoint 5). Instagram (organic)
+connections stay out of the dashboard. An admin can
 disconnect a connection (after a confirmation); single accounts cannot be unlinked here. The
 "reconnect required" banner (Overview, Accounts, Organic) links to `/connections` for a Google
 Ads or Meta Ads connection and to `/whatsapp/settings` for a WhatsApp connection; for Instagram it
@@ -111,8 +117,9 @@ parameters. Invalid values fall back to defaults (`lib/analytics/filters.ts`, un
 | `sort`, `dir`                         | performance table sort (server-side only)                                |
 | `tab`, `level`                        | breakdown/detail tab, placement or conversion level                      |
 | `primaryOnly`, `window`, `actionType` | conversion filters                                                       |
-| `account`                             | `/social`: the selected Instagram account id (default: the first listed) |
-| `pdir`                                | `/social`: post order by publish time, `asc` (default: newest first)     |
+| `platform`                            | `/social`: `youtube` for the YouTube view (default: Instagram)           |
+| `account`                             | `/social`: the selected account / channel id (default: the first listed) |
+| `pdir`                                | `/social`: post / video order by publish time, `asc` (default: newest)   |
 | `status`, `warning`, `error`          | `/connections`: the OAuth callback result; read once, then removed       |
 | `connection`                          | `/connections`: the callback's connection id; read once, then removed    |
 
@@ -121,8 +128,10 @@ Page size, pagination position and the chart metric are UI state (D2). Presets r
 `resolvePreset`; queries never read the clock (D12). Ranges are each ad account's local days.
 On `/social` the filter bar is rendered with `dayBasis="utc"`: presets resolve against **today in
 UTC** (`useUtcToday`), because Instagram account metrics are keyed by UTC day; the same range
-filters posts by publish day in the **org time zone** (the B2 API semantics). The paid pages keep
-the default `dayBasis="org"`, unchanged.
+filters posts by publish day in the **org time zone** (the B2 API semantics). The YouTube view
+uses `dayBasis="pacific"`: presets resolve against **today in Pacific Time** (`usePacificToday`),
+because YouTube Analytics reports Pacific Time days; videos are filtered by publish day in the org
+time zone. The paid pages keep the default `dayBasis="org"`, unchanged.
 
 ### Automatic granularity (D13)
 
@@ -196,8 +205,42 @@ granularity for any valid range.
   image is shown. Captions render as plain text.
 - **Post page:** lifetime totals at each capture day (UTC), charted and tabled as cumulative
   values, never differenced into daily performance.
+- **Instagram accounts only:** the picker lists the org's Instagram accounts; YouTube channels
+  have their own view (below).
 
-## Connections (Google Ads and Meta Ads)
+### Organic YouTube (ADR 0016, Checkpoint 5)
+
+`/social?platform=youtube` (the **Instagram | YouTube** switch on `/social`; Instagram stays the
+default and is unchanged). Every value comes from `v1/youtubeAnalytics` exactly as YouTube
+reported it; the dashboard never adds, averages, compares or combines anything: no totals, no
+engagement rate, no percent change, no score, no cross-channel or cross-platform figure
+(`lib/analytics/youtube-values.ts`; the no-arithmetic scan of
+`tests/lint/organic-dashboard-boundary.test.ts` covers YouTube's metric names too).
+
+- **One channel at a time** (picker "YouTube channel"). The summary shows **Source: YouTube**,
+  the handle, the link state and "Channel days synced through … (Pacific Time)".
+- **Filter bar:** date range only (no comparison, no account filter); presets use Pacific Time.
+- **Daily channel metrics:** one row per Pacific Time day, newest first, with YouTube's names:
+  Views, Likes, Comments, Shares, Est. minutes watched, Avg. view duration (YouTube's own per-day
+  value, shown as m:ss), Subscribers gained, Subscribers lost. Each row has a status:
+  **Reported**; **Not reported** (synced, YouTube reported nothing); **Unknown** (not synced
+  yet; YouTube reports days about 3 days late). A metric a reported day lacks is "—" with its
+  reason; a reported 0 stays 0; unknown and not-reported days show "—", never 0. There is no
+  total row.
+- **Notices** (from the API): partial or unsynced ranges ("N Pacific Time days of this range not
+  synced yet"); `scope_missing` (YouTube Analytics access not granted; it also names the known
+  limitation that video statistics may stop updating, ADR 0016 open question 13);
+  `reauth_required`; `not_linked`; each links to `/connections` where that helps.
+- **Videos:** paginated (25/50/100, cursor stack), by publish time in the org time zone; lifetime
+  Views, Likes and Comments at the latest capture (UTC capture day), "not daily performance".
+  A hidden like count or disabled comments are "—" with the reason, never 0; a never-captured
+  video shows "Not synced". "Watch on YouTube" opens a new tab (`rel="noopener noreferrer"`)
+  only for a URL that passes `safeYouTubeWatchUrl` (exactly
+  `https://www.youtube.com/watch?v=<11-character id>`). No thumbnail or image.
+- **Deletion:** a channel being deleted (status `disconnected`) shows a deletion notice instead
+  of data; the page points to the Connections page for disconnecting.
+
+## Connections (Google Ads, Meta Ads and YouTube)
 
 `/connections` (ADR 0008, D17 amendments) is the only dashboard page that changes data. It has one
 section per ad platform, **Google Ads** and **Meta Ads**, rendered by the same provider-aware card
@@ -305,6 +348,34 @@ text. Unexpected errors never show their message.
 - A Google account with no Google Ads access fails during the OAuth exchange
   (`exchange_failed`), not during discovery; the notice can only suggest the cause.
 - Embedded (iframe) use is not a goal of the standalone SaaS (ADR 0012).
+
+### YouTube (ADR 0016, Checkpoint 5)
+
+A third section, **YouTube**, rendered by `components/dashboard/connections/youtube-connection.tsx`
+with the shared Connect / Reconnect / Disconnect buttons and YouTube's own wording
+(`PROVIDERS.youtube`, `lib/connections/youtube.ts`):
+
+- **Status** (every role): connected, YouTube Analytics access missing (`yt-analytics.readonly`
+  not granted; with the known limitation that video statistics may stop updating), reconnect
+  required. The channel is shown by its name and handle once linked and synced, otherwise by its
+  channel id; no credential, token or scope string is shown.
+- **Connect / Reconnect** (admins): `beginConnect` with `provider: "youtube"`, the same return
+  URL and `connect=youtube` hint, and `reconnectConnectionId` for Reconnect. A deployment without
+  the YouTube OAuth client refuses before any OAuth state exists ("YouTube is not available").
+- **Channel to sync** (admins): the discovered channel and **Link channel**
+  (`linkSocialAccounts`). `CONFLICT` / `purge_pending` (the channel's stored data is still being
+  deleted) reads "Stored data is still being deleted. Try again in a few minutes."
+- **Linked channel** (every role): last sync, the Pacific Time days covered, and "View analytics"
+  (`/social?platform=youtube&account=…`).
+- **Disconnect** (admins): the section says, before any click, that disconnecting revokes this
+  service's Google access and deletes the channel's stored YouTube data. The confirmation lists
+  what is deleted ("This cannot be undone"); the button is **Disconnect and delete data**.
+  Afterwards the card shows **Deleting stored YouTube data…** while the channel's row is still in
+  `v1/socialAccounts:list` (status `disconnected`), and **Stored YouTube data deleted** only once
+  the server has removed it. It never claims that Google confirmed the revocation (best effort,
+  server side). Deletions this page did not start (another admin, an unlink, a failed
+  authorization check) are shown too. This is the **in-product deletion path** required by the
+  YouTube API Services Developer Policies (III.E.4.g, ADR 0016).
 
 ## WhatsApp inbox
 
@@ -489,11 +560,21 @@ If a dynamic route unexpectedly returns 404 in `next dev` after pulling new rout
   `loadMoreMock`, statuses, the reply window, roles, and the reply box and template picker against
   mocked `sendText`, `listTemplates` and `sendTemplate`), with `lib/whatsapp/inbox.test.ts`,
   `template-form.test.ts` and `messages.test.ts`.
+- YouTube (ADR 0016, Checkpoint 5): `components/dashboard/views/youtube-view.test.tsx` (channel
+  selection, Pacific Time presets, day statuses, missing values and zeros, coverage and access
+  notices, video pagination and links, the Instagram regression) and
+  `components/dashboard/connections/youtube-connection.test.tsx` (connect, reconnect, link,
+  `purge_pending`, disconnect and the server-confirmed deletion), with
+  `lib/analytics/youtube-values.test.ts` and `lib/connections/youtube.test.ts`.
 - Lint guards: `tests/lint/frontend-imports.test.ts`, `tests/lint/organic-dashboard-boundary.test.ts`.
 - Playwright: `dashboard.spec.ts`, `social.spec.ts` and `smoke.spec.ts` are CI-safe (shell,
   navigation, gate, mobile menu, not-found, axe on every page including `/connections`,
   `/whatsapp` and `/whatsapp/settings`). `whatsapp.spec.ts` checks the WhatsApp inbox and
   settings pages locally (opt-in, see below).
+  `youtube.spec.ts` checks the YouTube view's sign-in gate (CI-safe) and, locally with
+  `E2E_DASHBOARD_DATA=1`, the platform switch, the YouTube view (or its empty state), the
+  YouTube card on `/connections` (it only opens and cancels the disconnect confirmation), axe
+  and a 375 px layout; it never connects, links or disconnects anything.
   `dashboard-data.spec.ts`, `social-data.spec.ts` and `org-status.spec.ts` are local-only:
   `E2E_DASHBOARD_DATA=1 npx playwright test` after `dev:auth setup` and `dev:seed`. The organic
   data is mock data; no real Instagram account has been used.

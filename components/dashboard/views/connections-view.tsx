@@ -16,6 +16,7 @@ import type { Notice } from "@/lib/connections/types";
 import { AD_CONNECTION_PROVIDERS, PROVIDERS } from "@/lib/connections/providers";
 import { AdConnection } from "../connections/ad-connection";
 import { ConnectionNotice } from "../connections/connection-notice";
+import { YouTubeConnection } from "../connections/youtube-connection";
 import { PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
 
@@ -79,10 +80,11 @@ function useClaimedResult(result: ConnectResult): Outcome {
 }
 
 /**
- * Connections for the ad platforms (Google Ads and Meta Ads; Instagram organic stays out):
- * connect an account, choose the ad account to sync and follow its status. Every step goes
- * through the public v1 API; the server enforces roles, tenancy and which accounts may be
- * linked.
+ * Connections for the ad platforms (Google Ads and Meta Ads) and YouTube organic (ADR 0016;
+ * Instagram organic stays out): connect an account, choose the account or channel to sync,
+ * follow its status, and disconnect (for YouTube, this also deletes the channel's stored data).
+ * Every step goes through the public v1 API; the server enforces roles, tenancy and which
+ * accounts may be linked.
  */
 export function ConnectionsView() {
   const { result, notice } = useClaimedResult(useConnectResult());
@@ -90,7 +92,7 @@ export function ConnectionsView() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Connections"
-        description="Connect Google Ads or Meta Ads and choose the ad account to sync."
+        description="Connect Google Ads, Meta Ads or YouTube and choose what to sync."
       />
       {notice && <ConnectionNotice notice={notice} />}
       {AD_CONNECTION_PROVIDERS.map((provider) => {
@@ -112,6 +114,16 @@ export function ConnectionsView() {
           </section>
         );
       })}
+      <section aria-labelledby="connections-youtube" className="flex flex-col gap-4">
+        <h2 id="connections-youtube" className="text-lg font-semibold">
+          YouTube
+        </h2>
+        <QueryBoundary resetKey="youtube" title="YouTube">
+          <YouTubeConnection
+            preferredConnectionId={result.kind === "connected" ? result.connectionId : undefined}
+          />
+        </QueryBoundary>
+      </section>
     </div>
   );
 }

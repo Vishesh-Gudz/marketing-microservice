@@ -1,6 +1,6 @@
 import { isMarketingError } from "@/convex/lib/errors";
 import { describeError } from "@/lib/analytics/errors";
-import { PROVIDERS, type AdConnectionProvider } from "./providers";
+import { PROVIDERS, type AdConnectionProvider, type ConnectionProvider } from "./providers";
 import type {
   ConnectionError,
   ConnectionStatus,
@@ -11,7 +11,7 @@ import type {
 } from "./types";
 
 /**
- * Fixed, user-facing text for the ad platform connection flow (Google Ads and Meta Ads):
+ * Fixed, user-facing text for the connection flow (Google Ads, Meta Ads and YouTube):
  * connection status, discovery failures, sync status and errors from connect / link /
  * refresh / disconnect. Every text names the provider it is for, so a Meta connection never
  * shows Google wording. Only public contract values are inspected (status enums, error kind,
@@ -74,8 +74,10 @@ const REASON_MESSAGES: Readonly<
 
 function reasonMessage(
   reason: string | undefined,
-  provider: AdConnectionProvider,
+  provider: ConnectionProvider,
 ): string | undefined {
+  // YouTube has no allowlisted reasons (the reasons are Google Ads / Meta discovery reasons).
+  if (provider === "youtube") return undefined;
   const messages = REASON_MESSAGES[provider];
   return reason !== undefined && Object.prototype.hasOwnProperty.call(messages, reason)
     ? messages[reason as ErrorReason]
@@ -89,7 +91,7 @@ export function connectionStatusNotice(
     missingScopes: readonly string[];
     expiresSoon: boolean;
   },
-  provider: AdConnectionProvider,
+  provider: ConnectionProvider,
 ): Notice {
   const { name, platform, identity } = PROVIDERS[provider];
   switch (connection.status) {
@@ -106,6 +108,15 @@ export function connectionStatusNotice(
         message: `${platform} access expired or was revoked. Reconnect with the same ${identity}, or disconnect ${name} to use a different one.`,
       };
     case "active":
+      if (connection.missingScopes.length > 0 && provider === "youtube") {
+        // yt-analytics.readonly is the only YouTube scope a connection can lack (ADR 0016).
+        return {
+          tone: "warning",
+          title: "YouTube Analytics access is missing",
+          message:
+            "Daily channel metrics cannot sync. Reconnect YouTube and allow access to YouTube Analytics when Google asks.",
+        };
+      }
       if (connection.missingScopes.length > 0) {
         return {
           tone: "warning",
@@ -127,7 +138,7 @@ export function connectionStatusNotice(
 /** Why account discovery failed; `null` when the connection has no recorded error. */
 export function discoveryErrorNotice(
   error: ConnectionError | undefined,
-  provider: AdConnectionProvider,
+  provider: ConnectionProvider,
 ): Notice | null {
   if (error === undefined) return null;
   const { name, accountNoun } = PROVIDERS[provider];
@@ -136,7 +147,14 @@ export function discoveryErrorNotice(
   if (specific !== undefined) return { tone: "error", title, message: specific };
   switch (error.kind) {
     case "auth":
-      return { tone: "error", title, message: REASON_MESSAGES[provider].reauth_required };
+      return {
+        tone: "error",
+        title,
+        message:
+          provider === "youtube"
+            ? "Google needs you to sign in again. Reconnect YouTube."
+            : REASON_MESSAGES[provider].reauth_required,
+      };
     case "rate_limited":
     case "transient":
       return {
@@ -227,7 +245,7 @@ export function syncStatusSummary(
 }
 
 /** Errors of beginConnect / listDiscoveredAssets / linkAdAccounts / refreshAssets. */
-export function connectionActionNotice(error: unknown, provider: AdConnectionProvider): Notice {
+export function connectionActionNotice(error: unknown, provider: ConnectionProvider): Notice {
   const { name, platform } = PROVIDERS[provider];
   if (isMarketingError(error)) {
     const { code, details } = error.data;
@@ -260,7 +278,9 @@ export function connectionActionNotice(error: unknown, provider: AdConnectionPro
           message:
             provider === "meta"
               ? "Choose an ad account from the discovered list."
-              : "Choose a client account from the discovered list.",
+              : provider === "youtube"
+                ? "Choose the channel from the discovered list."
+                : "Choose a client account from the discovered list.",
         };
       case "NOT_FOUND":
         return {
@@ -269,6 +289,14 @@ export function connectionActionNotice(error: unknown, provider: AdConnectionPro
           message: "This connection or account is not available. Retry discovery and try again.",
         };
       case "CONFLICT":
+        if (details?.reason === "purge_pending") {
+          return {
+            tone: "warning",
+            title: "Stored data is still being deleted",
+            message:
+              "This channel's stored YouTube data is still being deleted. Try again in a few minutes.",
+          };
+        }
         return details?.reason === "connection_inactive"
           ? {
               tone: "error",
@@ -331,7 +359,7 @@ export function disconnectedNotice(provider: AdConnectionProvider): Notice {
 }
 
 /** Errors of disconnect: fixed text, never the server message. */
-export function disconnectActionNotice(error: unknown, provider: AdConnectionProvider): Notice {
+export function disconnectActionNotice(error: unknown, provider: ConnectionProvider): Notice {
   const { name } = PROVIDERS[provider];
   if (!isMarketingError(error)) {
     return {

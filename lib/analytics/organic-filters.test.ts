@@ -10,13 +10,31 @@ import { parseSocialParams, postPublishFilter } from "./organic-filters";
 describe("parseSocialParams", () => {
   it("reads the account and the post order with safe fallbacks", () => {
     expect(parseSocialParams(new URLSearchParams("account=acct_1&pdir=asc"))).toEqual({
+      platform: "instagram",
       account: "acct_1",
       postOrder: "asc",
     });
-    expect(parseSocialParams(new URLSearchParams("pdir=sideways"))).toEqual({ postOrder: "desc" });
-    expect(parseSocialParams(new URLSearchParams("account=<script>"))).toEqual({
+    expect(parseSocialParams(new URLSearchParams("pdir=sideways"))).toEqual({
+      platform: "instagram",
       postOrder: "desc",
     });
+    expect(parseSocialParams(new URLSearchParams("account=<script>"))).toEqual({
+      platform: "instagram",
+      postOrder: "desc",
+    });
+  });
+
+  it("reads the YouTube view (ADR 0016); anything else is the Instagram view", () => {
+    expect(parseSocialParams(new URLSearchParams("platform=youtube&account=acct_yt"))).toEqual({
+      platform: "youtube",
+      account: "acct_yt",
+      postOrder: "desc",
+    });
+    for (const value of ["YouTube", "instagram", "facebook", ""]) {
+      expect(parseSocialParams(new URLSearchParams({ platform: value })).platform).toBe(
+        "instagram",
+      );
+    }
   });
 });
 
@@ -29,6 +47,21 @@ describe("UTC presets", () => {
     expect(utc).toEqual({ from: "2026-08-27", to: "2026-09-25" });
     expect(org).toEqual({ from: "2026-08-26", to: "2026-09-24" });
     expect(utc).toEqual(resolvePreset("last_30_days", "2026-09-26"));
+  });
+});
+
+describe("Pacific Time presets (YouTube)", () => {
+  it("resolve against today's Pacific Time day, not UTC's", () => {
+    // 05:00 UTC on Sep 26 is still Sep 25 in Los Angeles.
+    const now = Date.UTC(2026, 8, 26, 5);
+    expect(resolveRange(DEFAULT_FILTERS, todayIn("America/Los_Angeles", now))).toEqual({
+      from: "2026-08-26",
+      to: "2026-09-24",
+    });
+    expect(resolveRange(DEFAULT_FILTERS, todayIn("UTC", now))).toEqual({
+      from: "2026-08-27",
+      to: "2026-09-25",
+    });
   });
 });
 

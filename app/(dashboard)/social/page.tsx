@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { OrganicView } from "@/components/dashboard/views/organic-view";
+import { SocialView } from "@/components/dashboard/views/social-view";
 
 export const metadata: Metadata = { title: "Organic" };
 
 export default function OrganicPage() {
-  return <OrganicView />;
+  return <SocialView />;
 }

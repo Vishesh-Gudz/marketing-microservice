@@ -530,7 +530,7 @@ v1; see [dashboard.md](../dashboard.md#tests)).
 ## Dashboard connection flow
 
 The user-facing flow is the standalone dashboard's `/connections` page (ADR 0008, D17 amendment;
-[dashboard.md](../dashboard.md#connections-google-ads-and-meta-ads)). It uses the same v1 functions as the
+[dashboard.md](../dashboard.md#connections-google-ads-meta-ads-and-youtube)). It uses the same v1 functions as the
 parent app and the tester CLI; there is no second Google integration and no Google logic in the
 frontend beyond labels and messages.
 

@@ -1,15 +1,24 @@
 import { formatCustomerId } from "./customer-id";
 
 /**
- * The ad platforms the Connections page manages (ADR 0008, D17 amendment). Instagram organic
- * connections stay out of the dashboard. Each provider's wording and display rules live here
- * so the shared card never shows one platform's wording for another.
+ * The platforms the Connections page manages: the ad platforms (ADR 0008, D17 amendment) and
+ * YouTube organic (ADR 0016, Checkpoint 5). Instagram organic connections stay out of the
+ * dashboard. Each provider's wording and display rules live here so the shared card never
+ * shows one platform's wording for another.
  */
 export const AD_CONNECTION_PROVIDERS = ["google_ads", "meta"] as const;
 export type AdConnectionProvider = (typeof AD_CONNECTION_PROVIDERS)[number];
 
 export function isAdConnectionProvider(value: unknown): value is AdConnectionProvider {
   return (AD_CONNECTION_PROVIDERS as readonly unknown[]).includes(value);
+}
+
+/** Every provider the Connections page offers: the ad platforms, then YouTube. */
+export const CONNECTION_PROVIDERS = [...AD_CONNECTION_PROVIDERS, "youtube"] as const;
+export type ConnectionProvider = (typeof CONNECTION_PROVIDERS)[number];
+
+export function isConnectionProvider(value: unknown): value is ConnectionProvider {
+  return (CONNECTION_PROVIDERS as readonly unknown[]).includes(value);
 }
 
 export type ProviderInfo = {
@@ -19,7 +28,7 @@ export type ProviderInfo = {
   platform: string;
   /** The account the user signs in with: "Google account", "Facebook account". */
   identity: string;
-  /** What one ad account is called in sentences: "Google Ads account", "Meta ad account". */
+  /** What one account is called in sentences: "Google Ads account", "YouTube channel". */
   accountNoun: string;
   /** Display form of an ad account id (display only; never parsed back). */
   formatAccountId(id: string): string;
@@ -31,7 +40,7 @@ export type ProviderInfo = {
   noParent: string;
 };
 
-export const PROVIDERS: Readonly<Record<AdConnectionProvider, ProviderInfo>> = {
+export const PROVIDERS: Readonly<Record<ConnectionProvider, ProviderInfo>> = {
   google_ads: {
     name: "Google Ads",
     platform: "Google",
@@ -51,6 +60,17 @@ export const PROVIDERS: Readonly<Record<AdConnectionProvider, ProviderInfo>> = {
     formatAccountId: (id) => id,
     reportsAccountType: false,
     parentLabel: "Business",
+    noParent: "—",
+  },
+  // ADR 0016: YouTube's own Google OAuth client; one consent = one channel (shown by its id).
+  youtube: {
+    name: "YouTube",
+    platform: "Google",
+    identity: "Google account",
+    accountNoun: "YouTube channel",
+    formatAccountId: (id) => id,
+    reportsAccountType: false,
+    parentLabel: "—",
     noParent: "—",
   },
 };

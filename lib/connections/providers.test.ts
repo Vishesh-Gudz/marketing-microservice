@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { AD_CONNECTION_PROVIDERS, isAdConnectionProvider, PROVIDERS } from "./providers";
+import {
+  AD_CONNECTION_PROVIDERS,
+  CONNECTION_PROVIDERS,
+  isAdConnectionProvider,
+  isConnectionProvider,
+  PROVIDERS,
+} from "./providers";
 
 describe("ad connection providers", () => {
   it("are Google Ads and Meta Ads only (Instagram organic stays off the Connections page)", () => {
@@ -33,5 +39,29 @@ describe("ad connection providers", () => {
       parentLabel: "Business",
     });
     expect(JSON.stringify(PROVIDERS.meta)).not.toContain("Google");
+  });
+});
+
+describe("YouTube on the Connections page (ADR 0016)", () => {
+  it("is a connection provider, but never an ad connection provider", () => {
+    expect([...CONNECTION_PROVIDERS]).toEqual(["google_ads", "meta", "youtube"]);
+    expect(isConnectionProvider("youtube")).toBe(true);
+    expect(isAdConnectionProvider("youtube")).toBe(false);
+    for (const value of ["instagram", "YouTube", "", undefined]) {
+      expect(isConnectionProvider(value)).toBe(false);
+    }
+  });
+
+  it("names YouTube in its own words and shows channel ids as they are", () => {
+    expect(PROVIDERS.youtube).toMatchObject({
+      name: "YouTube",
+      platform: "Google",
+      identity: "Google account",
+      accountNoun: "YouTube channel",
+    });
+    expect(PROVIDERS.youtube.formatAccountId("UCfakeChannel0000000000a")).toBe(
+      "UCfakeChannel0000000000a",
+    );
+    expect(JSON.stringify(PROVIDERS.youtube)).not.toContain("Ads");
   });
 });

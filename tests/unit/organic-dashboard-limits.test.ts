@@ -5,6 +5,16 @@ import { resolveOrganicPreset } from "@/convex/analytics/organic/dates";
 import { todayIn } from "@/convex/lib/dates";
 import { DEFAULT_FILTERS, resolveRange } from "@/lib/analytics/filters";
 import { ORGANIC_MAX_PAGE_SIZE, ORGANIC_MAX_RANGE_DAYS } from "@/lib/analytics/organic-filters";
+import {
+  YOUTUBE_DAY_METRICS,
+  YOUTUBE_DAY_TIMEZONE,
+  YOUTUBE_VIDEO_METRICS,
+} from "@/convex/analytics/organic/metrics";
+import {
+  YOUTUBE_DAY_COLUMNS,
+  YOUTUBE_DAY_TIMEZONE as DASHBOARD_YOUTUBE_TIMEZONE,
+  YOUTUBE_VIDEO_COLUMNS,
+} from "@/lib/analytics/youtube-values";
 
 // The organic dashboard may not import convex/analytics/organic/* (D23), so this test (outside
 // the guarded frontend directories) keeps its copies of the organic limits in sync with the
@@ -31,5 +41,14 @@ describe("organic dashboard limits and presets", () => {
         ).toEqual(resolveOrganicPreset(preset, nowMs));
       }
     }
+  });
+});
+
+// ADR 0016 (Checkpoint 5): the YouTube dashboard's copies of the API's vocabulary.
+describe("YouTube dashboard vocabulary", () => {
+  it("mirrors the API's day metrics, video metrics and Pacific Time days", () => {
+    expect([...YOUTUBE_DAY_COLUMNS]).toEqual([...YOUTUBE_DAY_METRICS]);
+    expect([...YOUTUBE_VIDEO_COLUMNS]).toEqual([...YOUTUBE_VIDEO_METRICS]);
+    expect(DASHBOARD_YOUTUBE_TIMEZONE).toBe(YOUTUBE_DAY_TIMEZONE);
   });
 });

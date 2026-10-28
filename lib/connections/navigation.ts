@@ -1,7 +1,7 @@
 import { filterParamsOnly, parseFilters, serializeFilters } from "@/lib/analytics/filters";
 import type { Connection } from "@/lib/analytics/types";
 import { CONNECT_PROVIDER_PARAM } from "./connect-result";
-import type { AdConnectionProvider } from "./providers";
+import type { ConnectionProvider } from "./providers";
 
 /**
  * Where the Connections page sends the browser. The OAuth return URL is this page with the
@@ -21,7 +21,7 @@ type Params = { toString(): string };
 export function connectReturnUrl(
   origin: string,
   current: Params,
-  provider: AdConnectionProvider,
+  provider: ConnectionProvider,
 ): string {
   const params = filterParamsOnly(new URLSearchParams(current.toString()));
   params.set(CONNECT_PROVIDER_PARAM, provider);
@@ -52,7 +52,7 @@ export function navigateToAuthorization(
 /** The provider's connections that can still be used (revoked ones are history), newest first. */
 export function adConnections(
   connections: readonly Connection[],
-  provider: AdConnectionProvider,
+  provider: ConnectionProvider,
 ): Connection[] {
   return connections
     .filter((c) => c.provider === provider && c.status !== "revoked")

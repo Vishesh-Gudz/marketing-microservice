@@ -12,12 +12,13 @@ credentials are handled. The code lives in `convex/connections/`, `convex/v1/con
 integration and no other credential store.
 
 - **Google Ads and Meta Ads:** the standalone dashboard's `/connections` page
-  ([dashboard.md](dashboard.md#connections-google-ads-and-meta-ads); ADR 0008 D17 amendments),
+  ([dashboard.md](dashboard.md#connections-google-ads-meta-ads-and-youtube); ADR 0008 D17 amendments),
   and later the parent app through v1. Today the dashboard runs with the local development token
   only; hosted users cannot sign in or connect yet.
 - **Instagram:** the parent app through v1. The dashboard shows its status read-only.
-- **YouTube** (ADR 0016): the parent app through v1 for now; a `/connections` section is planned
-  (Checkpoint 5). The dashboard shows a reconnect notice read-only.
+- **YouTube** (ADR 0016): the dashboard's `/connections` page, YouTube section (Checkpoint 5:
+  connect, reconnect, link the channel, disconnect and delete its data), and the parent app
+  through v1.
 
 > **Ownership (S2):** the OAuth callback never creates a connection. It stores the consented,
 > encrypted grant and returns a one-time claim code to the return URL; only the user who started

@@ -1,5 +1,5 @@
 import { isMarketingError } from "@/convex/lib/errors";
-import { isAdConnectionProvider, PROVIDERS, type AdConnectionProvider } from "./providers";
+import { isConnectionProvider, PROVIDERS, type ConnectionProvider } from "./providers";
 import type { Notice } from "./types";
 
 /**
@@ -45,7 +45,7 @@ const CONNECTION_ID = /^[a-z0-9]{1,64}$/;
 const CLAIM_CODE = /^[A-Za-z0-9_-]{43}$/;
 
 /** The provider the dashboard started the connection for (exactly one known hint value). */
-type Hint = { provider?: AdConnectionProvider };
+type Hint = { provider?: ConnectionProvider };
 
 export type ConnectResult =
   | { kind: "none" }
@@ -63,7 +63,7 @@ function isCallbackError(value: string | null): value is CallbackError {
 
 function providerHint(params: ReadableParams): Hint {
   const values = params.getAll(CONNECT_PROVIDER_PARAM);
-  return values.length === 1 && isAdConnectionProvider(values[0]) ? { provider: values[0] } : {};
+  return values.length === 1 && isConnectionProvider(values[0]) ? { provider: values[0] } : {};
 }
 
 export function parseConnectResult(params: ReadableParams): ConnectResult {
@@ -117,7 +117,7 @@ export function withoutConnectResult(params: { toString(): string }): URLSearchP
 }
 
 /** Fixed text for a callback error, in the provider's words (neutral without a hint). */
-function errorNotice(error: CallbackError | "unknown", provider?: AdConnectionProvider): Notice {
+function errorNotice(error: CallbackError | "unknown", provider?: ConnectionProvider): Notice {
   const p = provider !== undefined ? PROVIDERS[provider] : undefined;
   switch (error) {
     case "access_denied":
@@ -228,7 +228,7 @@ export function connectResultNotice(result: ConnectResult): Notice | null {
  * Fixed text for a refused claim (v1/connections:completeConnect). Only the public error code
  * and the allowlisted `reason` are inspected; server messages are never displayed.
  */
-export function claimErrorNotice(error: unknown, provider?: AdConnectionProvider): Notice {
+export function claimErrorNotice(error: unknown, provider?: ConnectionProvider): Notice {
   const p = provider !== undefined ? PROVIDERS[provider] : undefined;
   if (isMarketingError(error)) {
     const { code, details } = error.data;

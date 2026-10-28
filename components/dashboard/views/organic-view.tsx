@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
@@ -63,9 +64,10 @@ function OrganicTotals({ args }: { args: OrganicOverviewArgs }) {
  * Organic Instagram (Phase 10 Stage B, B3): ONE account at a time, entirely separate from paid
  * analytics. Account metrics are UTC days (presets resolve against today in UTC); posts are
  * filtered by publish day in the org timezone and show lifetime totals. Every value comes from
- * the public v1 API; the dashboard computes none.
+ * the public v1 API; the dashboard computes none. Only Instagram accounts are listed: YouTube
+ * channels have their own view (`switcher`, ADR 0016).
  */
-export function OrganicView() {
+export function OrganicView({ switcher }: { switcher?: ReactNode } = {}) {
   const { searchParams, setParams } = useDashboardFilters();
   const social = parseSocialParams(new URLSearchParams(searchParams.toString()));
   const scope = useAnalyticsScope({ dayBasis: "utc" });
@@ -79,6 +81,7 @@ export function OrganicView() {
         title="Instagram (organic)"
         description="Organic performance of a connected Instagram professional account — separate from paid ads. Account metrics use UTC days."
       />
+      {switcher}
       <ReauthBanner />
     </>
   );
@@ -91,7 +94,7 @@ export function OrganicView() {
       </>
     );
   }
-  const list = accounts.data.page;
+  const list = accounts.data.page.filter((account) => account.platform === "instagram");
   if (list.length === 0) {
     return (
       <>

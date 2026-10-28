@@ -474,3 +474,66 @@ describe("Meta Ads wording (never Google's)", () => {
     for (const notice of notices) expect(JSON.stringify(notice)).not.toContain("Google");
   });
 });
+
+describe("YouTube wording (ADR 0016)", () => {
+  const youtube = { status: "active" as const, missingScopes: [] as string[], expiresSoon: false };
+
+  it("names the missing YouTube Analytics access, and reauth in Google's words", () => {
+    expect(
+      connectionStatusNotice(
+        { ...youtube, missingScopes: ["https://www.googleapis.com/auth/yt-analytics.readonly"] },
+        "youtube",
+      ),
+    ).toEqual({
+      tone: "warning",
+      title: "YouTube Analytics access is missing",
+      message:
+        "Daily channel metrics cannot sync. Reconnect YouTube and allow access to YouTube Analytics when Google asks.",
+    });
+    expect(connectionStatusNotice(youtube, "youtube")).toMatchObject({
+      tone: "success",
+      message: "YouTube is connected.",
+    });
+    expect(connectionStatusNotice({ ...youtube, status: "needs_reauth" }, "youtube").message).toBe(
+      "Google access expired or was revoked. Reconnect with the same Google account, or disconnect YouTube to use a different one.",
+    );
+    // Google Ads wording is unchanged.
+    expect(connectionStatusNotice({ ...youtube, missingScopes: ["x"] }, "google_ads").title).toBe(
+      "Google Ads access is missing",
+    );
+  });
+
+  it("explains purge_pending: the channel's stored data is still being deleted", () => {
+    const notice = connectionActionNotice(
+      apiError("CONFLICT", "server text", { reason: "purge_pending", externalId: "UCx" }),
+      "youtube",
+    );
+    expect(notice).toEqual({
+      tone: "warning",
+      title: "Stored data is still being deleted",
+      message:
+        "This channel's stored YouTube data is still being deleted. Try again in a few minutes.",
+    });
+    expect(JSON.stringify(notice)).not.toContain("server text");
+    expect(connectionActionNotice(apiError("INVALID_ARGUMENT", "x", {}), "youtube").message).toBe(
+      "Choose the channel from the discovered list.",
+    );
+    expect(
+      connectionActionNotice(apiError("INVALID_ARGUMENT", "x", { field: "provider" }), "youtube"),
+    ).toMatchObject({
+      title: "YouTube is not available",
+    });
+  });
+
+  it("has no Google Ads or Meta reason texts for YouTube", () => {
+    const error: ConnectionError = { kind: "auth", message: "x", reason: "not_ads_user", at: AT };
+    expect(discoveryErrorNotice(error, "youtube")).toEqual({
+      tone: "error",
+      title: "Your YouTube channels could not be loaded",
+      message: "Google needs you to sign in again. Reconnect YouTube.",
+    });
+    expect(disconnectActionNotice(apiError("NOT_FOUND", "x"), "youtube").message).toBe(
+      "This YouTube connection no longer exists. Reload the page.",
+    );
+  });
+});

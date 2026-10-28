@@ -318,3 +318,25 @@ describe("claimErrorNotice (S2)", () => {
     }
   });
 });
+
+describe("the YouTube provider hint (ADR 0016)", () => {
+  it("words the result for YouTube", () => {
+    const result = parse(`status=connected&connection=${ID}&connect=youtube`);
+    expect(result).toEqual({
+      kind: "connected",
+      connectionId: ID,
+      discoveryFailed: false,
+      provider: "youtube",
+    });
+    expect(connectResultNotice(result)).toMatchObject({ title: "YouTube connected" });
+    expect(
+      connectResultNotice(parse("status=error&error=access_denied&connect=youtube")),
+    ).toMatchObject({
+      title: "YouTube access was not granted",
+    });
+    expect(parse("status=error&error=internal&connect=instagram")).toEqual({
+      kind: "error",
+      error: "internal",
+    });
+  });
+});

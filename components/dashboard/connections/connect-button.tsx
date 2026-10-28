@@ -8,7 +8,7 @@ import { api } from "@/convex/_generated/api";
 import type { Connection } from "@/lib/analytics/types";
 import { connectionActionNotice } from "@/lib/connections/messages";
 import { connectReturnUrl, navigateToAuthorization } from "@/lib/connections/navigation";
-import { PROVIDERS, type AdConnectionProvider } from "@/lib/connections/providers";
+import { PROVIDERS, type ConnectionProvider } from "@/lib/connections/providers";
 import type { Notice } from "@/lib/connections/types";
 import { ConnectionNotice } from "./connection-notice";
 
@@ -23,7 +23,7 @@ export function ConnectButton({
   provider,
   connection,
 }: {
-  provider: AdConnectionProvider;
+  provider: ConnectionProvider;
   connection: Connection | undefined;
 }) {
   const beginConnect = useAction(api.v1.connections.beginConnect);

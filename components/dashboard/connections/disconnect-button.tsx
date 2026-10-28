@@ -6,24 +6,31 @@ import { Button } from "@/components/ui/button";
 import { api } from "@/convex/_generated/api";
 import type { Connection } from "@/lib/analytics/types";
 import { disconnectActionNotice } from "@/lib/connections/messages";
-import { PROVIDERS, type AdConnectionProvider } from "@/lib/connections/providers";
+import { PROVIDERS, type ConnectionProvider } from "@/lib/connections/providers";
 import type { Notice } from "@/lib/connections/types";
 import { ConnectionNotice } from "./connection-notice";
 
 /**
- * Admin-only: disconnects the shown ad platform connection through v1/connections:disconnect
- * after an explicit confirmation. The server revokes the connection, unlinks its accounts
- * (rows and data are kept) and deletes its credential. Afterwards Connect starts a fresh
- * connection, which may use a different account (Reconnect only accepts the same one).
+ * Admin-only: disconnects the shown connection through v1/connections:disconnect after an
+ * explicit confirmation. For the ad platforms the server revokes the connection, unlinks its
+ * accounts (rows and data are kept) and deletes its credential; for YouTube it also deletes
+ * the channel's stored data (ADR 0016), so the caller passes its own `consequences`.
+ * Afterwards Connect starts a fresh connection, which may use a different account (Reconnect
+ * only accepts the same one).
  */
 export function DisconnectButton({
   provider,
   connection,
   onDisconnected,
+  consequences,
+  confirmLabel = "Disconnect",
 }: {
-  provider: AdConnectionProvider;
+  provider: ConnectionProvider;
   connection: Connection;
   onDisconnected: () => void;
+  /** What disconnecting does, listed in the confirmation (default: the ad platforms' rules). */
+  consequences?: readonly string[];
+  confirmLabel?: string;
 }) {
   const disconnect = useMutation(api.v1.connections.disconnect);
   const { name, platform, identity } = PROVIDERS[provider];
@@ -91,9 +98,15 @@ export function DisconnectButton({
         Disconnect {name}?
       </p>
       <ul className="list-disc pl-5 text-muted-foreground">
-        <li>Linked accounts stop syncing. Their data and history are kept.</li>
-        <li>The stored {platform} access is deleted.</li>
-        <li>Afterwards, connect again to sign in with any {identity}.</li>
+        {(
+          consequences ?? [
+            "Linked accounts stop syncing. Their data and history are kept.",
+            `The stored ${platform} access is deleted.`,
+            `Afterwards, connect again to sign in with any ${identity}.`,
+          ]
+        ).map((item) => (
+          <li key={item}>{item}</li>
+        ))}
       </ul>
       <div className="flex gap-2">
         <Button
@@ -102,7 +115,7 @@ export function DisconnectButton({
           disabled={pending}
           onClick={() => void confirm()}
         >
-          {pending ? "Disconnecting…" : "Disconnect"}
+          {pending ? "Disconnecting…" : confirmLabel}
         </Button>
         <Button
           ref={cancelRef}
