@@ -2,8 +2,8 @@
 
 - Status: Checkpoints 1 (provider foundation), 2 (OAuth and account connection), 3 (analytics
   sync and storage, after the policy review), 3b (retention and deletion), 4 (tenant-scoped v1
-  API) and 5 (dashboard and connection UI) implemented and tested against mock and fake data
-  only. Checkpoint 6 (verification) is planned.
+  API) and 5 (dashboard and connection UI) implemented; Checkpoint 6 verified the complete
+  workflow against mock and fake data only.
   Nothing was validated against a real YouTube channel or a real Google OAuth client (YR1–YR14
   provisional).
 - Date: 2026-10-25
@@ -195,6 +195,32 @@ The dashboard ([docs/dashboard.md](../dashboard.md#organic-youtube-adr-0016-chec
 - **The scope-less sync limitation (open question 13) is shown, not fixed:** both the YouTube
   view and the card say that video statistics may stop updating while YouTube Analytics access is
   missing.
+
+### Checkpoint 6 (verification)
+
+- **The whole workflow, in order:** `convex/connections/youtubeJourney.test.ts` runs it end to
+  end.
+  - In mock mode: connect, link, sync, v1 reads, disconnect and deletion, retry safety, another
+    org and Instagram untouched.
+  - With the real provider code against a fake Google API: OAuth, sync, revocation at Google
+    and `needs_reauth`, reconnect, a resumed sync, then disconnect with the Google revoke
+    request.
+- **Final checks:** typecheck, lint, format, the full Vitest suite, the production build and
+  Playwright under CI conditions all pass, apart from the known ESLint-guard timeout, which
+  passes on rerun.
+- **No real Google account or channel has been used.** The manual verification steps and the
+  consolidated limitations are in
+  [docs/providers/youtube.md](../providers/youtube.md#verification-status-and-limitations-checkpoint-6).
+- **Proposed narrow fix for open question 13** (not implemented; a sync change that needs
+  approval):
+  - When the YouTube connection lacks `yt-analytics.readonly`, the social planner would plan
+    the channel's runs without the account-metric task, instead of failing the run and blocking
+    the channel.
+  - Listings and video statistics would then keep syncing.
+  - Channel days would stay `unknown` with `analyticsAccess: "scope_missing"` until the
+    channel is reconnected with the scope.
+  - Scope: the planner's task list for YouTube (`convex/sync/socialPlan.ts` and its input),
+    with tests; no API or dashboard change.
 
 ## Policy review findings (Checkpoint 3)
 

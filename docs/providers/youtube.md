@@ -446,6 +446,50 @@ reports skip every 9th day (no row) and report every 11th as zeros. Users:
 | YR13 | the report returns a row for days without activity; how late processing shows; value types   |
 | YR14 | quota use per channel per day in real use                                                    |
 
+## Verification status and limitations (Checkpoint 6)
+
+**Verified, without a real Google account:** the complete workflow:
+
+- connect;
+- discover and link;
+- sync of metadata, days and videos;
+- v1 reads and the `/social` view;
+- revocation at Google, needs-reauth and reconnect;
+- disconnect with the Google revoke request and data deletion;
+- retention, retry safety and tenant isolation;
+- Instagram unchanged.
+
+How it was verified:
+
+- in-process with the real backend functions, in mock mode and with the real provider code
+  against a fake Google API (`convex/connections/youtubeJourney.test.ts` plus the suites it
+  chains);
+- the dashboard with component tests;
+- Playwright for the shell and the gate.
+
+**Not verified:** any real Google OAuth consent, real channel, real report or real revocation
+(YR1–YR14 stay provisional). This needs the manual steps under Configuration.
+
+Limitations:
+
+- **Missing `yt-analytics.readonly` blocks the whole sync** (ADR 0016 open question 13). The
+  first run fails on the day report and the channel is blocked: its video statistics stop
+  updating, and 25 days later the retention sweep deletes the videos. The API and the dashboard
+  say so (`analyticsAccess: "scope_missing"`), but the sync is unchanged. A narrow fix is
+  proposed in the ADR.
+- **5,000-upload listing cap:** older uploads are never stored. Uploads pushed past the cap are
+  deleted 25 days after their last listing (see Retention).
+- **Google's Testing mode:** refresh tokens expire after 7 days. The connection then becomes
+  `needs_reauth` every week, until the OAuth consent screen is published (and verified).
+- **Reporting delay:** YouTube reports days about 3 days late, so the newest days are always
+  `unknown`.
+- **Video statistics** are captured daily only for uploads of the last 90 days; older videos show
+  "Not synced". Subscriber counts are YouTube's rounded values on UTC capture days.
+- **Quota:** about 100 channels per Cloud project per day, an estimate [PROVISIONAL YR14].
+- **Google-side revocation** on disconnect is best effort and not confirmed in the UI. An
+  inconclusive daily authorization check is audited but alerts no one (open question 9).
+- **No totals, comparisons or multi-channel figures** until the policy questions are answered.
+
 ## Configuration
 
 | Convex env var                               | Purpose                                                                                                                                                                                                                                                       |
@@ -469,3 +513,18 @@ verified):
    [connections.md](../connections.md)).
 5. Start the connection through `v1/connections:beginConnect` with `provider: "youtube"` (the
    `/connections` YouTube section), then link the discovered channel.
+
+Then verify the real workflow (Checkpoint 6; not yet done with a real channel):
+
+6. Wait for the first sync. In `/social` → YouTube, check that the channel name and handle,
+   the Pacific Time days (about 3 days behind) and the video statistics match YouTube Studio.
+   Work through YR1–YR14 below.
+7. Remove the app's access at `myaccount.google.com/permissions`. After the next sync the
+   connection is `needs_reauth` and the YouTube view shows "Reconnect required". Reconnect
+   the same channel; the next sync succeeds.
+8. **Connections → YouTube → Disconnect and delete data.** Confirm that:
+   - the card reports "Stored YouTube data deleted";
+   - the app no longer appears under the Google account's third-party access;
+   - the audit log has `socialAccount.purge_started` and `socialAccount.purged`.
+9. Connect without ticking the YouTube Analytics permission. The view shows "YouTube Analytics
+   access is missing", and the scope limitation described below applies.
