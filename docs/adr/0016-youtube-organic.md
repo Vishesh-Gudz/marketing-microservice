@@ -1,9 +1,9 @@
 # ADR 0016 — YouTube organic provider
 
 - Status: Checkpoints 1 (provider foundation), 2 (OAuth and account connection), 3 (analytics
-  sync and storage, after the policy review) and 3b (retention and deletion) implemented and
-  tested against mock and fake data only. Checkpoints 4–6 (public API, dashboard, verification)
-  are planned.
+  sync and storage, after the policy review), 3b (retention and deletion) and 4 (tenant-scoped
+  v1 API) implemented and tested against mock and fake data only. Checkpoints 5–6 (dashboard,
+  verification) are planned.
   Nothing was validated against a real YouTube channel or a real Google OAuth client (YR1–YR14
   provisional).
 - Date: 2026-10-25
@@ -153,6 +153,32 @@ Retention and deletion (`convex/connections/youtubeRetention.ts`; the exact rule
 - **Deletion requests:** an operational runbook (admin API) is in place. **An in-product deletion
   path must be provided in the dashboard phase (Checkpoint 5).**
 
+### Checkpoint 4 (implemented)
+
+The tenant-scoped v1 API for YouTube: `v1/youtubeAnalytics`
+([docs/analytics.md](../analytics.md#youtube-analytics-adr-0016-checkpoint-4)).
+
+- **One channel per request, values as reported.** Every function takes one channel or one
+  video. Nothing is summed, averaged, compared, ranked or combined, across days, channels or
+  platforms, and no rate, percent change or score exists. The open questions below decide
+  whether that may change.
+- **`channelDays`:** one entry per Pacific Time day (`timezone: "America/Los_Angeles"`), with
+  YouTube's own metric names:
+  - each day has a `status` of `reported`, `not_reported` or `unknown`;
+  - the response gives the data state of the range, the coverage, the reporting delay (3 days)
+    and the channel's analytics grant (`analyticsAccess`: `granted`, `scope_missing`,
+    `reauth_required`, `not_linked` or `unknown`);
+  - the subscriber captures stored on the same rows are UTC capture days and stay out of the
+    day series.
+- **`videos` / `video`:** lifetime `videos.list` statistics (views, likes, comments) on our UTC
+  capture days. Hidden or disabled counts are `not_reported`, never 0. No Instagram-only metric
+  and no KPI appears.
+- **The organic aggregation still never aggregates YouTube.** A single YouTube account in
+  `v1/organicAnalytics` stays `unsupported`; org-wide totals leave YouTube out. An explicit
+  selection of several accounts that includes a YouTube channel is refused (`INVALID_ARGUMENT`,
+  `platform_not_aggregated`). Before this checkpoint, such a mixed selection returned the
+  Instagram sums labelled `unsupported`. Instagram-only requests are unchanged.
+
 ## Policy review findings (Checkpoint 3)
 
 - **III.E.4.h:** no API Data replaced by independently calculated data and no "new or derived
@@ -174,7 +200,7 @@ Retention and deletion (`convex/connections/youtubeRetention.ts`; the exact rule
   7 days; revocation in Google's settings → delete the user's API data within 30 days; delete the
   data of users whose tokens cannot be refreshed; user deletion requests within 7 days.
 
-## Open compliance questions (for review before Checkpoint 4)
+## Open compliance questions
 
 1. Is the Guide's "acceptable metrics" list authoritative next to III.E.4.h, i.e. may a
    date-range total be summed from stored daily rows?
@@ -205,9 +231,16 @@ Retention and deletion (`convex/connections/youtubeRetention.ts`; the exact rule
 12. (Checkpoint 3b) For channels with more than 5,000 uploads, the oldest uploads are never stored,
     and uploads pushed past the cap are deleted after 25 days. Is that acceptable for the product,
     or should older uploads be read some other way?
+13. (Checkpoint 4, a sync behavior) A channel connected without `yt-analytics.readonly` has its
+    whole sync blocked after the first run fails on the day report. Its video statistics stop
+    updating, and 25 days later the retention sweep deletes the videos. Should listings and video
+    statistics keep syncing when only the analytics scope is missing? That would be a change to
+    the sync implementation, not the API.
 
-Until answered: only metrics YouTube reports are stored and exposed, nothing is derived, no
-multi-channel or cross-platform aggregation, and no period totals or comparisons for YouTube.
+Until answered: only metrics YouTube reports are stored and exposed (one channel at a time,
+through `v1/youtubeAnalytics`), nothing is derived, there is no multi-channel or cross-platform
+aggregation, and there are no period totals or comparisons for YouTube. Nothing in this service
+claims that such totals or comparisons are policy-approved.
 
 ## Consequences
 

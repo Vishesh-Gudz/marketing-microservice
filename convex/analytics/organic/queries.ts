@@ -46,12 +46,12 @@ export function socialCapabilitiesOf(
   return registry.hasSocial(platform) ? registry.socialCapabilities(platform) : undefined;
 }
 
-function invalid(field: string, reason: string): never {
+export function invalid(field: string, reason: string): never {
   throw apiError("INVALID_ARGUMENT", `Invalid ${field} (${reason}).`, { field, reason });
 }
 
 /** Explicit inclusive range, validated from the range alone (no clock). */
-function validRange(range: DateRange, field: string): DateRange {
+export function validRange(range: DateRange, field: string): DateRange {
   const problem = rangeProblem(range, { maxDays: ORGANIC_LIMITS.maxRangeDays });
   if (problem !== undefined) invalid(field, problem);
   return { from: range.from, to: range.to };
@@ -59,7 +59,7 @@ function validRange(range: DateRange, field: string): DateRange {
 
 export type CompareArg = "previous_period" | DateRange;
 
-async function syncStateOf(
+export async function syncStateOf(
   ctx: TenantCtx,
   socialAccountId: Id<"socialAccounts">,
 ): Promise<Doc<"syncAccounts"> | null> {
@@ -240,7 +240,7 @@ async function scopedSocialAccounts(
   );
 }
 
-function dayRows(
+export function dayRows(
   ctx: TenantCtx,
   budget: SocialReadBudget,
   socialAccountId: Id<"socialAccounts">,
@@ -260,11 +260,12 @@ function dayRows(
 }
 
 /**
- * ADR 0016 (Checkpoint 3 policy review): YouTube day rows are stored, but the organic analytics
- * does not aggregate them until the open YouTube Developer Policies questions (period totals,
- * comparisons, multi-channel sums, III.E.2 / III.E.4.h) are settled in Checkpoint 4. A YouTube
- * account reads as "unsupported" here and its day rows are never read, so YouTube values are
- * never summed, compared or combined with Instagram's; org-wide totals leave YouTube out.
+ * ADR 0016 (Checkpoints 3 and 4): the organic aggregation never aggregates YouTube while the
+ * YouTube Developer Policies questions (period totals, comparisons, multi-channel sums,
+ * III.E.2 / III.E.4.h) are open. A single YouTube account reads as "unsupported" here and its
+ * day rows are never read; an explicit selection of several accounts that includes one is
+ * refused (platform_not_aggregated); org-wide totals leave YouTube out. YouTube values are
+ * read one channel at a time, day by day, through ./youtube.ts (v1/youtubeAnalytics).
  */
 const NOT_AGGREGATED: ReadonlySet<SocialPlatform> = new Set(["youtube"]);
 
@@ -326,6 +327,14 @@ export async function organicOverview(
         : validRange(args.compare, "compare");
   const budget = new SocialReadBudget();
   const scoped = await scopedSocialAccounts(ctx, args.socialAccountIds, budget);
+  if (args.socialAccountIds !== undefined && scoped.length > 1 && !scoped.every(aggregated)) {
+    // Never combined with another account, not even another YouTube channel (ADR 0016).
+    throw apiError(
+      "INVALID_ARGUMENT",
+      "YouTube channels are never combined with other accounts. Read one channel at a time with v1/youtubeAnalytics.",
+      { field: "socialAccountIds", reason: "platform_not_aggregated" },
+    );
+  }
   // Org-wide totals never include a platform that is not aggregated (ADR 0016).
   const accounts = args.socialAccountIds === undefined ? scoped.filter(aggregated) : scoped;
   const read = unionRange(range, compareRange);

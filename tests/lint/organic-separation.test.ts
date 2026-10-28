@@ -114,6 +114,9 @@ const ORGANIC_V1 = [
   "convex/v1/organicAnalytics.ts",
   "convex/v1/dto/socialPost.ts",
   "convex/v1/dto/organicAnalytics.ts",
+  // ADR 0016 (Checkpoint 4): the YouTube API reads the same organic layer.
+  "convex/v1/youtubeAnalytics.ts",
+  "convex/v1/dto/youtubeAnalytics.ts",
 ];
 
 describe("organic vs ad analytics separation", () => {
@@ -122,6 +125,7 @@ describe("organic vs ad analytics separation", () => {
       expect.arrayContaining([
         "convex/analytics/organic/aggregate.ts",
         "convex/analytics/organic/queries.ts",
+        "convex/analytics/organic/youtube.ts",
       ]),
     );
     expect(AD_ANALYTICS).toContain("convex/analytics/queries.ts");
@@ -140,7 +144,9 @@ describe("organic vs ad analytics separation", () => {
   it.each(ORGANIC_V1)("%s uses the organic layer only", (path) => {
     const source = read(path);
     expect(source).not.toMatch(/analytics\/queries"|dto\/analytics"/);
-    expect(source).not.toMatch(/providers\/(instagram|social\/mock|meta|google)|nodeRegistry/);
+    expect(source).not.toMatch(
+      /providers\/(instagram|social\/mock|meta|google|youtube)|nodeRegistry/,
+    );
     expect(tableLiterals(source, AD_TABLES)).toEqual([]);
   });
 });

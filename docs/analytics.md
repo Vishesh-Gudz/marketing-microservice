@@ -326,17 +326,97 @@ aggregation code, vocabularies or limits: the existing ESLint analytics block co
   `NOT_FOUND`. DTOs carry no credential, URL other than the permalink, media URL, biography or
   commenter data.
 
-**YouTube (ADR 0016, until Checkpoint 4):** the sync stores YouTube channel days and video
-snapshots, but these functions do not aggregate them yet, pending the YouTube Developer Policies
-review (period totals, comparisons, multi-channel sums). A YouTube account in `socialAccountIds`
-reads as `unsupported` with no values, its day rows are never read, and org-wide totals (no
-`socialAccountIds`) leave YouTube accounts out, so YouTube values are never summed, compared or
-combined with Instagram's. Posts (`v1/socialPosts`) show each video's own lifetime snapshot.
+**YouTube (ADR 0016):** these functions never aggregate YouTube while the YouTube Developer
+Policies questions are open (period totals, comparisons, multi-channel sums):
+
+- a single YouTube account in `socialAccountIds` reads as `unsupported` with no values, and its
+  day rows are never read;
+- a selection of several accounts that includes a YouTube channel is refused
+  (`INVALID_ARGUMENT`, `reason: "platform_not_aggregated"`);
+- org-wide totals (no `socialAccountIds`) leave YouTube accounts out.
+
+YouTube values are never summed, compared or combined with Instagram's. YouTube is read through
+[`v1/youtubeAnalytics`](#youtube-analytics-adr-0016-checkpoint-4). `v1/socialPosts` still lists a
+channel's videos with their own lifetime snapshots.
 
 Tests: `convex/analytics/organic/*.test.ts` (aggregation, dates),
 `convex/v1/organic.test.ts` (exact seeded totals, states and reasons, UTC vs org
 timezone, budget, pagination, tenant isolation), the v1 inventory in `convex/v1/contract.test.ts`,
 and `tests/lint/organic-separation.test.ts`. All organic data used in tests is mock data.
+
+## YouTube analytics (ADR 0016, Checkpoint 4)
+
+`convex/v1/youtubeAnalytics.ts` with `convex/v1/dto/youtubeAnalytics.ts`, over
+`convex/analytics/organic/youtube.ts`. Read-only `orgQuery` functions (viewer) with the same
+tenancy, bounds and errors as the organic functions above.
+
+**One channel per request, values exactly as YouTube reported them.** Nothing is summed,
+averaged, compared, ranked or combined, across days, channels or platforms, and there is no rate,
+percent change or score. The open policy questions are in
+[ADR 0016](adr/0016-youtube-organic.md#open-compliance-questions).
+
+| Function                          | Args                                                                                         | Returns                                                                                         |
+| --------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `v1/youtubeAnalytics:channelDays` | `socialAccountId, range` (Pacific Time days, ≤ 400)                                          | one entry per day, `dataState`, `coverage`, `reportingDelayDays`, `analyticsAccess`             |
+| `v1/youtubeAnalytics:videos`      | `socialAccountId, publishedFrom?, publishedTo?, sort?{by: publishedAt, dir}, paginationOpts` | one channel's videos (1–100 per page, by publish instant) with their latest lifetime statistics |
+| `v1/youtubeAnalytics:video`       | `videoId, range?` (UTC capture days)                                                         | one video, its latest statistics and its lifetime captures (oldest first)                       |
+
+**Time zones.** Two calendars are used, and they are never mixed. Instagram is unchanged.
+
+- `channelDays` dates are YouTube Analytics days, which are **Pacific Time** days
+  (`timezone: "America/Los_Angeles"`). The range is given in the same days. A daylight-saving
+  change is still one day key.
+- Video captures are **our UTC capture days** (`capturedDate`, `capturedAt`).
+- `publishedFrom` / `publishedTo` are days in the **organization timezone**, as in
+  `v1/socialPosts`.
+
+**Day status (`channelDays.days[].status`):**
+
+- `reported`: the day was synced and its values are given under YouTube's names: `views`,
+  `likes`, `comments`, `shares`, `estimatedMinutesWatched`, `averageViewDuration` (YouTube's
+  own per-day value, in seconds), `subscribersGained`, `subscribersLost`. A metric the day lacks
+  is listed in `unavailableMetrics` (`not_reported`), never as 0. A reported 0 stays 0.
+- `not_reported`: the day was synced, but YouTube reported nothing for it.
+- `unknown`: the day was not synced, or not yet. YouTube reports days about
+  `reportingDelayDays` (3) days late, so the newest days are always `unknown`.
+
+**Range state.** `dataState` is `reported` when every day of the range was synced, `partial` when
+some were, and `unknown` when none were. `coverage` gives `syncedDays`, `unsyncedDays`, the
+`covered` Pacific Time days of the sync state, and `lastSyncedAt`. No total is returned, so a
+partial range can never pass for a complete one.
+
+**Analytics grant (`analyticsAccess`):**
+
+- `granted`;
+- `scope_missing`: `yt-analytics.readonly` was unticked at consent. There are no day values
+  until the channel is reconnected with it, but video statistics remain;
+- `reauth_required`;
+- `not_linked`: history only;
+- `unknown`: the YouTube OAuth client is not configured.
+
+It is derived from the connection's status and granted scopes. No scope string, token or
+connection internal is returned.
+
+**Subscriber count.** The current subscriber count is `followersCount` in `v1/socialAccounts`.
+The captures stored on the day rows are UTC capture days, so they are not part of the Pacific
+Time day series.
+
+**Videos.** `metrics` holds the lifetime `views`, `likes` and `comments` of one capture.
+`dataState` is `partial` when the owner hides likes or disabled comments; those counts are
+`not_reported`, never 0. A video never captured (published before the 90-day capture window) has
+`dataState: "unknown"` and no `latest`. The only URL is the `https://www.youtube.com/watch?v=<id>`
+permalink.
+
+**Errors:**
+
+- another org's channel or video, or a malformed id: `NOT_FOUND`;
+- an Instagram account or post: `INVALID_ARGUMENT` (`reason: "not_youtube"`);
+- an invalid range or publish filter: `INVALID_ARGUMENT`;
+- more than 8,000 rows read: `INVALID_ARGUMENT` (`too_many_rows`), never truncated data.
+
+Tests: `convex/v1/youtubeAnalytics.test.ts` (mock-synced data plus exact seeds: Pacific Time
+days, missing and zero values, coverage, scope, mixed selections, Instagram regression, tenant
+isolation, DTO contract) and `tests/lint/organic-separation.test.ts`.
 
 ## Testing
 

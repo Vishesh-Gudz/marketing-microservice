@@ -117,6 +117,32 @@ export const ORGANIC_DELTA_REASONS = ["previous_zero", "previous_unavailable"] a
 export type OrganicDeltaReason = (typeof ORGANIC_DELTA_REASONS)[number];
 
 /**
+ * ADR 0016 (Checkpoint 4): the YouTube channel day values the sync stores, each under its own
+ * YouTube Analytics name (`views` in the canonical column, the others in `extras`), keyed by
+ * Pacific Time day. They mirror providers/youtube/semantics.ts ACCOUNT_REPORT_TARGETS (a test
+ * keeps both equal). Exposed day by day only: never summed, averaged, compared or combined.
+ * `averageViewDuration` is YouTube's own per-day value (seconds).
+ */
+export const YOUTUBE_DAY_METRICS = [
+  "views",
+  "likes",
+  "comments",
+  "shares",
+  "estimatedMinutesWatched",
+  "averageViewDuration",
+  "subscribersGained",
+  "subscribersLost",
+] as const;
+export type YouTubeDayMetric = (typeof YOUTUBE_DAY_METRICS)[number];
+
+/** YouTube video lifetime statistics (`videos.list` statistics, our UTC capture days). */
+export const YOUTUBE_VIDEO_METRICS = ["views", "likes", "comments"] as const;
+export type YouTubeVideoMetric = (typeof YOUTUBE_VIDEO_METRICS)[number];
+
+/** [doc] YouTube Analytics reports Pacific Time days (ADR 0016, providers/youtube/semantics.ts). */
+export const YOUTUBE_DAY_TIMEZONE = "America/Los_Angeles";
+
+/**
  * [doc] follows_and_unfollows is "not returned if the IG User has less than 100 followers".
  * Behavior on a real account is [PROVISIONAL IR8].
  */

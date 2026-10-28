@@ -121,6 +121,9 @@ describe("public API contract", () => {
       "v1/whatsapp:retrySetup",
       "v1/whatsapp:sendTemplate",
       "v1/whatsapp:sendText",
+      "v1/youtubeAnalytics:channelDays",
+      "v1/youtubeAnalytics:video",
+      "v1/youtubeAnalytics:videos",
     ]);
   });
 

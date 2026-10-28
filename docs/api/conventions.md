@@ -123,6 +123,13 @@ post publish filters use the organization timezone. Stage A had added `instagram
 `v1/connections:beginConnect` and the social link functions (`listDiscoveredSocialAccounts`,
 `linkSocialAccounts`, `unlinkSocialAccount`).
 
+ADR 0016 (YouTube, Checkpoint 4) added three read-only YouTube functions (additive; all
+`orgQuery`, viewer; documented in
+[../analytics.md](../analytics.md#youtube-analytics-adr-0016-checkpoint-4)):
+`v1/youtubeAnalytics:channelDays`, `v1/youtubeAnalytics:videos` and `v1/youtubeAnalytics:video`.
+`v1/organicAnalytics:overview` now refuses an explicit selection of several accounts that
+includes a YouTube channel (`INVALID_ARGUMENT`, `reason: "platform_not_aggregated"`).
+
 Google Ads tester support (additive, no new function): `DiscoveredAssetDto` gained
 `managerStatus`, `testAccountStatus` and `parentExternalId`; `AdAccountDto` gained the optional
 read-only `sync` block. `linkAdAccounts` additionally rejects accounts whose manager status the

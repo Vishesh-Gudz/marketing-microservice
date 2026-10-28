@@ -179,15 +179,25 @@ snapshot per upload per UTC capture day):
 The YouTube API Services Developer Policies (III.E.4.h) forbid creating derived data or metrics;
 Google's Developer Policies Guide lists simple sums and averages of YouTube data as acceptable,
 while engagement ratios and custom scores need the III.L program (Checkpoint 3 policy review,
-[ADR 0016](../adr/0016-youtube-organic.md#open-compliance-questions-for-review-before-checkpoint-4)).
-Until the open questions are settled in Checkpoint 4:
+[ADR 0016](../adr/0016-youtube-organic.md#open-compliance-questions)).
+Until the open questions are answered:
 
 - the sync stores only values YouTube reports, under their own names;
-- `v1/organicAnalytics` does **not** aggregate YouTube: a YouTube account reads as
-  `unsupported` with no values and its day rows are never read; org-wide totals leave YouTube
-  out, so YouTube values are never summed, compared or combined with Instagram's
-  (`convex/analytics/organic/queries.ts`);
-- `v1/socialPosts` shows each video's own lifetime snapshot (no aggregation).
+- `v1/youtubeAnalytics` (Checkpoint 4) exposes them one channel at a time:
+  - `channelDays`: day by day on Pacific Time days;
+  - `videos` / `video`: lifetime statistics on UTC capture days;
+
+  nothing is summed, averaged, compared or combined
+  ([docs/analytics.md](../analytics.md#youtube-analytics-adr-0016-checkpoint-4));
+
+- `v1/organicAnalytics` does **not** aggregate YouTube:
+  - a single YouTube account reads as `unsupported` with no values;
+  - a selection of several accounts that includes a YouTube channel is refused
+    (`platform_not_aggregated`);
+  - org-wide totals leave YouTube out (`convex/analytics/organic/queries.ts`);
+- `v1/socialPosts` still lists YouTube videos with their own lifetime snapshots (no
+  aggregation). `v1/youtubeAnalytics:videos` is the YouTube-specific view: YouTube's metric
+  names only, and no Instagram metric or KPI.
 
 ## Retention (Checkpoint 3b)
 
