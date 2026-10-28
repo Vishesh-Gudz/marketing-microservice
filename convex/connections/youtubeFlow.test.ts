@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
 import { mockYouTubeChannelId } from "../providers/social/mock/youtubeData";
 import {
   createFakeYouTube,
@@ -125,6 +126,12 @@ async function auditActions(t: Backend) {
       changes: e.changes,
     })),
   );
+}
+
+async function platformRevokeChanges(t: Backend) {
+  return (await auditActions(t))
+    .filter((e) => e.action === "connection.platform_revoke")
+    .map((e) => e.changes);
 }
 
 async function connectedBrand(t: Backend, who = {}) {
@@ -468,11 +475,15 @@ describe("linking and lifecycle", () => {
     expect(rows.socialAccounts).toEqual([]);
     const actions = (await auditActions(t)).map((e) => e.action);
     expect(actions).toContain("connection.disconnected");
-    expect(actions).toContain("credential.deleted");
+    // The revoke outcome is audited with (and before) the credential deletion.
+    expect(
+      actions.filter((a) => a === "connection.platform_revoke" || a === "credential.deleted"),
+    ).toEqual(["connection.platform_revoke", "credential.deleted"]);
+    expect(await platformRevokeChanges(t)).toEqual([{ outcome: { from: null, to: "revoked" } }]);
     expectNoSecrets(rows);
   });
 
-  it("the credential is deleted even when the revocation fails at Google", async () => {
+  it("the credential is deleted even when the revocation fails at Google, and the failure is audited", async () => {
     stubLiveYouTube(fake);
     const t = newBackend();
     const connectionId = await connectedBrand(t);
@@ -480,6 +491,67 @@ describe("linking and lifecycle", () => {
     await as(t).mutation(api.v1.connections.disconnect, { connectionId });
     await drainScheduler(t);
     expect(await t.run((ctx) => ctx.db.query("credentials").collect())).toEqual([]);
+    expect(fake.revokedUsers).toEqual([]);
+    expect(await platformRevokeChanges(t)).toEqual([
+      {
+        outcome: { from: null, to: "failed" },
+        failureKind: { from: null, to: "transient" },
+        failureCode: { from: null, to: "revoke:http_503" },
+      },
+    ]);
+    expect((await auditActions(t)).map((e) => e.action)).toContain("credential.deleted");
+    expectNoSecrets(await allRows(t));
+  });
+
+  it("a token Google already considers revoked (invalid_token) is audited as revoked", async () => {
+    stubLiveYouTube(fake);
+    const t = newBackend();
+    const connectionId = await connectedBrand(t);
+    fake.failNext("revoke", { status: 400, body: { error: "invalid_token" } });
+    await as(t).mutation(api.v1.connections.disconnect, { connectionId });
+    await drainScheduler(t);
+    expect(await platformRevokeChanges(t)).toEqual([{ outcome: { from: null, to: "revoked" } }]);
+  });
+
+  it("audits not_attempted, without calling Google, when the credential is already gone", async () => {
+    stubLiveYouTube(fake);
+    const t = newBackend();
+    const connectionId = await connectedBrand(t);
+    await as(t).mutation(api.v1.connections.disconnect, { connectionId });
+    // The credential disappears before the scheduled revoke runs.
+    await t.run(async (ctx) => {
+      for (const row of await ctx.db.query("credentials").collect()) await ctx.db.delete(row._id);
+    });
+    fake.requests.length = 0;
+    await drainScheduler(t);
+    expect(fake.requests.filter((r) => r.path === "/revoke")).toEqual([]);
+    expect(await platformRevokeChanges(t)).toEqual([
+      {
+        outcome: { from: null, to: "not_attempted" },
+        failureKind: { from: null, to: "credential_unavailable" },
+      },
+    ]);
+    // Nothing was deleted by the revoke step, so no credential.deleted entry.
+    expect((await auditActions(t)).map((e) => e.action)).not.toContain("credential.deleted");
+  });
+
+  it("audits only an allowlisted failure kind and code, never free text", async () => {
+    stubLiveYouTube(fake);
+    const t = newBackend();
+    const connectionId = (await connectedBrand(t)) as Id<"connections">;
+    await t.mutation(internal.connections.credentialStore.deleteForConnection, {
+      connectionId,
+      actorSubject: "test",
+      platformRevoke: {
+        outcome: "failed",
+        failureKind: "Bearer leaked-kind",
+        failureCode: "ya29.leaked-token value",
+      },
+    });
+    expect(await platformRevokeChanges(t)).toEqual([
+      { outcome: { from: null, to: "failed" }, failureKind: { from: null, to: "internal" } },
+    ]);
+    expect(JSON.stringify(await auditActions(t))).not.toContain("leaked");
   });
 
   it("is never refreshed by the token refresh job (access tokens are minted per call)", async () => {

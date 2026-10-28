@@ -10,7 +10,12 @@ import {
   type MutationCtx,
 } from "../_generated/server";
 import { literalUnion } from "../domain/validators";
-import { AUDIT_ACTIONS, SYSTEM_YOUTUBE_RETENTION_SUBJECT, writeAudit } from "../lib/audit";
+import {
+  AUDIT_ACTIONS,
+  AUDIT_CODE_PATTERN,
+  SYSTEM_YOUTUBE_RETENTION_SUBJECT,
+  writeAudit,
+} from "../lib/audit";
 import { isProviderError, PROVIDER_ERROR_KINDS } from "../providers/errors";
 import { cancelRun } from "../sync/runs";
 import { findSocialSyncAccount } from "../sync/state";
@@ -454,8 +459,6 @@ export type AuthorizationOutcome =
   | { kind: "confirmed"; reason: Exclude<YouTubePurgeReason, "unlinked"> }
   | { kind: "inconclusive"; failureKind: string; failureCode?: string };
 
-const CODE = /^[A-Za-z0-9_:]{1,64}$/;
-
 /**
  * The decision logic (see the module comment): one fresh token + `channels.list?mine=true`
  * through the existing discovery; only Google-confirmed failures or a missing credential purge.
@@ -499,7 +502,7 @@ export async function checkYouTubeAuthorization(
       return {
         kind: "inconclusive",
         failureKind: error.kind,
-        ...(error.providerCode !== undefined && CODE.test(error.providerCode)
+        ...(error.providerCode !== undefined && AUDIT_CODE_PATTERN.test(error.providerCode)
           ? { failureCode: error.providerCode }
           : {}),
       };
@@ -605,7 +608,7 @@ export const recordInconclusiveCheck = internalMutation({
       targetId: account._id,
       changes: {
         failureKind: { from: null, to: kind },
-        ...(args.failureCode !== undefined && CODE.test(args.failureCode)
+        ...(args.failureCode !== undefined && AUDIT_CODE_PATTERN.test(args.failureCode)
           ? { failureCode: { from: null, to: args.failureCode } }
           : {}),
       },

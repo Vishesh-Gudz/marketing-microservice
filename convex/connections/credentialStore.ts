@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import {
@@ -9,7 +9,8 @@ import {
   type DatabaseWriter,
 } from "../_generated/server";
 import type { ConnectionProvider, StoredConnectionProvider } from "../domain/types";
-import { AUDIT_ACTIONS, SYSTEM_SWEEP_SUBJECT, writeAudit } from "../lib/audit";
+import { literalUnion } from "../domain/validators";
+import { AUDIT_ACTIONS, AUDIT_CODE_PATTERN, SYSTEM_SWEEP_SUBJECT, writeAudit } from "../lib/audit";
 import {
   CREDENTIAL_ALGORITHM,
   credentialAad,
@@ -18,6 +19,8 @@ import {
   loadKeyRing,
   type EncryptedPayload,
 } from "../lib/crypto";
+import type { AuditChanges } from "../lib/validation";
+import { PROVIDER_ERROR_KINDS } from "../providers/errors";
 import { OAUTH_GRANT_TTL_MS } from "./config";
 
 /**
@@ -589,25 +592,76 @@ export const replaceRefreshedCredential = internalMutation({
   },
 });
 
-/** Deletes a connection's credential (disconnect / sweep backstop). */
+/**
+ * How the platform side of a disconnect ended (`revokeAtPlatform`):
+ * - revoked: the platform accepted the revocation (or already considered the token revoked);
+ * - failed: the revocation request failed (failureKind / failureCode say how);
+ * - not_attempted: nothing was sent, because the credential or the provider's configuration
+ *   could not be used (failureKind credential_unavailable or internal);
+ * - not_supported: the provider has no platform revoke (Google Ads G-D6, Meta D7, Instagram).
+ */
+export const platformRevokeValidator = v.object({
+  outcome: literalUnion(["revoked", "failed", "not_attempted", "not_supported"]),
+  failureKind: v.optional(v.string()),
+  failureCode: v.optional(v.string()),
+});
+export type PlatformRevoke = Infer<typeof platformRevokeValidator>;
+
+const REVOKE_FAILURE_KINDS: ReadonlySet<string> = new Set([
+  ...PROVIDER_ERROR_KINDS,
+  "credential_unavailable",
+  "internal",
+]);
+
+/** The audited form: allowlisted kind (else internal) and code (else dropped) only. */
+function platformRevokeChanges(revoke: PlatformRevoke): AuditChanges {
+  const outcome = { outcome: { from: null, to: revoke.outcome } };
+  if (revoke.outcome !== "failed" && revoke.outcome !== "not_attempted") return outcome;
+  const kind =
+    revoke.failureKind !== undefined && REVOKE_FAILURE_KINDS.has(revoke.failureKind)
+      ? revoke.failureKind
+      : "internal";
+  return {
+    ...outcome,
+    failureKind: { from: null, to: kind },
+    ...(revoke.failureCode !== undefined && AUDIT_CODE_PATTERN.test(revoke.failureCode)
+      ? { failureCode: { from: null, to: revoke.failureCode } }
+      : {}),
+  };
+}
+
+/**
+ * Deletes a connection's credential (disconnect / sweep backstop). On disconnect it also
+ * audits how the platform revoke ended, in the same transaction (`connection.platform_revoke`).
+ */
 export const deleteForConnection = internalMutation({
-  args: { connectionId: v.id("connections"), actorSubject: v.string() },
+  args: {
+    connectionId: v.id("connections"),
+    actorSubject: v.string(),
+    platformRevoke: v.optional(platformRevokeValidator),
+  },
   returns: v.boolean(),
-  handler: async (ctx, { connectionId, actorSubject }) => {
+  handler: async (ctx, { connectionId, actorSubject, platformRevoke }) => {
     const connection = await ctx.db.get(connectionId);
     if (connection === null) return false;
     const deleted = await deleteCredential(ctx.db, connection.orgId, connectionId);
+    if (!deleted && platformRevoke === undefined) return false;
+    const org = await ctx.db.get(connection.orgId);
+    const actor = { orgId: connection.orgId, issuer: org?.issuer ?? "", subject: actorSubject };
+    if (platformRevoke !== undefined) {
+      await writeAudit(ctx.db, actor, {
+        action: AUDIT_ACTIONS.connectionPlatformRevoke,
+        targetType: "connection",
+        targetId: connectionId,
+        changes: platformRevokeChanges(platformRevoke),
+      });
+    }
     if (deleted) {
-      const org = await ctx.db.get(connection.orgId);
-      await writeAudit(
-        ctx.db,
-        { orgId: connection.orgId, issuer: org?.issuer ?? "", subject: actorSubject },
-        {
-          action: AUDIT_ACTIONS.credentialDeleted,
-          targetType: "connection",
-          targetId: connectionId,
-        },
-      );
+      await writeAudit(ctx.db, actor, {
+        action: AUDIT_ACTIONS.credentialDeleted,
+        targetType: "connection",
+        targetId: connectionId,
+      });
     }
     return deleted;
   },

@@ -97,6 +97,11 @@ and any token parameter (also on the revocation endpoint).
   `needs_reauth`; reconnecting the same channel makes it active again.
 - **Disconnect** revokes at Google, deletes the credential, drops discovery and hard-deletes the
   channel's stored data; **unlink** hard-deletes it too ([Retention](#retention-checkpoint-3b)).
+  The audit entry `connection.platform_revoke` records how the revoke ended: `revoked`
+  (including an `invalid_token` answer), `failed` (with the error kind and a code such as
+  `revoke:http_503`), or `not_attempted` (no usable credential or configuration). A failed revoke
+  is not retried; the user can still remove the app in their Google Account
+  (https://myaccount.google.com/connections).
 - **D28b stages:** `config`, `token_exchange`, `identity`; the allowlisted codes are listed in
   `connections/oauthDiagnostics.ts`.
 

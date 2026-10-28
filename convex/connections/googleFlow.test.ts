@@ -236,6 +236,14 @@ describe("Google connect flow (live mode, fake Google Ads API)", () => {
     // No platform revoke (G-D6): disconnect never calls Google; the credential is deleted.
     expect(fake.log).toHaveLength(calls);
     expect(await t.run((ctx) => ctx.db.query("credentials").collect())).toHaveLength(0);
+    // ...and the audit says so: nothing was revoked, by design.
+    expect(
+      await t.run(async (ctx) =>
+        (await ctx.db.query("auditLog").collect())
+          .filter((e) => e.action === "connection.platform_revoke")
+          .map((e) => e.changes),
+      ),
+    ).toEqual([{ outcome: { from: null, to: "not_supported" } }]);
 
     const params = await connectGoogleFake(t, fake, "u2");
     expect(params.get("status"), params.get("error") ?? "").toBe("connected");

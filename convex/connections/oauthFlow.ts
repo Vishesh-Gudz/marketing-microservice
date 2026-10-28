@@ -17,7 +17,12 @@ import {
   oauthRedirectUri,
   providerRegistry,
 } from "./config";
-import { encryptCredential, withConnectionCredential } from "./credentialStore";
+import {
+  CredentialUnavailableError,
+  encryptCredential,
+  withConnectionCredential,
+  type PlatformRevoke,
+} from "./credentialStore";
 import type { OAuthFailureDiagnostics } from "./oauthDiagnostics";
 import type { CallbackErrorCode } from "./oauthState";
 import { withResultParams } from "./returnUrls";
@@ -292,30 +297,58 @@ export const runDiscovery = internalAction({
   },
 });
 
-/** Best-effort platform revocation, then ALWAYS deletes the stored credential. */
+/** Sanitized revoke failure: provider error kind and code (filtered again when audited). */
+function revokeFailure(error: unknown): Pick<PlatformRevoke, "failureKind" | "failureCode"> {
+  if (!isProviderError(error)) return { failureKind: "internal" };
+  return {
+    failureKind: error.kind,
+    ...(error.providerCode !== undefined ? { failureCode: error.providerCode } : {}),
+  };
+}
+
+/**
+ * Best-effort platform revocation, then ALWAYS deletes the stored credential. How the revoke
+ * ended is audited with the deletion (`connection.platform_revoke`), so a revocation that
+ * failed or never ran is visible instead of silent.
+ */
 export const revokeAtPlatform = internalAction({
   args: { connectionId: v.id("connections"), actorSubject: v.string() },
   returns: v.null(),
   handler: async (ctx, { connectionId, actorSubject }) => {
+    let platformRevoke: PlatformRevoke = { outcome: "not_attempted", failureKind: "internal" };
     try {
-      await withConnectionCredential(
+      platformRevoke = await withConnectionCredential(
         ctx,
         connectionId,
-        async (credential, connection) => {
+        async (credential, connection): Promise<PlatformRevoke> => {
           // WhatsApp connections are never revoked through the OAuth spec (ADR 0014): the
           // generic disconnect refuses them, and their own offboarding unsubscribes the WABA.
-          if (!isOAuthConnectionProvider(connection.provider)) return;
+          if (!isOAuthConnectionProvider(connection.provider)) return { outcome: "not_supported" };
           const spec = providerRegistry().oauth(connection.provider);
-          await spec.revoke?.(credential, oauthClientConfig(connection.provider));
+          if (spec.revoke === undefined) return { outcome: "not_supported" };
+          const config = oauthClientConfig(connection.provider);
+          try {
+            await spec.revoke(credential, config);
+            return { outcome: "revoked" };
+          } catch (error) {
+            return { outcome: "failed", ...revokeFailure(error) };
+          }
         },
         { allowRevoked: true },
       );
-    } catch {
+    } catch (error) {
+      // Nothing was sent: the credential or the provider's configuration could not be used.
       // Platform revocation is best effort; the local credential is deleted regardless.
+      platformRevoke = {
+        outcome: "not_attempted",
+        failureKind:
+          error instanceof CredentialUnavailableError ? "credential_unavailable" : "internal",
+      };
     } finally {
       await ctx.runMutation(internal.connections.credentialStore.deleteForConnection, {
         connectionId,
         actorSubject,
+        platformRevoke,
       });
     }
     return null;

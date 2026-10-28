@@ -157,6 +157,20 @@ active | needs_reauth ─disconnect─► revoked   (credential deleted; ad acco
   Google Ads**).
 - **Relinking** an ad account to another connection of the same org is allowed and audited
   (`adAccount.relinked`).
+- **Disconnect** schedules `revokeAtPlatform`: a best-effort platform revoke, then the credential
+  is always deleted. How the revoke ended is audited in the same transaction as the deletion
+  (`connection.platform_revoke`, before `credential.deleted`), as `outcome`:
+  - `revoked`: the platform accepted the revocation, or already considered the token revoked;
+  - `failed`: the revocation request failed, with an allowlisted `failureKind` (a provider error
+    kind) and `failureCode` (an identifier such as `revoke:http_503`; anything else is dropped);
+  - `not_attempted`: nothing was sent, because the credential was already gone
+    (`credential_unavailable`) or could not be used, or the provider was not configured
+    (`internal`);
+  - `not_supported`: the provider has no platform revoke (Google Ads G-D6, Meta D7, Instagram).
+
+  A failed revoke is not retried: the credential is deleted either way, so the grant stays at
+  the platform until the user removes it there.
+
 - **Linking starts syncing (Phase 5).** The link writes the account through the canonical write
   path (`convex/sync/upsert.ts`) and creates or resumes its `syncAccounts` state in the same
   transaction; the next planner tick starts the initial sync. Unlink parks the sync state; a run in
@@ -278,7 +292,8 @@ Full details: [providers/instagram.md](providers/instagram.md).
   or expired, e.g. after 7 days in Google's Testing mode) moves the connection to `needs_reauth`.
 - **Disconnect:** revokes the refresh token at Google (`oauth2.googleapis.com/revoke`, token in
   the form body), then always deletes the credential and drops discovery; the channel and all its
-  stored data are hard-deleted (Checkpoint 3b).
+  stored data are hard-deleted (Checkpoint 3b). The revoke outcome is audited
+  (`connection.platform_revoke`, see [Lifecycle](#lifecycle)).
 - **Unlink** (`unlinkSocialAccount`) hard-deletes the channel and its stored data too, keeping
   the connection and the id-only discovered row. Relinking is refused (`CONFLICT`,
   `purge_pending`) until the deletion has completed; the channel then links as a new row.

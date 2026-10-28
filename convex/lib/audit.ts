@@ -16,6 +16,9 @@ export const AUDIT_ACTIONS = {
   connectionDisconnected: "connection.disconnected",
   connectionNeedsReauth: "connection.needs_reauth",
   credentialDeleted: "credential.deleted",
+  // How the platform side of a disconnect ended, written with the credential deletion: an
+  // allowlisted outcome, error kind and code only, never a token or a platform message.
+  connectionPlatformRevoke: "connection.platform_revoke",
   // S2: a consented grant waits for its initiator; a claim by anyone else invalidates it.
   connectionOAuthGranted: "connection.oauth_granted",
   connectionClaimRejected: "connection.claim_rejected",
@@ -52,6 +55,9 @@ export const AUDIT_ACTIONS = {
   // WhatsApp partner removal (ADR 0014 B4b): Meta confirmed our access to the WABA is gone.
   whatsappPartnerRemoved: "whatsapp.partner_removed",
 } as const;
+
+/** Platform error codes that may be audited: short identifiers only, never free text. */
+export const AUDIT_CODE_PATTERN = /^[A-Za-z0-9_:]{1,64}$/;
 
 /** Actor used for audit entries written by scheduled system jobs. */
 export const SYSTEM_SWEEP_SUBJECT = "system:connection-sweep";
