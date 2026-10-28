@@ -256,3 +256,51 @@ describe("reporting delay (ADR 0016, YouTube)", () => {
     );
   });
 });
+
+describe("report scope (ADR 0016, open question 13)", () => {
+  const youtubeState: PlanState = { structureStale: false, backfillHorizon: "2025-08-30" };
+  const operations = (input: Partial<Parameters<typeof buildSocialRunPlan>[0]>) =>
+    buildSocialRunPlan({
+      kind: "initial",
+      state: youtubeState,
+      capabilities: YOUTUBE_CAPABILITIES,
+      now: NOW,
+      ...input,
+    }).tasks.map((t) => t.operation);
+
+  it("YouTube names yt-analytics.readonly as the scope its day reports need", () => {
+    expect(YOUTUBE_CAPABILITIES.accountMetricsScope).toBe(
+      "https://www.googleapis.com/auth/yt-analytics.readonly",
+    );
+    expect(INSTAGRAM_CAPABILITIES.accountMetricsScope).toBeUndefined();
+  });
+
+  it("without the scope: no day-report task, and nothing else changes", () => {
+    for (const kind of ["initial", "lookback", "incremental", "manual"] as const) {
+      const granted = operations({ kind });
+      const missing = operations({ kind, accountMetricsGranted: false });
+      expect(missing).toEqual(granted.filter((op) => op !== "fetchAccountMetrics"));
+      expect(missing[0]).toBe("getSocialAccount");
+    }
+    expect(operations({ accountMetricsGranted: false })).toEqual([
+      "getSocialAccount",
+      "listSocialPosts",
+      "fetchPostMetrics",
+    ]);
+    // No account-metric window: the plan claims no day as covered.
+    expect(
+      buildSocialRunPlan({
+        kind: "initial",
+        state: youtubeState,
+        capabilities: YOUTUBE_CAPABILITIES,
+        now: NOW,
+        accountMetricsGranted: false,
+      }).window,
+    ).toBeUndefined();
+  });
+
+  it("with the scope (or by default) the plan is exactly as before", () => {
+    expect(operations({ accountMetricsGranted: true })).toEqual(operations({}));
+    expect(operations({})).toContain("fetchAccountMetrics");
+  });
+});

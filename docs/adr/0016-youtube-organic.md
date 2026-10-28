@@ -3,7 +3,8 @@
 - Status: Checkpoints 1 (provider foundation), 2 (OAuth and account connection), 3 (analytics
   sync and storage, after the policy review), 3b (retention and deletion), 4 (tenant-scoped v1
   API) and 5 (dashboard and connection UI) implemented; Checkpoint 6 verified the complete
-  workflow against mock and fake data only.
+  workflow against mock and fake data only; Checkpoint 7 resolved open question 13 (the day
+  reports are skipped without `yt-analytics.readonly`; everything else keeps syncing).
   Nothing was validated against a real YouTube channel or a real Google OAuth client (YR1–YR14
   provisional).
 - Date: 2026-10-25
@@ -192,9 +193,9 @@ The dashboard ([docs/dashboard.md](../dashboard.md#organic-youtube-adr-0016-chec
   `purge_pending` explained), and **Disconnect and delete data**. It reports the deletion as
   complete only once the server has removed the channel's row. This is the in-product deletion
   path (III.E.4.g).
-- **The scope-less sync limitation (open question 13) is shown, not fixed:** both the YouTube
-  view and the card say that video statistics may stop updating while YouTube Analytics access is
-  missing.
+- **The missing-scope behavior (open question 13) is shown, not changed.** Both the YouTube
+  view and the card said that video statistics may stop updating while YouTube Analytics access
+  is missing. Checkpoint 7 found that claim wrong and changed the texts.
 
 ### Checkpoint 6 (verification)
 
@@ -211,8 +212,7 @@ The dashboard ([docs/dashboard.md](../dashboard.md#organic-youtube-adr-0016-chec
 - **No real Google account or channel has been used.** The manual verification steps and the
   consolidated limitations are in
   [docs/providers/youtube.md](../providers/youtube.md#verification-status-and-limitations-checkpoint-6).
-- **Proposed narrow fix for open question 13** (not implemented; a sync change that needs
-  approval):
+- **Proposed narrow fix for open question 13** (implemented in Checkpoint 7, below):
   - When the YouTube connection lacks `yt-analytics.readonly`, the social planner would plan
     the channel's runs without the account-metric task, instead of failing the run and blocking
     the channel.
@@ -221,6 +221,51 @@ The dashboard ([docs/dashboard.md](../dashboard.md#organic-youtube-adr-0016-chec
     channel is reconnected with the scope.
   - Scope: the planner's task list for YouTube (`convex/sync/socialPlan.ts` and its input),
     with tests; no API or dashboard change.
+
+### Checkpoint 7 (open question 13)
+
+**What actually happened before.** `buildSocialRunPlan` always planned the day-report task.
+Without `yt-analytics.readonly`, the provider failed it as `permission` /
+`analytics_scope_missing`, a blocking kind:
+
+- every run **failed**, and the channel showed as **blocked**;
+- since a failed initial run never completes, every daily re-check re-ran a full initial run:
+  preflight, full listing, video statistics, then the failing report;
+- so the video statistics **were** still captured daily and the uploads kept being refreshed,
+  and no video was deleted;
+- what was lost: the normal cadence (no hourly incremental listings), any successful sync
+  (`lastSuccessAt` never set) and an accurate status.
+
+This was shown by a 30-day simulation against the old planner (a one-off check, not kept as a test). The earlier statement (here,
+in the Checkpoint 6 limitations and in the Checkpoint 5 dashboard texts) that the statistics
+stopped updating and the videos were deleted after 25 days was **wrong**.
+
+**Change (no schema change, no change to the provider's behavior):**
+
+- A new optional capability, `accountMetricsScope`, set to `yt-analytics.readonly` for
+  YouTube. Instagram declares none and is unchanged.
+- The planner (`convex/sync/planner.ts`) passes whether the connection's granted scopes hold
+  it. `buildSocialRunPlan` then plans every task except `fetchAccountMetrics`.
+- Consequences:
+  - runs succeed on the normal cadence;
+  - no day is written, so none is fabricated, and no coverage is claimed: days stay `unknown`
+    with `analyticsAccess: "scope_missing"`;
+  - the connection stays `active`;
+  - `invalid_grant` still means `needs_reauth`;
+  - reconnecting with the scope adds the day reports from the next run on;
+  - a channel blocked by the old behavior unblocks on its next daily re-check, through the
+    existing audited `sync.account_unblocked` path;
+  - retention, deletion and tenant isolation are untouched.
+- The dashboard texts now say that the videos keep syncing and only the daily metrics wait.
+
+**Tests:**
+
+- `convex/sync/socialPlan.test.ts` (the plan with and without the scope; Instagram
+  unchanged);
+- `convex/sync/youtube.e2e.test.ts`, five tests: a successful sync without reports and a
+  resumed lookback; no ageing-out by retention or by the authorization check; the old blocked
+  state unblocks; a revocation still means `needs_reauth`, and a reconnect with the scope syncs
+  the days; another org keeps its own reports.
 
 ## Policy review findings (Checkpoint 3)
 
@@ -274,11 +319,12 @@ The dashboard ([docs/dashboard.md](../dashboard.md#organic-youtube-adr-0016-chec
 12. (Checkpoint 3b) For channels with more than 5,000 uploads, the oldest uploads are never stored,
     and uploads pushed past the cap are deleted after 25 days. Is that acceptable for the product,
     or should older uploads be read some other way?
-13. (Checkpoint 4, a sync behavior) A channel connected without `yt-analytics.readonly` has its
-    whole sync blocked after the first run fails on the day report. Its video statistics stop
-    updating, and 25 days later the retention sweep deletes the videos. Should listings and video
-    statistics keep syncing when only the analytics scope is missing? That would be a change to
-    the sync implementation, not the API.
+13. (Checkpoint 4, a sync behavior) **Resolved in Checkpoint 7.**
+    - Without `yt-analytics.readonly`, the channel's metadata, listings and video statistics
+      now sync on the normal cadence. Only the day reports are skipped, and those days stay
+      `unknown`.
+    - The original premise was wrong: the statistics never stopped updating and no video was
+      deleted. Before, every run failed and the channel showed as blocked.
 
 Until answered: only metrics YouTube reports are stored and exposed (one channel at a time,
 through `v1/youtubeAnalytics`), nothing is derived, there is no multi-channel or cross-platform

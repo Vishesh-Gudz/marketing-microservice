@@ -112,9 +112,20 @@ and any token parameter (also on the revocation endpoint).
 Before any request, every operation checks the configuration (`youtube_config_invalid`,
 `unknown`), the credential shape and OAuth client (`auth`), and that the requested channel is the
 credential's channel (`permission` / `account_mismatch`). Access tokens are minted per call from
-the stored refresh token and kept in memory only. `fetchAccountMetrics` also fails as
-`permission` / `analytics_scope_missing` before any request when the connection was granted
-without `yt-analytics.readonly` (the channel is then blocked until it is reconnected).
+the stored refresh token and kept in memory only.
+
+**Without `yt-analytics.readonly`** (Checkpoint 7, ADR 0016 open question 13), the planner
+does not plan `fetchAccountMetrics` for the connection; this is the capability
+`accountMetricsScope`, checked against the connection's granted scopes.
+
+- The preflight, the listings and the video statistics sync on the normal cadence, and the runs
+  succeed.
+- The channel's days stay `unknown` (never zero), with `analyticsAccess: "scope_missing"`.
+- The connection stays `active`; reconnecting with the permission adds the day reports from
+  the next run on.
+
+The provider's own check stays as a guard: called anyway, `fetchAccountMetrics` fails as
+`permission` / `analytics_scope_missing` before any request.
 
 **Quota (estimate, default 10,000 Data API units per project per day):** a 500-upload channel
 costs about 70 units for the hourly incremental runs (3 per run) plus about 25 for the daily
@@ -396,21 +407,22 @@ task once).
 
 ## Capabilities
 
-| Value                      | Setting                                     | Source                                   |
-| -------------------------- | ------------------------------------------- | ---------------------------------------- |
-| account types              | `channel`                                   | Y-D2                                     |
-| posts                      | yes                                         | Checkpoint 1                             |
-| post metrics               | `views`, `likes`, `comments`                | [doc] `videos.list` statistics           |
-| account metrics            | `views` (+ the reported extras)             | [doc] the channel day report             |
-| snapshot window            | 90 days                                     | ours (Y-D8)                              |
-| snapshot page              | 50 (1,000 per task; truncation is reported) | [doc] / ours                             |
-| listing page               | 50                                          | [doc] Data API page limit                |
-| listing pages              | 100 (5,000 uploads; truncation is reported) | ours                                     |
-| requests per provider call | 4                                           | token + channel + playlistItems + videos |
-| account-metric horizon     | 395 days                                    | ours (Y-D7)                              |
-| account-metric lookback    | 7 days                                      | ours (Y-D7) [YR9]                        |
-| account-metric delay       | 3 days (`accountMetricsDelayDays`)          | [doc] 48–72 h latency                    |
-| account-metric chunk       | 31 days = 1 report                          | ours                                     |
+| Value                      | Setting                                         | Source                                   |
+| -------------------------- | ----------------------------------------------- | ---------------------------------------- |
+| account types              | `channel`                                       | Y-D2                                     |
+| posts                      | yes                                             | Checkpoint 1                             |
+| post metrics               | `views`, `likes`, `comments`                    | [doc] `videos.list` statistics           |
+| account metrics            | `views` (+ the reported extras)                 | [doc] the channel day report             |
+| snapshot window            | 90 days                                         | ours (Y-D8)                              |
+| snapshot page              | 50 (1,000 per task; truncation is reported)     | [doc] / ours                             |
+| listing page               | 50                                              | [doc] Data API page limit                |
+| listing pages              | 100 (5,000 uploads; truncation is reported)     | ours                                     |
+| requests per provider call | 4                                               | token + channel + playlistItems + videos |
+| account-metric horizon     | 395 days                                        | ours (Y-D7)                              |
+| account-metric lookback    | 7 days                                          | ours (Y-D7) [YR9]                        |
+| account-metric delay       | 3 days (`accountMetricsDelayDays`)              | [doc] 48–72 h latency                    |
+| account-metric chunk       | 31 days = 1 report                              | ours                                     |
+| account-metric scope       | `yt-analytics.readonly` (`accountMetricsScope`) | Checkpoint 7: no report task without it  |
 
 ## Mock mode
 
@@ -472,11 +484,12 @@ How it was verified:
 
 Limitations:
 
-- **Missing `yt-analytics.readonly` blocks the whole sync** (ADR 0016 open question 13). The
-  first run fails on the day report and the channel is blocked: its video statistics stop
-  updating, and 25 days later the retention sweep deletes the videos. The API and the dashboard
-  say so (`analyticsAccess: "scope_missing"`), but the sync is unchanged. A narrow fix is
-  proposed in the ADR.
+- **Without `yt-analytics.readonly` there are no daily channel metrics** (Checkpoint 7). The
+  day reports are not requested and the days stay `unknown`. Everything else syncs normally;
+  reconnect with the permission to add the days.
+  - Before Checkpoint 7, every run of such a channel failed and the channel showed as blocked.
+  - It was still re-run daily, so its video statistics kept being captured and no video was
+    deleted. Earlier notes said otherwise; they were wrong (ADR 0016).
 - **5,000-upload listing cap:** older uploads are never stored. Uploads pushed past the cap are
   deleted 25 days after their last listing (see Retention).
 - **Google's Testing mode:** refresh tokens expire after 7 days. The connection then becomes
@@ -527,4 +540,5 @@ Then verify the real workflow (Checkpoint 6; not yet done with a real channel):
    - the app no longer appears under the Google account's third-party access;
    - the audit log has `socialAccount.purge_started` and `socialAccount.purged`.
 9. Connect without ticking the YouTube Analytics permission. The view shows "YouTube Analytics
-   access is missing", and the scope limitation described below applies.
+   access is missing", the runs succeed without day reports, and the video statistics keep
+   updating.

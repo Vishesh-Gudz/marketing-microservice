@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { eachDay } from "../lib/dates";
 import { mockInstagramAccountId } from "../providers/social/mock";
@@ -249,25 +249,198 @@ describe("YouTube sync (live, fake API)", () => {
     expect(new Set(insights.map((d) => d.date)).size).toBe(30);
   });
 
-  it("a channel without the analytics grant is blocked before any report request", async () => {
+  it("a channel without the analytics grant syncs everything but the day reports (Q13)", async () => {
     stubLiveYouTube(fake);
     const t = newBackend();
     await setupSyncOrg(t);
     const params = await connectYouTubeFake(t, fake, "noAnalytics");
-    const dto = await as(t).query(api.v1.connections.get, {
-      connectionId: params.get("connection")!,
-    });
+    const connectionId = params.get("connection")!;
+    const dto = await as(t).query(api.v1.connections.get, { connectionId });
     expect(dto.missingScopes).toEqual(["https://www.googleapis.com/auth/yt-analytics.readonly"]);
-    await linkSocial(t, params.get("connection")!, [FAKE_CHANNEL_ID]);
+    const [account] = await linkSocial(t, connectionId, [FAKE_CHANNEL_ID]);
+    fake.requests.length = 0;
     await planAndDrain(t);
     const db = await state(t);
-    expect(db.runs[0]).toMatchObject({
-      status: "failed",
-      error: { kind: "permission", code: "analytics_scope_missing" },
-    });
-    expect(db.accounts[0]!.state).toBe("blocked");
+    expect(db.runs[0]).toMatchObject({ kind: "initial", status: "succeeded" });
+    expect(db.runs[0]!.error).toBeUndefined();
+    expect(
+      db.tasks.sort((a, b) => a.seq - b.seq).map((task) => [task.operation, task.status]),
+    ).toEqual([
+      ["getSocialAccount", "succeeded"],
+      ["listSocialPosts", "succeeded"],
+      ["fetchPostMetrics", "succeeded"],
+    ]);
+    // Channel, videos and video statistics are synced; no report was requested.
+    expect(db.socialAccounts[0]).toMatchObject({ name: "Fake Brand", followersCount: 12_300 });
+    expect(db.posts).toHaveLength(3);
+    expect(db.snapshots).toHaveLength(3);
     expect(count("/v2/reports")).toBe(0);
+    // No day is fabricated: no insights row, no coverage; v1 says why the days are unknown.
     expect(db.daily.filter((d) => d.insightsSyncedAt !== undefined)).toEqual([]);
+    expect(db.accounts[0]).toMatchObject({ state: "idle", consecutiveFailures: 0 });
+    expect(db.accounts[0]!.lastError).toBeUndefined();
+    expect(db.accounts[0]!.coveredThrough).toBeUndefined();
+    const days = await as(t).query(api.v1.youtubeAnalytics.channelDays, {
+      socialAccountId: account!.id,
+      range: { from: "2026-10-15", to: "2026-10-17" },
+    });
+    expect(days).toMatchObject({ analyticsAccess: "scope_missing", dataState: "unknown" });
+    expect(
+      days.days.every((day) => day.status === "unknown" && Object.keys(day.metrics).length === 0),
+    ).toBe(true);
+    // The missing scope is not an authorization failure.
+    expect((await as(t).query(api.v1.connections.get, { connectionId })).status).toBe("active");
+
+    // The next daily lookback keeps updating the video statistics (a new capture day).
+    vi.setSystemTime(NOW.getTime() + 25 * 60 * 60_000);
+    await planAndDrain(t);
+    const later = await state(t);
+    expect(later.runs.sort((a, b) => a.createdAt - b.createdAt).at(-1)).toMatchObject({
+      kind: "lookback",
+      status: "succeeded",
+    });
+    expect(later.snapshots).toHaveLength(6);
+    expect(new Set(later.snapshots.map((s) => s.capturedDate))).toEqual(
+      new Set(["2026-10-20", "2026-10-21"]),
+    );
+    expect(count("/v2/reports")).toBe(0);
+  });
+
+  it("a missing analytics grant alone never ages out the videos or the channel (Q13)", async () => {
+    stubLiveYouTube(fake);
+    const t = newBackend();
+    const socialAccountId = await linkedYouTube(t, "noAnalytics");
+    await planAndDrain(t);
+    // 26 days later: the daily lookback lists the uploads again before the sweep looks.
+    const aged = NOW.getTime() - 26 * 24 * 60 * 60_000;
+    await t.run(async (ctx) => {
+      for (const post of await ctx.db.query("socialPosts").collect()) {
+        await ctx.db.patch(post._id, { lastSeenAt: aged });
+      }
+      await ctx.db.patch(socialAccountId, { lastSeenAt: aged });
+      for (const row of await ctx.db.query("syncAccounts").collect()) {
+        await ctx.db.patch(row._id, { nextPlanAt: 0, nextLookbackAt: 0 });
+      }
+    });
+    vi.setSystemTime(NOW.getTime() + 60 * 60_000);
+    await planAndDrain(t);
+    expect(
+      (await t.mutation(internal.connections.youtubeRetention.sweepYouTubeRetention, {}))
+        .videosDeleted,
+    ).toBe(0);
+    expect(
+      (await t.mutation(internal.connections.youtubeRetention.planYouTubeAuthorizationChecks, {}))
+        .checks,
+    ).toBe(0);
+    const db = await state(t);
+    expect(db.posts).toHaveLength(3);
+    expect(db.socialAccounts).toHaveLength(1);
+    expect(db.posts.every((post) => (post.lastSeenAt ?? 0) > aged)).toBe(true);
+  });
+
+  it("a channel blocked by the old behavior unblocks on its next run (audited)", async () => {
+    stubLiveYouTube(fake);
+    const t = newBackend();
+    await linkedYouTube(t, "noAnalytics");
+    await planAndDrain(t);
+    // As Checkpoints 3-6 left it: blocked on analytics_scope_missing, re-checked daily.
+    await t.run(async (ctx) => {
+      for (const row of await ctx.db.query("syncAccounts").collect()) {
+        await ctx.db.patch(row._id, {
+          state: "blocked",
+          lastError: {
+            kind: "permission",
+            code: "analytics_scope_missing",
+            message: "No access to this ad account",
+            at: NOW.getTime(),
+          },
+          nextPlanAt: 0,
+          nextLookbackAt: 0,
+        });
+      }
+    });
+    vi.setSystemTime(NOW.getTime() + 24 * 60 * 60_000);
+    await planAndDrain(t);
+    const db = await state(t);
+    expect(db.runs.sort((a, b) => a.createdAt - b.createdAt).at(-1)).toMatchObject({
+      status: "succeeded",
+    });
+    expect(db.accounts[0]).toMatchObject({ state: "idle" });
+    expect(db.accounts[0]!.lastError).toBeUndefined();
+    const audit = await t.run((ctx) => ctx.db.query("auditLog").collect());
+    expect(audit.map((entry) => entry.action)).toContain("sync.account_unblocked");
+  });
+
+  it("without the analytics grant, a revocation at Google still means needs_reauth; reconnecting with it syncs the days", async () => {
+    stubLiveYouTube(fake);
+    const t = newBackend();
+    await setupSyncOrg(t);
+    const connectionId = (await connectYouTubeFake(t, fake, "noAnalytics")).get("connection")!;
+    const [account] = await linkSocial(t, connectionId, [FAKE_CHANNEL_ID]);
+    await planAndDrain(t);
+
+    // A genuine authorization failure keeps its existing path.
+    fake.revoke("noAnalytics");
+    await t.run(async (ctx) => {
+      for (const row of await ctx.db.query("syncAccounts").collect()) {
+        await ctx.db.patch(row._id, { nextPlanAt: 0, nextIncrementalAt: 0 });
+      }
+    });
+    vi.setSystemTime(NOW.getTime() + 60 * 60_000);
+    await planAndDrain(t);
+    expect((await as(t).query(api.v1.connections.get, { connectionId })).status).toBe(
+      "needs_reauth",
+    );
+    const failed = (await state(t)).runs.sort((a, b) => a.createdAt - b.createdAt).at(-1);
+    expect(failed).toMatchObject({
+      status: "failed",
+      error: { kind: "auth", code: "invalid_grant" },
+    });
+
+    // Reconnect the same channel, this time with YouTube Analytics: the full sync resumes.
+    const again = await connectYouTubeFake(
+      t,
+      fake,
+      "brand",
+      {},
+      { reconnectConnectionId: connectionId },
+    );
+    expect(again.get("status")).toBe("connected");
+    const reconnected = await as(t).query(api.v1.connections.get, { connectionId });
+    expect(reconnected).toMatchObject({ status: "active", missingScopes: [] });
+    await t.run(async (ctx) => {
+      for (const row of await ctx.db.query("syncAccounts").collect()) {
+        await ctx.db.patch(row._id, { nextPlanAt: 0, nextLookbackAt: 0 });
+      }
+    });
+    vi.setSystemTime(NOW.getTime() + 2 * 60 * 60_000);
+    fake.requests.length = 0;
+    await planAndDrain(t);
+    const latest = (await state(t)).runs.sort((a, b) => a.createdAt - b.createdAt).at(-1)!;
+    expect(latest).toMatchObject({ kind: "lookback", status: "succeeded" });
+    expect(count("/v2/reports")).toBe(1);
+    const days = await as(t).query(api.v1.youtubeAnalytics.channelDays, {
+      socialAccountId: account!.id,
+      range: { from: "2026-10-11", to: "2026-10-17" },
+    });
+    expect(days).toMatchObject({ analyticsAccess: "granted", dataState: "reported" });
+  });
+
+  it("another org's channel with the grant keeps its day reports; each org follows its own scopes", async () => {
+    stubLiveYouTube(fake);
+    const t = newBackend();
+    const without = await linkedYouTube(t, "noAnalytics");
+    const orgB = { org: "43" };
+    await setupSyncOrg(t, orgB);
+    const params = await connectYouTubeFake(t, fake, "brand", orgB);
+    const [withGrant] = await linkSocial(t, params.get("connection")!, [FAKE_CHANNEL_ID], orgB);
+    await planAndDrain(t);
+    const db = await state(t);
+    const insightsOf = (id: string) =>
+      db.daily.filter((d) => d.socialAccountId === id && d.insightsSyncedAt !== undefined).length;
+    expect(insightsOf(without)).toBe(0);
+    expect(insightsOf(withGrant!.id)).toBe(30);
+    expect(db.runs.every((run) => run.status === "succeeded")).toBe(true);
   });
 
   it("keeps Pacific Time day keys across the November DST change", async () => {

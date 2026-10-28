@@ -16,7 +16,10 @@ import type { SocialSyncOperation } from "./subject";
  *                        incremental listing on incremental/manual runs
  *   fetchPostMetrics     capabilities.postMetrics non-empty: initial and lookback (daily)
  *                        runs; window = the post snapshot window ending today
- *   fetchAccountMetrics  capabilities.accountMetrics non-empty, chunked by
+ *   fetchAccountMetrics  capabilities.accountMetrics non-empty AND, when the platform names a
+ *                        capabilities.accountMetricsScope, the connection was granted it (ADR
+ *                        0016, open question 13: YouTube without yt-analytics.readonly keeps
+ *                        syncing everything else; its days stay unknown). Chunked by
  *                        maxAccountMetricsRangeDays, never older than the platform horizon,
  *                        ending at `latest` = today - accountMetricsDelayDays (absent = 0:
  *                        today; YouTube reports days late, ADR 0016):
@@ -91,6 +94,8 @@ export function buildSocialRunPlan(input: {
   state: PlanState;
   capabilities: SocialProviderCapabilities;
   now: number;
+  /** The connection holds capabilities.accountMetricsScope (default: true). */
+  accountMetricsGranted?: boolean;
 }): SocialRunPlan {
   const { kind, capabilities, now } = input;
   const today = todayIn("UTC", now);
@@ -110,7 +115,10 @@ export function buildSocialRunPlan(input: {
       fullListing: false,
     });
   }
-  const window = capabilities.accountMetrics.length > 0 ? socialMetricWindow(input) : undefined;
+  const window =
+    capabilities.accountMetrics.length > 0 && input.accountMetricsGranted !== false
+      ? socialMetricWindow(input)
+      : undefined;
   if (window !== undefined) {
     for (const chunk of windowChunks(window, capabilities.maxAccountMetricsRangeDays)) {
       tasks.push({ operation: "fetchAccountMetrics", ...chunk, fullListing: false });

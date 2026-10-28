@@ -78,10 +78,11 @@ describe("youtubeAccessNotice", () => {
       tone: "warning",
       title: "YouTube Analytics access is missing",
     });
-    // The known sync limitation (ADR 0016 open question 13) is stated, not hidden.
-    expect(youtubeAccessNotice("scope_missing")!.message).toContain(
-      "video statistics may stop updating",
-    );
+    // ADR 0016 open question 13: only the daily metrics wait; nothing is shown as zero.
+    const missing = youtubeAccessNotice("scope_missing")!.message;
+    expect(missing).toContain("Its videos and their statistics keep syncing.");
+    expect(missing).toContain("never zero");
+    expect(missing).not.toMatch(/stop updating/);
     expect(youtubeAccessNotice("reauth_required")).toMatchObject({ title: "Reconnect required" });
     expect(youtubeAccessNotice("not_linked")).toMatchObject({ tone: "info" });
     expect(youtubeAccessNotice("unknown")).toMatchObject({ tone: "info" });

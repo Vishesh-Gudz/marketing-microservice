@@ -239,8 +239,8 @@ export function YouTubeConnection({
             <ConnectionNotice notice={connectionStatusNotice(connection, "youtube")} />
             {connection.status === "active" && connection.missingScopes.length > 0 && (
               <p className="text-sm text-muted-foreground">
-                Known limitation: until YouTube Analytics access is granted, the channel&apos;s
-                video statistics may stop updating as well.
+                The channel&apos;s videos and their statistics keep syncing; only the daily channel
+                metrics wait for this access.
               </p>
             )}
             {candidates.length > 1 && (

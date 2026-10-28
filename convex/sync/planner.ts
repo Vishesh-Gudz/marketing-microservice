@@ -4,7 +4,7 @@ import type { Doc } from "../_generated/dataModel";
 import { internalMutation, type MutationCtx } from "../_generated/server";
 import { providerRegistry } from "../connections/config";
 import { SYNC_CADENCE, SYNC_LIMITS } from "./config";
-import { buildRunPlan, dueKind, nextDueAt } from "./plan";
+import { buildRunPlan, dueKind, nextDueAt, type SyncRunKind } from "./plan";
 import { isBlockingError, retainBlockingError, sanitizeFailure } from "./policy";
 import { cancelRun, createRun, createSocialRun, recoverStalledRun } from "./runs";
 import { buildSocialRunPlan } from "./socialPlan";
@@ -58,6 +58,30 @@ async function loadSubject(ctx: MutationCtx, subject: SyncSubject): Promise<Subj
   }
   const account = await ctx.db.get(subject.socialAccountId);
   return account === null ? null : { kind: "social", account };
+}
+
+/**
+ * A social subject's run plan. ADR 0016 (open question 13): a connection that was not granted
+ * the platform's account-metric scope (YouTube: yt-analytics.readonly) gets no account-metric
+ * task, so a missing report permission never fails, blocks or ages out the rest of the sync.
+ */
+function socialRunPlan(
+  kind: SyncRunKind,
+  row: Doc<"syncAccounts">,
+  platform: Doc<"socialAccounts">["platform"],
+  connection: Doc<"connections">,
+  now: number,
+) {
+  const capabilities = providerRegistry().socialCapabilities(platform);
+  return buildSocialRunPlan({
+    kind,
+    state: row,
+    capabilities,
+    now,
+    accountMetricsGranted:
+      capabilities.accountMetricsScope === undefined ||
+      connection.grantedScopes.includes(capabilities.accountMetricsScope),
+  });
 }
 
 async function planAccount(
@@ -164,12 +188,7 @@ async function planAccount(
           syncAccount: row,
           account: target.account,
           connection,
-          plan: buildSocialRunPlan({
-            kind,
-            state: row,
-            capabilities: registry.socialCapabilities(target.account.platform),
-            now,
-          }),
+          plan: socialRunPlan(kind, row, target.account.platform, connection, now),
           trigger,
           now,
         });

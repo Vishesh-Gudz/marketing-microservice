@@ -138,7 +138,7 @@ describe("YouTube connection status", () => {
     expect(text).not.toMatch(/googleapis|token|secret|credential/i);
   });
 
-  it("states missing YouTube Analytics access and the known limitation; Reconnect fixes it", async () => {
+  it("states missing YouTube Analytics access (videos keep syncing); Reconnect adds it", async () => {
     setup({
       connections: [
         youtubeConnection({ missingScopes: [SCOPES[1]!], grantedScopes: [SCOPES[0]!] }),
@@ -150,7 +150,10 @@ describe("YouTube connection status", () => {
     expect(
       within(section).getByLabelText("YouTube Analytics access is missing"),
     ).toBeInTheDocument();
-    expect(section).toHaveTextContent("video statistics may stop updating as well");
+    expect(section).toHaveTextContent(
+      "The channel's videos and their statistics keep syncing; only the daily channel metrics wait for this access.",
+    );
+    expect(section).not.toHaveTextContent("stop updating");
     fireEvent.click(within(section).getByRole("button", { name: "Reconnect YouTube" }));
     await waitFor(() => expect(navigateToAuthorization).toHaveBeenCalledOnce());
     expect(mockAction(BEGIN)).toHaveBeenCalledExactlyOnceWith({

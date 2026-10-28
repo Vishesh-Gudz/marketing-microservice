@@ -45,6 +45,13 @@ export type SocialProviderCapabilities = {
    * days stay unknown instead of being synced as "not reported". Absent = 0 (Instagram).
    */
   accountMetricsDelayDays?: number;
+  /**
+   * ADR 0016 (open question 13): the OAuth scope the account-metric reports need, when a consent
+   * can leave it out (YouTube: yt-analytics.readonly). A connection that was not granted it gets
+   * no account-metric task: every other operation keeps syncing, and those days stay unknown.
+   * Absent = no such scope (Instagram).
+   */
+  accountMetricsScope?: string;
   /** Longer account-metric ranges are rejected with invalid_request (the plan chunks). */
   maxAccountMetricsRangeDays: number;
   /** Posts published within this many UTC days get a daily lifetime snapshot. */

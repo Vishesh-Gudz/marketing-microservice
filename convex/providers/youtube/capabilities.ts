@@ -1,4 +1,5 @@
 import type { SocialProviderCapabilities } from "../social/capabilities";
+import { YOUTUBE_ANALYTICS_SCOPE } from "./oauth";
 import {
   ACCOUNT_METRICS_DELAY_DAYS,
   CHANNEL_ACCOUNT_TYPE,
@@ -28,6 +29,8 @@ import {
  * - accountMetricsLookbackDays 7      ours (Y-D7): [doc] 48-72 h processing latency; whether
  *                                     data is revised later is [PROVISIONAL YR9]
  * - accountMetricsDelayDays 3         [doc] 48-72 h latency: windows end 3 days before today
+ * - accountMetricsScope               yt-analytics.readonly: a connection granted without it
+ *                                     gets no day-report task (Q13); the rest keeps syncing
  * - maxAccountMetricsRangeDays 31     ours: one window chunk = one `reports.query`
  * - postSnapshotWindowDays 90         ours (Y-D8)
  */
@@ -39,6 +42,7 @@ export const YOUTUBE_CAPABILITIES: SocialProviderCapabilities = Object.freeze({
   accountMetricsHorizonDays: 395,
   accountMetricsLookbackDays: 7,
   accountMetricsDelayDays: ACCOUNT_METRICS_DELAY_DAYS,
+  accountMetricsScope: YOUTUBE_ANALYTICS_SCOPE,
   maxAccountMetricsRangeDays: 31,
   postSnapshotWindowDays: POST_SNAPSHOT_WINDOW_DAYS,
   defaultPageSize: LISTING_PAGE_SIZE,

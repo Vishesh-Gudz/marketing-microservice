@@ -187,7 +187,7 @@ describe("YouTube view", () => {
       linksToConnections,
     );
     if (access === "scope_missing") {
-      expect(notice).toHaveTextContent("video statistics may stop updating as well");
+      expect(notice).toHaveTextContent("Its videos and their statistics keep syncing.");
     }
   });
 

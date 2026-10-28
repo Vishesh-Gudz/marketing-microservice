@@ -228,8 +228,8 @@ engagement rate, no percent change, no score, no cross-channel or cross-platform
   reason; a reported 0 stays 0; unknown and not-reported days show "—", never 0. There is no
   total row.
 - **Notices** (from the API): partial or unsynced ranges ("N Pacific Time days of this range not
-  synced yet"); `scope_missing` (YouTube Analytics access not granted; it also names the known
-  limitation that video statistics may stop updating, ADR 0016 open question 13);
+  synced yet"); `scope_missing` (YouTube Analytics access not granted: the daily metrics stay unknown,
+  while the videos and their statistics keep syncing, ADR 0016 open question 13);
   `reauth_required`; `not_linked`; each links to `/connections` where that helps.
 - **Videos:** paginated (25/50/100, cursor stack), by publish time in the org time zone; lifetime
   Views, Likes and Comments at the latest capture (UTC capture day), "not daily performance".
@@ -356,8 +356,8 @@ with the shared Connect / Reconnect / Disconnect buttons and YouTube's own wordi
 (`PROVIDERS.youtube`, `lib/connections/youtube.ts`):
 
 - **Status** (every role): connected, YouTube Analytics access missing (`yt-analytics.readonly`
-  not granted; with the known limitation that video statistics may stop updating), reconnect
-  required. The channel is shown by its name and handle once linked and synced, otherwise by its
+  not granted; the card says that the videos keep syncing and only the daily metrics wait),
+  reconnect required. The channel is shown by its name and handle once linked and synced, otherwise by its
   channel id; no credential, token or scope string is shown.
 - **Connect / Reconnect** (admins): `beginConnect` with `provider: "youtube"`, the same return
   URL and `connect=youtube` hint, and `reconnectConnectionId` for Reconnect. A deployment without

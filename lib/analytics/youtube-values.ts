@@ -130,7 +130,8 @@ export type AccessNotice = { tone: "info" | "warning"; title: string; message: s
 
 /**
  * The channel's analytics grant (v1/youtubeAnalytics:channelDays `analyticsAccess`); `null` when
- * granted. `scope_missing` also names the known sync limitation (ADR 0016 open question 13).
+ * granted. With `scope_missing` only the daily metrics wait; the rest keeps syncing (ADR 0016,
+ * open question 13).
  */
 export function youtubeAccessNotice(access: YouTubeAnalyticsAccess): AccessNotice | null {
   switch (access) {
@@ -141,7 +142,7 @@ export function youtubeAccessNotice(access: YouTubeAnalyticsAccess): AccessNotic
         tone: "warning",
         title: "YouTube Analytics access is missing",
         message:
-          "This channel was connected without access to YouTube Analytics, so its daily metrics cannot sync. Reconnect YouTube on the Connections page and allow access to YouTube Analytics. Known limitation: until then, the channel's video statistics may stop updating as well.",
+          "This channel was connected without access to YouTube Analytics, so its daily metrics are not synced (they stay unknown, never zero). Its videos and their statistics keep syncing. Reconnect YouTube on the Connections page and allow access to YouTube Analytics to add the daily metrics.",
       };
     case "reauth_required":
       return {
