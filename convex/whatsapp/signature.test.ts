@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FAKE_WA_APP_SECRET, signBody } from "./fakeWebhook.fixtures";
-import { timingSafeEqualString, verifyWebhookSignature } from "./signature";
+import { timingSafeEqualString, verifyWebhookSignature } from "../messaging/signature";
 
 const encoder = new TextEncoder();
 const bytes = (text: string) => encoder.encode(text).buffer as ArrayBuffer;

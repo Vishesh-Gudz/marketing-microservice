@@ -243,6 +243,9 @@ export async function handleOAuthCallback(ctx: ActionCtx, request: Request): Pro
       ...(grant.identity.displayName !== undefined
         ? { displayName: grant.identity.displayName }
         : {}),
+      ...(grant.identity.scopedUserId !== undefined
+        ? { scopedUserId: grant.identity.scopedUserId }
+        : {}),
     },
     grantedScopes: grant.grantedScopes,
     ...(grant.expiresAt !== undefined ? { tokenExpiresAt: grant.expiresAt } : {}),
@@ -307,20 +310,46 @@ function revokeFailure(error: unknown): Pick<PlatformRevoke, "failureKind" | "fa
 }
 
 /**
- * Best-effort platform revocation, then ALWAYS deletes the stored credential. How the revoke
- * ended is audited with the deletion (`connection.platform_revoke`), so a revocation that
- * failed or never ran is visible instead of silent.
+ * Best-effort platform revocation of the disconnected credential, then its deletion. How the
+ * revoke ended is audited with the deletion (`connection.platform_revoke`), so a revocation
+ * that failed or never ran is visible instead of silent.
+ *
+ * Only the disconnect's own authorization is touched: nothing is sent and nothing is deleted
+ * unless the connection is still `revoked` on `credentialVersion` (a reconnect increments it,
+ * so disconnect -> reconnect -> disconnect never lets the first job reach the second
+ * authorization). The deletion re-checks both in its own transaction. A job without
+ * `credentialVersion` was scheduled before versions existed: it neither revokes nor deletes
+ * (`legacy_job`); the hourly sweep (maintenance.ts) deletes the credential of a connection
+ * that is still revoked.
  */
 export const revokeAtPlatform = internalAction({
-  args: { connectionId: v.id("connections"), actorSubject: v.string() },
+  args: {
+    connectionId: v.id("connections"),
+    actorSubject: v.string(),
+    credentialVersion: v.optional(v.number()),
+  },
   returns: v.null(),
-  handler: async (ctx, { connectionId, actorSubject }) => {
+  handler: async (ctx, { connectionId, actorSubject, credentialVersion }) => {
+    if (credentialVersion === undefined) {
+      await ctx.runMutation(internal.connections.credentialStore.deleteForConnection, {
+        connectionId,
+        actorSubject,
+        platformRevoke: { outcome: "not_attempted", failureKind: "legacy_job" },
+      });
+      return null;
+    }
     let platformRevoke: PlatformRevoke = { outcome: "not_attempted", failureKind: "internal" };
     try {
       platformRevoke = await withConnectionCredential(
         ctx,
         connectionId,
         async (credential, connection): Promise<PlatformRevoke> => {
+          if (
+            connection.status !== "revoked" ||
+            connection.credentialVersion !== credentialVersion
+          ) {
+            return { outcome: "not_attempted", failureKind: "superseded" };
+          }
           // WhatsApp connections are never revoked through the OAuth spec (ADR 0014): the
           // generic disconnect refuses them, and their own offboarding unsubscribes the WABA.
           if (!isOAuthConnectionProvider(connection.provider)) return { outcome: "not_supported" };
@@ -338,7 +367,7 @@ export const revokeAtPlatform = internalAction({
       );
     } catch (error) {
       // Nothing was sent: the credential or the provider's configuration could not be used.
-      // Platform revocation is best effort; the local credential is deleted regardless.
+      // Platform revocation is best effort; the disconnected credential is deleted regardless.
       platformRevoke = {
         outcome: "not_attempted",
         failureKind:
@@ -349,6 +378,7 @@ export const revokeAtPlatform = internalAction({
         connectionId,
         actorSubject,
         platformRevoke,
+        credentialVersion,
       });
     }
     return null;

@@ -16,10 +16,22 @@ const tables = schema.tables as unknown as Record<string, TableIntrospection>;
 const tableNames = Object.keys(tables).sort();
 
 /**
- * Tables without an owner: the tenancy roots themselves, and fxRates (Phase 6:
- * public exchange-rate reference data, written only by internal admin functions).
+ * Tables without an owner: the tenancy roots themselves, fxRates (Phase 6:
+ * public exchange-rate reference data, written only by internal admin functions), and Meta's
+ * Instagram data-deletion requests (ADR 0017 IM6: addressed to the app by an Instagram user,
+ * possibly covering several orgs; no platform data, only Convex ids, a payload hash and the
+ * confirmation code; every deletion re-reads its rows under the target's own orgId; covered by
+ * convex/instagram/dataDeletion/dataDeletion.test.ts).
  */
-const GLOBAL_TABLES = ["fxRates", "integrationApps", "organizations"];
+const GLOBAL_TABLES = [
+  "fxRates",
+  "instagramDataDeletionRequests",
+  "integrationApps",
+  // IM7.0: one row per system sweep (the revoked-credential backstop's persisted cursor and
+  // lease); no tenant data. Covered by convex/connections/credentialSweep.test.ts.
+  "maintenanceCursors",
+  "organizations",
+];
 
 /**
  * The ONLY indexes on tenant tables that may not start with orgId: the
@@ -28,7 +40,26 @@ const GLOBAL_TABLES = ["fxRates", "integrationApps", "organizations"];
  * OAuth grant claim lookup and grant sweep (S2; the claim re-verifies the owner).
  */
 const APPROVED_GLOBAL_INDEXES = [
+  // Instagram deauthorize / data-deletion callbacks (ADR 0017 IM6): Meta names an Instagram
+  // user, not a tenant, so every org's Instagram connection of that user is found (by the
+  // professional account id or the Instagram-scoped user id); each is then handled under its
+  // own orgId. Covered by convex/instagram/dataDeletion/dataDeletion.test.ts.
+  "connections.by_provider_identity",
+  "connections.by_provider_scoped_user",
   "connections.by_status_expires",
+  // Instagram messaging (ADR 0017): webhook deliveries are authenticated as Meta, not as a
+  // tenant, so the org is resolved from the Instagram account id; enabling checks that no other
+  // org holds the account (rows only compared). Covered by
+  // convex/instagram/messaging/accounts.test.ts.
+  "instagramMessagingAccounts.by_ig_account_status",
+  // Instagram messaging retention (ADR 0017 D14): the hourly sweep finds turned-off accounts
+  // whose 30-day grace period ended, across orgs; each purge re-reads its account and deletes
+  // only that account's rows in its own org. Covered by convex/instagram/messaging/lifecycle.test.ts.
+  "instagramMessagingAccounts.by_status_purge_after",
+  // Instagram messaging stuck-event recovery and event retention: system sweeps (no tenant
+  // caller) across orgs, as for WhatsApp; each row is re-checked under its own orgId. Covered
+  // by the recovery and retention tests in convex/instagram/messaging/webhook.test.ts.
+  "instagramWebhookEvents.by_status_received",
   "oauthGrants.by_claim_hash",
   "oauthGrants.by_expires",
   "oauthStates.by_expires",
@@ -82,6 +113,13 @@ describe("schema inventory", () => {
         "oauthGrants",
         "oauthStates",
         "fxRates",
+        "instagramConversations",
+        "instagramDataDeletionRequests",
+        "instagramMessages",
+        "instagramMessagingAccounts",
+        "instagramWebhookEvents",
+        "inboxThreads",
+        "maintenanceCursors",
         "actionMetricsDaily",
         "adAccounts",
         "adGroups",
@@ -179,6 +217,11 @@ describe("tenant ownership", () => {
       "whatsappWebhookEvents",
       "whatsappConversations",
       "whatsappMessages",
+      "instagramMessagingAccounts",
+      "instagramWebhookEvents",
+      "instagramConversations",
+      "instagramMessages",
+      "inboxThreads",
     ];
     expect([...owned].sort()).toEqual(tenantTables);
   });

@@ -106,7 +106,9 @@ Details: [docs/providers/instagram.md](../providers/instagram.md).
 ## Consequences
 
 - Deferred beyond Phase 10: comments and commenters, stories, DMs, WhatsApp, messaging,
-  webhooks, publishing, Reels-specific insights and audience demographics.
+  webhooks, publishing, Reels-specific insights and audience demographics. Since then: WhatsApp
+  (ADR 0013–0015); DMs, their webhook and Meta's deauthorize / data-deletion callbacks for the
+  Instagram Login app ([ADR 0017](0017-instagram-messaging.md)).
 - Before production use, every provisional IR must be checked on a real Instagram professional
   account (checklist in [docs/providers/instagram.md](../providers/instagram.md)).
 - A Graph version bump is coupled to an SDK upgrade.

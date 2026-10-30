@@ -54,6 +54,19 @@ export const AUDIT_ACTIONS = {
   whatsappOffboardingFailed: "whatsapp.offboarding_failed",
   // WhatsApp partner removal (ADR 0014 B4b): Meta confirmed our access to the WABA is gone.
   whatsappPartnerRemoved: "whatsapp.partner_removed",
+  // Instagram messaging (ADR 0017): direct messages turned on or off for an org's Instagram
+  // account, its webhook setup, and the D14 purge of its stored messages. Entries carry Convex
+  // ids, statuses, reasons, sanitized codes and counts only, never an Instagram id or content.
+  instagramMessagingEnabled: "instagram.messaging_enabled",
+  instagramMessagingDisabled: "instagram.messaging_disabled",
+  instagramMessagingActionRequired: "instagram.messaging_action_required",
+  instagramMessagingSetupCompleted: "instagram.messaging_setup_completed",
+  instagramMessagingPurgeStarted: "instagram.messaging_purge_started",
+  instagramMessagingPurged: "instagram.messaging_purged",
+  // Meta's Instagram data-deletion callback (ADR 0017, IM6): one org's part of a verified
+  // request started (what is deleted) and finished. Convex ids and counts only.
+  instagramDataDeletionRequested: "instagram.data_deletion_requested",
+  instagramDataDeletionCompleted: "instagram.data_deletion_completed",
 } as const;
 
 /** Platform error codes that may be audited: short identifiers only, never free text. */
@@ -73,6 +86,12 @@ export const SYSTEM_TOKEN_REFRESH_SUBJECT = "system:token-refresh";
 
 /** Actor used for audit entries written by the sync engine (Phase 5). */
 export const SYSTEM_SYNC_SUBJECT = "system:sync";
+
+/** Actor used for audit entries written by Instagram messaging system jobs (ADR 0017). */
+export const SYSTEM_INSTAGRAM_MESSAGING_SUBJECT = "system:instagram-messaging";
+
+/** Actor for audit entries written by Meta's Instagram deauthorize / data-deletion callbacks. */
+export const SYSTEM_INSTAGRAM_DATA_DELETION_SUBJECT = "system:instagram-data-deletion";
 
 /** Actor used for audit entries written by the YouTube retention jobs (ADR 0016). */
 export const SYSTEM_YOUTUBE_RETENTION_SUBJECT = "system:youtube-retention";

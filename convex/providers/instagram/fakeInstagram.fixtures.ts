@@ -49,6 +49,8 @@ export type FakeMedia = {
 
 export type FakeInstagramUser = {
   userId: string;
+  /** The code exchange's `user_id` when it differs from /me.user_id (IR2; default: equal). */
+  scopedUserId?: string;
   username: string;
   accountType: string;
   name?: string;
@@ -71,7 +73,13 @@ export type FakeRequest = {
   url: string;
 };
 
-export type FakeFailure = { status: number; body?: unknown; headers?: Record<string, string> };
+export type FakeFailure = {
+  status: number;
+  body?: unknown;
+  /** A body sent as is (not JSON-encoded), e.g. an HTML page. */
+  raw?: string;
+  headers?: Record<string, string>;
+};
 
 export type FakeRoute =
   | "code_exchange"
@@ -82,7 +90,12 @@ export type FakeRoute =
   | "media_type"
   | "media"
   | "insights"
-  | "account_insights";
+  | "account_insights"
+  | "subscribed_apps"
+  | "send_message";
+
+/** A text reply the fake accepted (ADR 0017 IM4). */
+export type FakeSentMessage = { account: string; recipient: string; text: string; mid: string };
 
 const DEFAULT_USERS: Record<string, FakeInstagramUser> = {
   business: {
@@ -112,6 +125,14 @@ const DEFAULT_USERS: Record<string, FakeInstagramUser> = {
     username: "fake_basic",
     accountType: "Business",
     permissions: "instagram_business_basic",
+  },
+  /** ADR 0017: granted the messaging permission too. */
+  messaging: {
+    userId: "17841400000000105",
+    username: "fake_inbox",
+    accountType: "Business",
+    permissions:
+      "instagram_business_basic,instagram_business_manage_insights,instagram_business_manage_messages",
   },
 };
 
@@ -146,7 +167,13 @@ export function createFakeInstagram(
   const tokens = new Map<string, { user: string; kind: "short" | "long" }>();
   const failures = new Map<FakeRoute, FakeFailure[]>();
   const requests: FakeRequest[] = [];
+  const sent: FakeSentMessage[] = [];
   let sequence = 0;
+  let midSequence = 0;
+  /** Sends that never answer: they end only when the caller's timeout aborts them. */
+  let hangingSends = 0;
+  /** Sends that fail at once as a network error (the fetch rejects; nothing times out). */
+  let failingSends = 0;
 
   const issueToken = (user: string, kind: "short" | "long") => {
     const token = `${FAKE_IG_TOKEN_MARKER}${kind}${++sequence}x${user}`;
@@ -158,6 +185,9 @@ export function createFakeInstagram(
     const queue = failures.get(route);
     const next = queue?.shift();
     if (next === undefined) return undefined;
+    if (next.raw !== undefined) {
+      return new Response(next.raw, { status: next.status, headers: next.headers ?? {} });
+    }
     return next.body === undefined
       ? new Response(null, { status: next.status, headers: next.headers ?? {} })
       : json(next.status, next.body, next.headers ?? {});
@@ -206,7 +236,7 @@ export function createFakeInstagram(
         data: [
           {
             access_token: issueToken(user, "short"),
-            user_id: users[user]!.userId,
+            user_id: users[user]!.scopedUserId ?? users[user]!.userId,
             permissions: users[user]!.permissions ?? "",
           },
         ],
@@ -247,6 +277,51 @@ export function createFakeInstagram(
     const user = bearerUser(headers);
     if (user === undefined) return graphError(400, 190);
     const [first, second] = segments.slice(1);
+
+    // ADR 0017: the messaging webhook subscription ([doc] POST, `{"success": true}`). Refused
+    // for another account and for a token without the messaging permission.
+    if (first !== undefined && second === "subscribed_apps") {
+      const failure = takeFailure("subscribed_apps");
+      if (failure) return failure;
+      if (method !== "POST" || !params.get("subscribed_fields")) return graphError(400, 100);
+      if (first !== user.userId) return graphError(400, 100, 33);
+      const granted = (user.permissions ?? "").split(",");
+      if (!granted.includes("instagram_business_manage_messages")) return graphError(403, 10);
+      return json(200, { success: true });
+    }
+
+    // ADR 0017 IM4: a text reply ([doc] POST, JSON body, `{recipient_id, message_id}`).
+    if (first !== undefined && second === "messages") {
+      if (failingSends > 0) {
+        failingSends--;
+        throw new TypeError("fetch failed");
+      }
+      if (hangingSends > 0) {
+        hangingSends--;
+        return await new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () =>
+            reject(new DOMException("The operation was aborted", "AbortError")),
+          );
+        });
+      }
+      const failure = takeFailure("send_message");
+      if (failure) return failure;
+      if (method !== "POST" || first !== user.userId) return graphError(400, 100, 33);
+      const granted = (user.permissions ?? "").split(",");
+      if (!granted.includes("instagram_business_manage_messages")) return graphError(403, 10);
+      let payload: { recipient?: { id?: unknown }; message?: { text?: unknown } };
+      try {
+        payload = JSON.parse(typeof init.body === "string" ? init.body : "") as typeof payload;
+      } catch {
+        return graphError(400, 100);
+      }
+      const recipient = payload.recipient?.id;
+      const text = payload.message?.text;
+      if (typeof recipient !== "string" || typeof text !== "string") return graphError(400, 100);
+      const mid = `mid.fake.${++midSequence}`;
+      sent.push({ account: first, recipient, text, mid });
+      return json(200, { recipient_id: recipient, message_id: mid });
+    }
 
     if (first === "me" && second === undefined) {
       const failure = takeFailure("me");
@@ -419,6 +494,16 @@ export function createFakeInstagram(
     /** Queues failures returned by the next requests of `route` (FIFO). */
     fail(route: FakeRoute, ...queued: FakeFailure[]) {
       failures.set(route, [...(failures.get(route) ?? []), ...queued]);
+    },
+    /** Text replies accepted, in order (IM4). */
+    sent,
+    /** The next `times` sends never answer (they end only by the caller's timeout). */
+    hangNextSend(times = 1) {
+      hangingSends += times;
+    },
+    /** The next `times` sends fail at once with a network error (no answer, no timeout). */
+    failNextSendWithNetworkError(times = 1) {
+      failingSends += times;
     },
     graphError,
     /** Every insight metric name requested (for forbidden-metric scans). */

@@ -323,3 +323,9 @@ settled.
 
 Redirect URI to register with the app: `<CONVEX_SITE_URL>/oauth/callback`. The Graph version
 (v25.0) is pinned by the SDK and has no override; a bump follows an SDK upgrade.
+
+Direct messages, the webhook and Meta's deauthorize / data-deletion callbacks (the latter cover
+this analytics connection too: a deletion request also deletes the account's stored analytics)
+are documented in [instagram-messaging.md](../instagram-messaging.md) (ADR 0017). Every connect
+also records the code exchange's Instagram-scoped user id (`connections.scopedUserId`) for those
+callbacks; IR2 still holds (it is not assumed to equal `/me.user_id`).

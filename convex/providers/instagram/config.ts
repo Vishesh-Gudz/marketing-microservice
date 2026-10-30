@@ -31,6 +31,18 @@ export const INSTAGRAM_PROVIDER_ID = `instagram-login/${INSTAGRAM_GRAPH_VERSION}
 
 export const INSTAGRAM_CONFIG_INVALID = "instagram_config_invalid";
 
+/**
+ * [doc] Direct messages need this permission besides `instagram_business_basic` (ADR 0017). It
+ * is requested only on request (`extraScopes`), never by a plain connect.
+ */
+export const INSTAGRAM_MESSAGING_SCOPE = "instagram_business_manage_messages";
+
+/**
+ * Webhook fields the messaging subscription asks for (ADR 0017 D7). [assume] Echoes arrive under
+ * `messages` (`is_echo`); Meta's field list also names `message_echoes`, not requested here.
+ */
+export const INSTAGRAM_SUBSCRIBED_FIELDS = "messages,messaging_seen,message_edit";
+
 /** OAuth calls run inside the OAuth callback action. */
 export const OAUTH_TIMEOUT_MS = 15_000;
 /** Sync calls stay well under the 5-minute task lease. */

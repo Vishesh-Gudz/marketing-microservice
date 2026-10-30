@@ -14,6 +14,14 @@ export const EXPIRES_SOON_MS = 10 * 24 * 60 * 60 * 1000;
 export const STATE_RETENTION_MS = 60 * 60 * 1000;
 export const SWEEP_BATCH = 200;
 /**
+ * IM7.0: the revoked-credential backstop (credentialSweep.ts) reads SWEEP_BATCH revoked
+ * connections per transaction from a persisted cursor. One run reads at most this many pages
+ * (about a million rows), then releases its lease; the next hourly run resumes from the cursor.
+ */
+export const CREDENTIAL_SWEEP_PAGE_LIMIT = 5000;
+/** A run's lease: extended by every page; an interrupted run's expires and the next run resumes. */
+export const CREDENTIAL_SWEEP_LEASE_MS = 10 * 60 * 1000;
+/**
  * S2: how long a granted (consented, encrypted) credential waits for its initiator to claim it
  * with `v1/connections:completeConnect`. Unclaimed grants are deleted by the sweep.
  */

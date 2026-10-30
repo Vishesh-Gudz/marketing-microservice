@@ -1,15 +1,14 @@
 import { defineTable } from "convex/server";
 import { v } from "convex/values";
+import { messageDirectionValidator, webhookEventStatusValidator } from "../messaging/validators";
 import {
   businessAccountStatusValidator,
-  messageDirectionValidator,
   messageStatusValidator,
   messageTypeValidator,
   onboardingTypeValidator,
   outboundTemplateValidator,
   phoneNumberSourceValidator,
   phoneNumberStatusValidator,
-  webhookEventStatusValidator,
   webhookEventValidator,
 } from "../whatsapp/validators";
 import { orgIdField } from "./common";

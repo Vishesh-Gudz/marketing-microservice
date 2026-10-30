@@ -10,6 +10,7 @@ import {
 } from "../_generated/server";
 import type { ConnectionProvider, StoredConnectionProvider } from "../domain/types";
 import { literalUnion } from "../domain/validators";
+import { stopMessagingWithoutPermission } from "../instagram/messaging/accounts";
 import { AUDIT_ACTIONS, AUDIT_CODE_PATTERN, SYSTEM_SWEEP_SUBJECT, writeAudit } from "../lib/audit";
 import {
   CREDENTIAL_ALGORITHM,
@@ -78,6 +79,8 @@ export type ConnectionBinding = CredentialBinding & {
   connectionId: Id<"connections">;
   /** The credential generation this plaintext belongs to (Phase 10 token refresh). */
   credentialVersion: number;
+  /** The connection's status when the credential was loaded. */
+  status: Doc<"connections">["status"];
 };
 
 /**
@@ -109,6 +112,7 @@ export async function withConnectionCredential<T>(
     externalUserId: row.externalUserId,
     connectionId,
     credentialVersion: row.credentialVersion,
+    status: row.status,
   };
   const ring = await loadKeyRing();
   const credential = await decryptJson(
@@ -204,6 +208,8 @@ export const loadForUse = internalQuery({
 const identityValidator = v.object({
   externalUserId: v.string(),
   displayName: v.optional(v.string()),
+  /** Instagram only (ADR 0017, IM6): kept for the deauthorize / data-deletion callbacks. */
+  scopedUserId: v.optional(v.string()),
 });
 
 /** The tenant presenting a claim (from the verified JWT, never from arguments). */
@@ -280,6 +286,9 @@ export const storeGrant = internalMutation({
       ...(args.identity.displayName !== undefined
         ? { displayName: args.identity.displayName }
         : {}),
+      ...(args.identity.scopedUserId !== undefined
+        ? { scopedUserId: args.identity.scopedUserId }
+        : {}),
       grantedScopes: args.grantedScopes,
       ...(args.tokenExpiresAt !== undefined ? { tokenExpiresAt: args.tokenExpiresAt } : {}),
       ciphertext: args.encrypted.ciphertext,
@@ -310,7 +319,7 @@ type ClaimFailure = "invalid_claim" | "expired_claim" | "identity_mismatch";
 async function invalidateGrant(
   db: DatabaseWriter,
   grant: Doc<"oauthGrants">,
-  reason: "owner_mismatch" | "expired" | "identity_mismatch",
+  reason: "owner_mismatch" | "expired" | "identity_mismatch" | "data_deletion",
   subject: string,
 ) {
   await db.delete(grant._id);
@@ -404,6 +413,9 @@ export const claimGrant = internalMutation({
 
     const fields = {
       displayName: grant.displayName,
+      ...(grant.scopedUserId !== undefined ? { scopedUserId: grant.scopedUserId } : {}),
+      // IM7.0: when this authorization was given (a Meta callback issued before it is stale).
+      authorizedAt: now,
       status: "active" as const,
       grantedScopes: grant.grantedScopes,
       tokenExpiresAt: grant.tokenExpiresAt,
@@ -426,6 +438,8 @@ export const claimGrant = internalMutation({
         provider: grant.provider,
         externalUserId: grant.externalUserId,
         ...(grant.displayName !== undefined ? { displayName: grant.displayName } : {}),
+        ...(grant.scopedUserId !== undefined ? { scopedUserId: grant.scopedUserId } : {}),
+        authorizedAt: now,
         status: "active",
         grantedScopes: grant.grantedScopes,
         credentialVersion: 1,
@@ -451,6 +465,11 @@ export const claimGrant = internalMutation({
       targetId: connectionId,
       changes: { provider: { from: null, to: grant.provider } },
     });
+    // ADR 0017: a reconnect without the messaging permission stops Instagram direct messages
+    // on this connection in the same transaction (no stale hold).
+    if (existing && grant.provider === "instagram") {
+      await stopMessagingWithoutPermission(ctx.db, claimant, connectionId, grant.grantedScopes);
+    }
     return { ok: true as const, connectionId, reconnected: existing !== null };
   },
 });
@@ -539,6 +558,32 @@ export async function deleteExpiredGrants(
 }
 
 /**
+ * IM7.0 (Meta data-deletion request): deletes the org's unclaimed grants of one platform
+ * identity, so an authorization consented before the request can no longer be claimed after
+ * it. Grants are short-lived and few per org (at most one per pending OAuth state).
+ */
+export async function deletePendingGrantsForIdentity(
+  db: DatabaseWriter,
+  orgId: Id<"organizations">,
+  provider: ConnectionProvider,
+  externalUserId: string,
+  subject: string,
+): Promise<number> {
+  const grants = await db
+    .query("oauthGrants")
+    .withIndex("by_org_created", (q) => q.eq("orgId", orgId))
+    .take(100);
+  let deleted = 0;
+  for (const grant of grants) {
+    if (grant.provider === provider && grant.externalUserId === externalUserId) {
+      await invalidateGrant(db, grant, "data_deletion", subject);
+      deleted++;
+    }
+  }
+  return deleted;
+}
+
+/**
  * Phase 10 token refresh: replaces the credential of an ACTIVE connection with a freshly
  * refreshed one, atomically with the connection's expiry and credential generation. The
  * write is refused (false) unless the connection is still active AND still on the
@@ -597,7 +642,9 @@ export const replaceRefreshedCredential = internalMutation({
  * - revoked: the platform accepted the revocation (or already considered the token revoked);
  * - failed: the revocation request failed (failureKind / failureCode say how);
  * - not_attempted: nothing was sent, because the credential or the provider's configuration
- *   could not be used (failureKind credential_unavailable or internal);
+ *   could not be used (failureKind credential_unavailable or internal), the connection was
+ *   connected again since the disconnect (superseded), or the job predates credential versions
+ *   (legacy_job: it never revokes or deletes; the hourly sweep deletes what is left);
  * - not_supported: the provider has no platform revoke (Google Ads G-D6, Meta D7, Instagram).
  */
 export const platformRevokeValidator = v.object({
@@ -611,6 +658,8 @@ const REVOKE_FAILURE_KINDS: ReadonlySet<string> = new Set([
   ...PROVIDER_ERROR_KINDS,
   "credential_unavailable",
   "internal",
+  "superseded",
+  "legacy_job",
 ]);
 
 /** The audited form: allowlisted kind (else internal) and code (else dropped) only. */
@@ -631,20 +680,31 @@ function platformRevokeChanges(revoke: PlatformRevoke): AuditChanges {
 }
 
 /**
- * Deletes a connection's credential (disconnect / sweep backstop). On disconnect it also
- * audits how the platform revoke ended, in the same transaction (`connection.platform_revoke`).
+ * Deletes a disconnected connection's credential (the end of `revokeAtPlatform`) and audits how
+ * the platform revoke ended, in the same transaction (`connection.platform_revoke`).
+ *
+ * Deletes ONLY the credential of the disconnect that scheduled it: the connection must still be
+ * `revoked` AND on `credentialVersion` (every credential write increments it, so a reconnect,
+ * even one followed by another disconnect, never matches). Checked and deleted in one
+ * transaction (Convex mutations are serializable). Without `credentialVersion` (a job scheduled
+ * before versions existed) nothing is deleted; the hourly sweep deletes what is left.
  */
 export const deleteForConnection = internalMutation({
   args: {
     connectionId: v.id("connections"),
     actorSubject: v.string(),
     platformRevoke: v.optional(platformRevokeValidator),
+    credentialVersion: v.optional(v.number()),
   },
   returns: v.boolean(),
-  handler: async (ctx, { connectionId, actorSubject, platformRevoke }) => {
+  handler: async (ctx, { connectionId, actorSubject, platformRevoke, credentialVersion }) => {
     const connection = await ctx.db.get(connectionId);
     if (connection === null) return false;
-    const deleted = await deleteCredential(ctx.db, connection.orgId, connectionId);
+    const current =
+      credentialVersion !== undefined &&
+      connection.status === "revoked" &&
+      connection.credentialVersion === credentialVersion;
+    const deleted = current && (await deleteCredential(ctx.db, connection.orgId, connectionId));
     if (!deleted && platformRevoke === undefined) return false;
     const org = await ctx.db.get(connection.orgId);
     const actor = { orgId: connection.orgId, issuer: org?.issuer ?? "", subject: actorSubject };

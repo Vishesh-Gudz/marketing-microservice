@@ -540,3 +540,86 @@ describe("createSdkFetch (the fetch injected into social-sdk)", () => {
     expect(capture.last).toEqual({ type: "network" });
   });
 });
+
+describe('"messaging" caller (ADR 0017: the webhook subscription)', () => {
+  const SUBSCRIBE = `${G}/v25.0/17841400000000101/subscribed_apps?subscribed_fields=messages,messaging_seen,message_edit`;
+
+  it("allows exactly the subscription POST with a Bearer token", () => {
+    expect(check("messaging", SUBSCRIBE, { method: "POST", headers: BEARER })).toBe("allowed");
+  });
+
+  it("allows a text send: POST, no query, a JSON body and a Bearer token (IM4)", () => {
+    expect(
+      check("messaging", `${G}/v25.0/17841400000000101/messages`, {
+        method: "POST",
+        headers: { ...BEARER, "content-type": "application/json; charset=utf-8" },
+        body: true,
+      }),
+    ).toBe("allowed");
+    for (const caller of ["graph_reader", "sdk"] as const) {
+      expect(
+        check(caller, `${G}/v25.0/17841400000000101/messages`, {
+          method: "POST",
+          headers: { ...BEARER, "content-type": "application/json" },
+          body: true,
+        }),
+      ).toBe("method");
+    }
+  });
+
+  it.each([
+    ["a GET", SUBSCRIBE, { method: "GET", headers: BEARER }, "method"],
+    ["no Bearer token", SUBSCRIBE, { method: "POST" }, "authorization"],
+    ["a body", SUBSCRIBE, { method: "POST", headers: BEARER, body: true }, "body"],
+    [
+      "the token in the query (Meta's sample)",
+      `${SUBSCRIBE}&access_token=IGAAfaketoken`,
+      { method: "POST", headers: BEARER },
+      "secret_in_url",
+    ],
+    [
+      "other fields",
+      `${G}/v25.0/17841400000000101/subscribed_apps?subscribed_fields=messages,comments`,
+      { method: "POST", headers: BEARER },
+      "query",
+    ],
+    [
+      "a send without a body",
+      `${G}/v25.0/17841400000000101/messages`,
+      { method: "POST", headers: BEARER },
+      "path",
+    ],
+    [
+      "a send whose body is not JSON",
+      `${G}/v25.0/17841400000000101/messages`,
+      { method: "POST", headers: { ...BEARER, "content-type": "text/plain" }, body: true },
+      "body",
+    ],
+    [
+      "a send with a query",
+      `${G}/v25.0/17841400000000101/messages?recipient=1`,
+      { method: "POST", headers: { ...BEARER, "content-type": "application/json" }, body: true },
+      "query",
+    ],
+    [
+      "a send with the token in the query",
+      `${G}/v25.0/17841400000000101/messages?access_token=IGAAfaketoken`,
+      { method: "POST", headers: { ...BEARER, "content-type": "application/json" }, body: true },
+      "secret_in_url",
+    ],
+    [
+      "a send without a Bearer token",
+      `${G}/v25.0/17841400000000101/messages`,
+      { method: "POST", headers: { "content-type": "application/json" }, body: true },
+      "authorization",
+    ],
+  ] as const)("refuses %s", (_label, url, options, reason) => {
+    expect(check("messaging", url, options)).toBe(reason);
+  });
+
+  it("is not reachable through the other callers", () => {
+    for (const caller of ["graph_reader", "sdk"] as const) {
+      expect(check(caller, SUBSCRIBE, { method: "POST", headers: BEARER })).toBe("method");
+    }
+  });
+});

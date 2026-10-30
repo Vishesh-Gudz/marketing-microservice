@@ -1,9 +1,9 @@
 import { v } from "convex/values";
 import { internalMutation } from "../_generated/server";
 import { AUDIT_ACTIONS, SYSTEM_SWEEP_SUBJECT, writeAudit } from "../lib/audit";
-import { WHATSAPP_REVOKED_CREDENTIAL_GRACE_MS } from "../whatsapp/config";
 import { STATE_RETENTION_MS, SWEEP_BATCH } from "./config";
-import { deleteCredential, deleteExpiredGrants } from "./credentialStore";
+import { deleteExpiredGrants } from "./credentialStore";
+import { startCredentialSweep } from "./credentialSweep";
 
 /**
  * Hourly connection health sweep (convex/crons.ts). Uses the approved global
@@ -14,17 +14,20 @@ import { deleteCredential, deleteExpiredGrants } from "./credentialStore";
  * 4. Backstop: deletes credentials still attached to revoked connections. A revoked WhatsApp
  *    connection keeps its credential for WHATSAPP_REVOKED_CREDENTIAL_GRACE_MS (ADR 0014 B4: its
  *    disconnect cleanup still unsubscribes with the token and deletes it itself); every other
- *    provider is unchanged.
+ *    provider is unchanged. IM7.0: every revoked connection is visited, page by page from a
+ *    persisted cursor (credentialSweep.ts); this run processes the first page of its pass and
+ *    schedules the rest. `credentialPageLimit` (tests only) caps the pages of one run.
  */
 export const sweep = internalMutation({
-  args: {},
+  args: { credentialPageLimit: v.optional(v.number()) },
   returns: v.object({
     statesDeleted: v.number(),
     grantsDeleted: v.number(),
     expired: v.number(),
     credentialsDeleted: v.number(),
+    credentialSweep: v.union(v.literal("started"), v.literal("busy")),
   }),
-  handler: async (ctx) => {
+  handler: async (ctx, { credentialPageLimit }) => {
     const now = Date.now();
 
     let statesDeleted = 0;
@@ -71,33 +74,14 @@ export const sweep = internalMutation({
       expired++;
     }
 
-    let credentialsDeleted = 0;
-    const revoked = await ctx.db
-      .query("connections")
-      .withIndex("by_status_expires", (q) => q.eq("status", "revoked"))
-      .take(SWEEP_BATCH);
-    for (const connection of revoked) {
-      if (
-        connection.provider === "whatsapp" &&
-        (connection.revokedAt ?? 0) > now - WHATSAPP_REVOKED_CREDENTIAL_GRACE_MS
-      ) {
-        continue;
-      }
-      if (await deleteCredential(ctx.db, connection.orgId, connection._id)) {
-        const org = await ctx.db.get(connection.orgId);
-        await writeAudit(
-          ctx.db,
-          { orgId: connection.orgId, issuer: org?.issuer ?? "", subject: SYSTEM_SWEEP_SUBJECT },
-          {
-            action: AUDIT_ACTIONS.credentialDeleted,
-            targetType: "connection",
-            targetId: connection._id,
-          },
-        );
-        credentialsDeleted++;
-      }
-    }
+    const credentials = await startCredentialSweep(ctx, now, credentialPageLimit);
 
-    return { statesDeleted, grantsDeleted, expired, credentialsDeleted };
+    return {
+      statesDeleted,
+      grantsDeleted,
+      expired,
+      credentialsDeleted: credentials.deleted,
+      credentialSweep: credentials.run,
+    };
   },
 });

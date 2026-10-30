@@ -677,10 +677,12 @@ describe("generic OAuth connection paths never handle WhatsApp", () => {
 
   it("revokeAtPlatform deletes a WhatsApp credential without any OAuth revoke call", async () => {
     const { t, connectionId } = await setupWithConnection();
-    await t.action(internal.connections.oauthFlow.revokeAtPlatform, {
-      connectionId,
-      actorSubject: ADMIN,
-    });
+    const job = { connectionId, actorSubject: ADMIN, credentialVersion: 1 };
+    // IM7.0: never the credential of a connection that is not revoked on that version.
+    await t.action(internal.connections.oauthFlow.revokeAtPlatform, job);
+    expect((await state(t)).credentials).toHaveLength(1);
+    await t.run((ctx) => ctx.db.patch(connectionId, { status: "revoked" }));
+    await t.action(internal.connections.oauthFlow.revokeAtPlatform, job);
     const { credentials } = await state(t);
     expect(credentials).toEqual([]);
   });

@@ -11,7 +11,8 @@ import {
   seedOrg,
   type Backend,
 } from "../test.helpers";
-import { SERVICE_WINDOW_MS, STUCK_SEND_AFTER_MS } from "./config";
+import { SERVICE_WINDOW_MS } from "../messaging/window";
+import { STUCK_SEND_AFTER_MS } from "./config";
 import {
   graphError,
   installFakeWhatsAppGraph,

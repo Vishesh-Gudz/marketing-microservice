@@ -1,5 +1,6 @@
 /**
- * Webhook authentication (Web Crypto only; runs in the default Convex runtime).
+ * Meta webhook authentication, shared by WhatsApp and Instagram (Web Crypto only; runs in the
+ * default Convex runtime).
  *
  * Meta signs every delivery with HMAC-SHA256 over the EXACT request body bytes, keyed with the
  * app secret, and sends `X-Hub-Signature-256: sha256=<64 hex>`. Verification therefore runs on
@@ -8,6 +9,17 @@
  */
 
 export const SIGNATURE_HEADER = "x-hub-signature-256";
+
+const MIN_SECRET_LENGTH = 8;
+const MAX_SECRET_LENGTH = 512;
+
+/** A configured secret: present, bounded, without whitespace. Anything else fails closed. */
+export function configuredSecret(value: string | undefined): string | null {
+  if (value === undefined) return null;
+  if (value.length < MIN_SECRET_LENGTH || value.length > MAX_SECRET_LENGTH) return null;
+  if (/\s/.test(value)) return null;
+  return value;
+}
 
 const SIGNATURE_PATTERN = /^sha256=([0-9a-fA-F]{64})$/;
 

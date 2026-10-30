@@ -13,7 +13,8 @@ import { entityLifecycleFields, orgIdField } from "./common";
 
 // Organic social tree, deliberately separate from paid ads. The only link to
 // ads is the soft reference creatives.instagramMediaExternalId -> socialPosts.externalId.
-// socialAccounts is also the owner of future messaging threads (Phase 11).
+// Instagram direct messages hang off socialAccounts through instagramMessagingAccounts
+// (tables/instagramMessaging.ts, ADR 0017).
 
 export const socialTables = {
   socialAccounts: defineTable({
@@ -24,7 +25,10 @@ export const socialTables = {
     username: v.optional(v.string()),
     name: v.string(),
     accountType: socialAccountTypeValidator,
-    /** Instagram -> linked Facebook page (required later for Instagram DMs). */
+    /**
+     * Instagram -> linked Facebook page. Never written: Instagram Login, including its direct
+     * messages, needs no page.
+     */
     linkedPageExternalId: v.optional(v.string()),
     profilePictureUrl: v.optional(v.string()),
     /** Latest known value; history lives in socialAccountMetricsDaily. */

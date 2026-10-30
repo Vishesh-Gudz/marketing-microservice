@@ -40,7 +40,7 @@ convex/              Convex backend
   sync/              Sync engine: planner, runs/tasks, worker, canonical write path (Phase 5)
   analytics/         Query-time analytics: KPIs, periods, FX, aggregation (Phase 6)
   engagement/        Paid + organic engagement (Phases 6, 10)
-  inbox/             Unified inbox / messaging (Phase 11)
+  inbox/             Unified messaging inbox (ADR 0018)
   monitoring/        Alerts (Phase 12)
 packages/
   marketing-client/  Developer SDK (Phase 14)

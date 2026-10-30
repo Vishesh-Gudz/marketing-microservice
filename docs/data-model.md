@@ -32,7 +32,8 @@ Tables for later phases are added by the phase that writes them:
 - sync state, runs and tasks: Phase 5 (see [sync.md](sync.md))
 - FX rates (`fxRates`, global reference data): Phase 6 (see [analytics.md](analytics.md)); rollups
   are deferred (Phase 6 aggregates at query time)
-- inbox: Phase 11
+- inbox: the unified thread index `inboxThreads` (IM7.2, [ADR 0018](adr/0018-unified-inbox.md));
+  the channels keep their own tables (WhatsApp, Instagram DMs)
 - alerts: Phase 12
 
 ## Tenancy

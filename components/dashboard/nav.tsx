@@ -4,11 +4,13 @@ import {
   BarChart3,
   Building2,
   Camera,
+  Inbox,
   Layers,
   LayoutDashboard,
   Megaphone,
   MessageCircle,
   Plug,
+  Send,
   Target,
   Wallet,
 } from "lucide-react";
@@ -27,8 +29,12 @@ export const NAV_ITEMS = [
   { href: "/social", label: "Organic", icon: Camera },
   // Standalone SaaS: members, invitations and roles (Clerk organization profile, D9).
   { href: "/organization", label: "Organization", icon: Building2 },
+  // The unified inbox (ADR 0018): every channel's conversations; the channel pages below stay.
+  { href: "/inbox", label: "Inbox", icon: Inbox },
   // WhatsApp: the inbox (ADR 0013); /whatsapp/settings connects a number (ADR 0014).
   { href: "/whatsapp", label: "WhatsApp", icon: MessageCircle },
+  // Instagram direct messages (ADR 0017): the inbox; /instagram/messages/settings turns them on.
+  { href: "/instagram/messages", label: "Instagram DMs", icon: Send },
   // Google Ads connection management (connect, choose the account, follow its sync).
   { href: "/connections", label: "Connections", icon: Plug },
 ] as const;

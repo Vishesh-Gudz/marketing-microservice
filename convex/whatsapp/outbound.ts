@@ -12,11 +12,13 @@ import {
 } from "../_generated/server";
 import { withConnectionCredential } from "../connections/credentialStore";
 import { markConnectionNeedsReauth } from "../connections/lifecycle";
+import { touchThread } from "../inbox/threads";
 import { apiError } from "../lib/errors";
+import { configuredSecret } from "../messaging/signature";
+import { isServiceWindowOpen } from "../messaging/window";
 import { whatsappTables } from "../tables/whatsapp";
 import {
   CLIENT_MESSAGE_ID,
-  configuredSecret,
   MAX_OUTBOUND_TEXT_CHARS,
   requireUserSubject,
   STUCK_SEND_AFTER_MS,
@@ -29,7 +31,6 @@ import { failureReason, parseCredential, tokenRefused } from "./signup";
 import { applyDeliveryStatus, type DeliveryPatch, type DeliveryState } from "./status";
 import { checkValues, parseTemplate, type ParsedTemplate, type TemplateValue } from "./templates";
 import { outboundTemplateValidator } from "./validators";
-import { isServiceWindowOpen } from "./window";
 
 /**
  * Outbound WhatsApp messages (ADR 0013 stage 5) in an existing conversation: text replies and
@@ -182,10 +183,15 @@ async function storePending(
     createdAt: now,
     updatedAt: now,
   });
-  await ctx.db.patch(conversation._id, {
-    lastMessageAt: Math.max(conversation.lastMessageAt, now),
-    updatedAt: now,
-  });
+  const lastMessageAt = Math.max(conversation.lastMessageAt, now);
+  await ctx.db.patch(conversation._id, { lastMessageAt, updatedAt: now });
+  // ADR 0018: the unified inbox's thread row follows the conversation (same transaction).
+  await touchThread(
+    ctx.db,
+    conversation.orgId,
+    { channel: "whatsapp", conversationId: conversation._id },
+    lastMessageAt,
+  );
   await ctx.scheduler.runAfter(0, internal.whatsapp.outbound.deliver, {
     orgId: tenant.orgId,
     messageId,

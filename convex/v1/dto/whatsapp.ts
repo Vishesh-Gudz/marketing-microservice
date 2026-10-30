@@ -1,16 +1,16 @@
 import { v, type Infer } from "convex/values";
 import type { Doc } from "../../_generated/dataModel";
 import { toIso } from "../../lib/dto";
+import { messageDirectionValidator } from "../../messaging/validators";
 import type { SetupProgress } from "../../whatsapp/accounts";
 import type { ParsedTemplate } from "../../whatsapp/templates";
 import {
   businessAccountStatusValidator,
-  messageDirectionValidator,
   messageStatusValidator,
   messageTypeValidator,
   phoneNumberStatusValidator,
 } from "../../whatsapp/validators";
-import { serviceWindowExpiresAt } from "../../whatsapp/window";
+import { serviceWindowExpiresAt } from "../../messaging/window";
 
 /**
  * WhatsApp inbox DTOs (ADR 0013). Never: credentials, webhook event bodies, internal row ids

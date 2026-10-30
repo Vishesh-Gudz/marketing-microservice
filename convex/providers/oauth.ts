@@ -22,6 +22,12 @@ export type OAuthIdentity = {
   /** Stable platform user id (Meta user id / Google `sub`). */
   externalUserId: string;
   displayName?: string;
+  /**
+   * Instagram only (ADR 0017, IM6): the code exchange's "Instagram-scoped user ID", kept so the
+   * deauthorize and data-deletion callbacks can find the connection ([assume] RI14: they carry
+   * it; it is not assumed to equal `externalUserId`, the professional account id).
+   */
+  scopedUserId?: string;
 };
 
 export type OAuthGrant<TCredential> = {
@@ -42,6 +48,11 @@ export type AuthorizationUrlInput = {
   /** PKCE S256 challenge, when `usesPkce`. */
   codeChallenge?: string;
   config: OAuthClientConfig;
+  /**
+   * Scopes requested in addition to `requestedScopes`. Only Instagram accepts any (its
+   * messaging permission, ADR 0017); the connection layer passes them for Instagram only.
+   */
+  extraScopes?: readonly string[];
 };
 
 export type ExchangeCodeInput = {

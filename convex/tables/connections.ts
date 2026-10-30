@@ -37,6 +37,17 @@ export const connectionTables = {
      */
     externalUserId: v.string(),
     displayName: v.optional(v.string()),
+    /**
+     * Instagram only (ADR 0017, IM6): the code exchange's Instagram-scoped user id, which Meta's
+     * deauthorize / data-deletion callbacks are assumed to carry (RI14). Set on every connect.
+     */
+    scopedUserId: v.optional(v.string()),
+    /**
+     * IM7.0: when the current authorization was claimed (every connect and reconnect). A Meta
+     * deauthorize / data-deletion callback issued before it does not apply to it. Absent on
+     * connections claimed before IM7.0 (treated as authorized before any callback).
+     */
+    authorizedAt: v.optional(v.number()),
     status: connectionStatusValidator,
     grantedScopes: v.array(v.string()),
     /** Increments every time the credential is replaced (reconnect). */
@@ -65,7 +76,11 @@ export const connectionTables = {
     .index("by_org_provider_identity", ["orgId", "provider", "externalUserId"])
     .index("by_org_status", ["orgId", "status"])
     // GLOBAL (approved exception): system health sweep across orgs.
-    .index("by_status_expires", ["status", "tokenExpiresAt"]),
+    .index("by_status_expires", ["status", "tokenExpiresAt"])
+    // GLOBAL (approved exceptions, ADR 0017 IM6): Meta's deauthorize / data-deletion callbacks
+    // name an Instagram user, not a tenant; every org's connection of that user is found.
+    .index("by_provider_identity", ["provider", "externalUserId"])
+    .index("by_provider_scoped_user", ["provider", "scopedUserId"]),
 
   /** AES-256-GCM encrypted credential bundle, one per connection. INTERNAL-ONLY. */
   credentials: defineTable({
@@ -119,6 +134,8 @@ export const connectionTables = {
     reconnectConnectionId: v.optional(v.id("connections")),
     externalUserId: v.string(),
     displayName: v.optional(v.string()),
+    /** Instagram only (ADR 0017, IM6): copied to the connection on claim. */
+    scopedUserId: v.optional(v.string()),
     grantedScopes: v.array(v.string()),
     tokenExpiresAt: v.optional(v.number()),
     ciphertext: v.bytes(),

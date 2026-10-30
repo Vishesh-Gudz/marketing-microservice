@@ -3,6 +3,7 @@ import {
   AUTHORIZE_URL,
   GRAPH_ORIGIN,
   INSTAGRAM_CONFIG_INVALID,
+  INSTAGRAM_MESSAGING_SCOPE,
   INSTAGRAM_PROVIDER_ID,
   isValidInstagramAppId,
   isValidInstagramSecret,
@@ -31,9 +32,10 @@ import { RequestBudget, sendInstagram, type InstagramResult } from "./transport"
  * implementation (not the SDK helper), SDK-free and default-runtime safe (the OAuth
  * callback is a default-runtime httpAction; discovery runs from the same identity).
  *
- * Scopes [doc]: instagram_business_basic + instagram_business_manage_insights ONLY — no
- * publishing, comments or messages. (Meta's business-login page lists no
- * `manage_insights` scope while the insights references require it: real-account item.)
+ * Scopes [doc]: instagram_business_basic + instagram_business_manage_insights — no publishing
+ * or comments. (Meta's business-login page lists no `manage_insights` scope while the insights
+ * references require it: real-account item.) ADR 0017: a connect for direct messages adds
+ * instagram_business_manage_messages (`extraScopes`), and only that.
  * No PKCE (not documented for Instagram Login): the single-use state nonce is the CSRF
  * defense. Every request goes through the transport allowlist (transport.ts).
  *
@@ -47,6 +49,9 @@ export const INSTAGRAM_SCOPES = [
   "instagram_business_basic",
   "instagram_business_manage_insights",
 ] as const;
+
+/** Scopes a connect may add on request (ADR 0017): the messaging permission only. */
+export const INSTAGRAM_OPTIONAL_SCOPES: readonly string[] = [INSTAGRAM_MESSAGING_SCOPE];
 
 export const INSTAGRAM_OAUTH_STAGES = [
   "token_exchange",
@@ -136,14 +141,24 @@ export function createInstagramOAuthSpec(
     requiredScopes: INSTAGRAM_SCOPES,
     usesPkce: false,
 
-    buildAuthorizationUrl({ state, redirectUri, config }) {
+    buildAuthorizationUrl({ state, redirectUri, config, extraScopes = [] }) {
       const { appId } = requireConfig(config, "oauthExchange");
+      // ADR 0017: the messaging permission is the only scope ever added, on top of the
+      // analytics scopes (a reconnect for messages never drops them).
+      if (extraScopes.some((scope) => !INSTAGRAM_OPTIONAL_SCOPES.includes(scope))) {
+        throw instagramError(
+          "invalid_request",
+          "oauthExchange",
+          "config:scope_not_allowed",
+          "Instagram scope not allowed",
+        );
+      }
       const url = new URL(AUTHORIZE_URL);
       url.searchParams.set("client_id", appId);
       url.searchParams.set("redirect_uri", redirectUri);
       url.searchParams.set("response_type", "code");
       // [doc] comma-separated scope list.
-      url.searchParams.set("scope", INSTAGRAM_SCOPES.join(","));
+      url.searchParams.set("scope", [...INSTAGRAM_SCOPES, ...new Set(extraScopes)].join(","));
       url.searchParams.set("state", state);
       return url.toString();
     },
@@ -179,7 +194,8 @@ export function createInstagramOAuthSpec(
       );
       if (!short.ok) throw stageError("token_exchange", "oauthExchange", short);
       const shortToken = shortLivedEntry(short.body);
-      if (canonicalId(shortToken.user_id) === undefined) {
+      const scopedUserId = canonicalId(shortToken.user_id);
+      if (scopedUserId === undefined) {
         throw instagramError(
           "data",
           "oauthExchange",
@@ -233,6 +249,7 @@ export function createInstagramOAuthSpec(
         identity: {
           externalUserId: identity.userId,
           ...(identity.username !== undefined ? { displayName: identity.username } : {}),
+          scopedUserId,
         },
         grantedScopes: parsePermissions(shortToken.permissions),
         ...(expiresAt !== undefined ? { expiresAt } : {}),

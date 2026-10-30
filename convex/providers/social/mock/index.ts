@@ -98,7 +98,12 @@ export function createMockInstagramOAuthSpec(): OAuthSpec<MockSocialCredential> 
       token: user === "revoked" ? "revoked" : `mock-ig-token-${user}`,
       user,
     },
-    identity: { externalUserId: mockInstagramAccountId(user), displayName: `mock_${user}` },
+    identity: {
+      externalUserId: mockInstagramAccountId(user),
+      displayName: `mock_${user}`,
+      // ADR 0017 IM7.0: like the real spec, every connect records the scoped id (here equal).
+      scopedUserId: mockInstagramAccountId(user),
+    },
     grantedScopes: user === "limited" ? ["instagram_business_basic"] : [...SCOPES],
     expiresAt: now + LIFETIME_MS,
     refreshable: true,

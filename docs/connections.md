@@ -157,15 +157,21 @@ active | needs_reauth ─disconnect─► revoked   (credential deleted; ad acco
   Google Ads**).
 - **Relinking** an ad account to another connection of the same org is allowed and audited
   (`adAccount.relinked`).
-- **Disconnect** schedules `revokeAtPlatform`: a best-effort platform revoke, then the credential
-  is always deleted. How the revoke ended is audited in the same transaction as the deletion
+- **Disconnect** schedules `revokeAtPlatform` for the credential version it disconnected: a
+  best-effort platform revoke, then the credential is deleted. Both happen only while the
+  connection is still `revoked` on that `credentialVersion` (re-checked in the deletion's own
+  transaction). Every credential write increments the version, so a reconnect, even one followed
+  by another disconnect, is never touched by an earlier disconnect's job (IM7.0). A job scheduled
+  before versions existed never revokes or deletes (`legacy_job`); the health sweep deletes what
+  is left. How the revoke ended is audited in the same transaction as the deletion
   (`connection.platform_revoke`, before `credential.deleted`), as `outcome`:
   - `revoked`: the platform accepted the revocation, or already considered the token revoked;
   - `failed`: the revocation request failed, with an allowlisted `failureKind` (a provider error
     kind) and `failureCode` (an identifier such as `revoke:http_503`; anything else is dropped);
   - `not_attempted`: nothing was sent, because the credential was already gone
-    (`credential_unavailable`) or could not be used, or the provider was not configured
-    (`internal`);
+    (`credential_unavailable`) or could not be used, the provider was not configured
+    (`internal`), the connection was connected again since (`superseded`: nothing deleted
+    either), or the job predates credential versions (`legacy_job`: nothing deleted either);
   - `not_supported`: the provider has no platform revoke (Google Ads G-D6, Meta D7, Instagram).
 
   A failed revoke is not retried: the credential is deleted either way, so the grant stays at
@@ -180,7 +186,17 @@ active | needs_reauth ─disconnect─► revoked   (credential deleted; ad acco
   - deletes unclaimed grants past their 10-minute expiry, with their ciphertext (audited
     `connection.grant_expired`)
   - marks active connections whose `tokenExpiresAt` has passed as `needs_reauth`
-  - deletes any credential still attached to a revoked connection
+  - deletes any credential still attached to a revoked connection (IM7.0,
+    `convex/connections/credentialSweep.ts`): EVERY revoked connection is visited, 200 per
+    transaction, from a cursor persisted in `maintenanceCursors`. Each page is processed and the
+    cursor advanced in one transaction, and each row is re-read there, so a credential is
+    deleted only while its connection is `revoked`. One run at a time (a lease, released when a
+    pass completes or a run pauses; an interrupted run's lease expires after 10 minutes). A run
+    reads at most 5,000 pages (about a million rows); the next hourly run resumes from the
+    cursor, which is reset only at the end of the index (or when it can no longer be read:
+    `cursorResets`). A connection revoked behind the cursor is visited by the next pass.
+    Monitoring: `maintenanceCursors.lastPageAt` should move every hour, and
+    `lastPassCompletedAt` once per pass; a `lastPageAt` older than 2 hours means a stuck sweep.
 - **Sync on provider `auth` errors (Phase 5)** calls `markConnectionNeedsReauth` (the helper behind
   `internal.connections.lifecycle.markNeedsReauth`) inside its own failure transaction, audited as
   subject `system:sync`, and cancels the connection's other active runs.
@@ -261,6 +277,9 @@ not allowlisted: `beginConnect` refuses them with `INVALID_ARGUMENT` (`field: "r
   - `linkAdAccounts` on an Instagram connection returns `NOT_FOUND`;
   - `linkSocialAccounts` on an ad connection returns `INVALID_ARGUMENT`.
 - **Disconnect:** also unlinks social accounts and drops `discoveredSocialAccounts`.
+- **Meta callbacks (ADR 0017, IM6):** the Instagram Login app's deauthorize callback moves the
+  user's connections to `needs_reauth`; its data-deletion callback disconnects them and deletes
+  the account's stored data in every org ([instagram-messaging.md](instagram-messaging.md)).
 - **Token refresh:** a daily job refreshes long-lived tokens (at least 24 h old, expiring within
   10 days) and replaces the credential atomically. An `auth` failure moves the connection to
   `needs_reauth`.

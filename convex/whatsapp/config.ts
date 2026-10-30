@@ -1,4 +1,5 @@
 import { apiError } from "../lib/errors";
+import { configuredSecret } from "../messaging/signature";
 import { isLocalDeployment } from "../providers/mode";
 
 /**
@@ -225,23 +226,3 @@ export const STUCK_SEND_AFTER_MS = 5 * 60 * 1000;
 
 /** Longest contact profile name stored. */
 export const MAX_CONTACT_NAME_CHARS = 256;
-
-/**
- * Platform timestamps later than receipt by more than this are clamped to the receipt time, so
- * a skewed clock can never stretch the 24-hour customer-service window into the future.
- */
-export const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
-
-/** The 24-hour customer-service window opened by each inbound customer message. */
-export const SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
-
-const MIN_SECRET_LENGTH = 8;
-const MAX_SECRET_LENGTH = 512;
-
-/** A configured secret: present, bounded, without whitespace. Anything else fails closed. */
-export function configuredSecret(value: string | undefined): string | null {
-  if (value === undefined) return null;
-  if (value.length < MIN_SECRET_LENGTH || value.length > MAX_SECRET_LENGTH) return null;
-  if (/\s/.test(value)) return null;
-  return value;
-}

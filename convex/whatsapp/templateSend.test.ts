@@ -10,7 +10,7 @@ import {
   seedOrg,
   type Backend,
 } from "../test.helpers";
-import { SERVICE_WINDOW_MS } from "./config";
+import { SERVICE_WINDOW_MS } from "../messaging/window";
 import {
   graphError,
   installFakeWhatsAppGraph,

@@ -21,6 +21,7 @@ import {
 } from "../connections/socialAssets";
 import { isOAuthConnectionProvider, type StoredConnectionProvider } from "../domain/types";
 import { connectionProviderValidator } from "../domain/validators";
+import { instagramMessagingEnabled } from "../instagram/messaging/config";
 import { pkceChallengeS256, randomToken, sha256Base64Url } from "../lib/crypto";
 import { toIso } from "../lib/dto";
 import { apiError } from "../lib/errors";
@@ -68,6 +69,11 @@ export const beginConnect = orgAdminAction({
     // URL, where the same signed-in user completes the connection with completeConnect.
     returnUrl: v.string(),
     reconnectConnectionId: v.optional(v.string()),
+    /**
+     * ADR 0017, Instagram only: also ask for the direct-messages permission (on top of the
+     * analytics scopes). A reconnect of a connection already granted it asks for it anyway.
+     */
+    instagramMessaging: v.optional(v.boolean()),
   },
   returns: v.object({ authorizeUrl: v.string(), expiresAt: v.string() }),
   handler: async (ctx, args): Promise<{ authorizeUrl: string; expiresAt: string }> => {
@@ -77,6 +83,14 @@ export const beginConnect = orgAdminAction({
       throw apiError("INVALID_ARGUMENT", "This platform cannot be connected yet.", {
         field: "provider",
         reason: "connections_disabled",
+      });
+    }
+    // ADR 0017: asking for the messaging permission stays closed on cloud deployments until
+    // INSTAGRAM_MESSAGING_ENABLED=true (an unapproved permission must never reach Meta).
+    if (args.instagramMessaging === true && !instagramMessagingEnabled()) {
+      throw apiError("INVALID_ARGUMENT", "Instagram direct messages are not available yet.", {
+        field: "instagramMessaging",
+        reason: "messaging_unavailable",
       });
     }
     const registry = providerRegistry();
@@ -96,9 +110,8 @@ export const beginConnect = orgAdminAction({
     // Before any OAuth state exists: an invalid redirect override refuses here.
     const redirectUri = oauthRedirectUri(args.provider);
 
-    const { expiresAt }: { expiresAt: number } = await ctx.runMutation(
-      internal.connections.oauthState.create,
-      {
+    const { expiresAt, extraScopes }: { expiresAt: number; extraScopes: string[] } =
+      await ctx.runMutation(internal.connections.oauthState.create, {
         orgId: ctx.tenant.orgId,
         issuer: ctx.tenant.issuer,
         subject: ctx.tenant.subject,
@@ -109,8 +122,8 @@ export const beginConnect = orgAdminAction({
         ...(args.reconnectConnectionId !== undefined
           ? { reconnectConnectionId: args.reconnectConnectionId }
           : {}),
-      },
-    );
+        ...(args.instagramMessaging === true ? { instagramMessaging: true } : {}),
+      });
 
     const authorizeUrl = spec.buildAuthorizationUrl({
       state: nonce,
@@ -119,6 +132,7 @@ export const beginConnect = orgAdminAction({
         ? { codeChallenge: await pkceChallengeS256(codeVerifier) }
         : {}),
       config: oauthClientConfig(args.provider),
+      ...(extraScopes.length > 0 ? { extraScopes } : {}),
     });
     return { authorizeUrl, expiresAt: toIso(expiresAt) };
   },

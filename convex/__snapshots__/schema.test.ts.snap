@@ -87,6 +87,14 @@ exports[`schema inventory > declares the approved indexes 1`] = `
       "orgId",
       "status",
     ],
+    "by_provider_identity": [
+      "provider",
+      "externalUserId",
+    ],
+    "by_provider_scoped_user": [
+      "provider",
+      "scopedUserId",
+    ],
     "by_status_expires": [
       "status",
       "tokenExpiresAt",
@@ -129,12 +137,106 @@ exports[`schema inventory > declares the approved indexes 1`] = `
       "date",
     ],
   },
+  "inboxThreads": {
+    "by_org_channel_last_message": [
+      "orgId",
+      "channel",
+      "lastMessageAt",
+    ],
+    "by_org_instagram_conversation": [
+      "orgId",
+      "instagramConversationId",
+    ],
+    "by_org_last_message": [
+      "orgId",
+      "lastMessageAt",
+    ],
+    "by_org_whatsapp_conversation": [
+      "orgId",
+      "whatsappConversationId",
+    ],
+  },
+  "instagramConversations": {
+    "by_org_account_contact": [
+      "orgId",
+      "messagingAccountId",
+      "contactIgsid",
+    ],
+    "by_org_last_message": [
+      "orgId",
+      "lastMessageAt",
+    ],
+  },
+  "instagramDataDeletionRequests": {
+    "by_confirmation_code": [
+      "confirmationCode",
+    ],
+    "by_request_key": [
+      "requestKey",
+    ],
+    "by_status_next_attempt": [
+      "status",
+      "nextAttemptAt",
+    ],
+  },
+  "instagramMessages": {
+    "by_org_client_message": [
+      "orgId",
+      "clientMessageId",
+    ],
+    "by_org_conversation_platform": [
+      "orgId",
+      "conversationId",
+      "platformAt",
+    ],
+    "by_org_mid": [
+      "orgId",
+      "mid",
+    ],
+  },
+  "instagramMessagingAccounts": {
+    "by_ig_account_status": [
+      "igAccountId",
+      "status",
+    ],
+    "by_org_connection": [
+      "orgId",
+      "connectionId",
+    ],
+    "by_org_social_account": [
+      "orgId",
+      "socialAccountId",
+    ],
+    "by_status_purge_after": [
+      "status",
+      "purgeAfter",
+    ],
+  },
+  "instagramWebhookEvents": {
+    "by_org_account": [
+      "orgId",
+      "messagingAccountId",
+    ],
+    "by_org_dedupe": [
+      "orgId",
+      "dedupeKey",
+    ],
+    "by_status_received": [
+      "status",
+      "receivedAt",
+    ],
+  },
   "integrationApps": {
     "by_issuer": [
       "issuer",
     ],
     "by_slug": [
       "slug",
+    ],
+  },
+  "maintenanceCursors": {
+    "by_name": [
+      "name",
     ],
   },
   "metricsDaily": {

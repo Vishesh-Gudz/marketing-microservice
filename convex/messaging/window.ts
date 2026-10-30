@@ -1,11 +1,18 @@
-import { MAX_FUTURE_SKEW_MS, SERVICE_WINDOW_MS } from "./config";
+/**
+ * Customer reply window (pure), shared by WhatsApp and Instagram: each inbound customer message
+ * opens a 24-hour window in which the business may send free-form messages (outside it, WhatsApp
+ * allows only approved templates). Enforced server-side at send time; read APIs expose only the
+ * expiry instant, so a cached query result can never claim a window is still open.
+ */
 
 /**
- * Customer-service window (pure). Each inbound customer message opens a 24-hour window in which
- * the business may send free-form messages; outside it, only approved templates may be sent.
- * Enforced server-side at send time (Stage 5); read APIs expose only the expiry instant, so a
- * cached query result can never claim a window is still open.
+ * Platform timestamps later than receipt by more than this are clamped to the receipt time, so
+ * a skewed clock can never stretch the 24-hour customer-service window into the future.
  */
+export const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
+
+/** The 24-hour customer-service window opened by each inbound customer message. */
+export const SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /** When the window opened by `lastInboundAt` closes, or undefined if no customer message yet. */
 export function serviceWindowExpiresAt(lastInboundAt: number | undefined): number | undefined {

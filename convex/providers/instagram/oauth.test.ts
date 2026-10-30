@@ -119,7 +119,13 @@ describe("code exchange", () => {
       expiresAt: NOW + 5_184_000_000,
     });
     expect(grant.credential.accessToken).toMatch(new RegExp(`^${FAKE_IG_TOKEN_MARKER}long`));
-    expect(grant.identity).toEqual({ externalUserId: user.userId, displayName: user.username });
+    // ADR 0017 IM6: the code exchange's own user id is kept for Meta's callbacks (the default
+    // fake answers the same id there as /me.user_id).
+    expect(grant.identity).toEqual({
+      externalUserId: user.userId,
+      displayName: user.username,
+      scopedUserId: user.userId,
+    });
     expect(grant.grantedScopes).toEqual([
       "instagram_business_basic",
       "instagram_business_manage_insights",

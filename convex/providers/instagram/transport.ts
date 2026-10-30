@@ -1,6 +1,7 @@
 import {
   GRAPH_HOST,
   INSTAGRAM_GRAPH_VERSION,
+  INSTAGRAM_SUBSCRIBED_FIELDS,
   LONG_LIVED_EXCHANGE_PATH,
   REFRESH_PATH,
   TOKEN_HOST,
@@ -25,12 +26,18 @@ import {
  * - "graph_reader": GET  https://graph.instagram.com/v25.0/... on the reader allowlist
  * - "sdk":          GET  https://graph.instagram.com/v25.0/... on the SDK allowlist (the
  *                   exact requests social-sdk 0.5.0 makes for the reads we use)
- * Graph reads carry the token ONLY in an `Authorization: Bearer` header.
+ * - "messaging":    POST https://graph.instagram.com/v25.0/{id}/subscribed_apps with exactly
+ *                   `subscribed_fields` and no body (ADR 0017: the webhook subscription), and
+ *                   POST https://graph.instagram.com/v25.0/{id}/messages with no query and a
+ *                   JSON body (`Content-Type: application/json`; ADR 0017 IM4: a text reply)
+ * Graph requests carry the token ONLY in an `Authorization: Bearer` header. (Meta's
+ * subscribed_apps sample puts the token in the query, which is refused here; [assume] Meta
+ * accepts it as Bearer.)
  *
  * Nothing here logs. Errors carry a reason code only — never the URL, a header or a body.
  */
 
-export type InstagramCaller = "oauth" | "graph_reader" | "sdk";
+export type InstagramCaller = "oauth" | "graph_reader" | "sdk" | "messaging";
 
 export const BLOCK_REASONS = [
   "scheme",
@@ -168,6 +175,10 @@ const metricList =
   };
 
 type RouteSpec = {
+  /** Absent: GET. */
+  method?: "POST";
+  /** "json": the route takes (and requires) a JSON body. Absent: no body allowed. */
+  body?: "json";
   /** Segments after /v25.0/; ":id" = a decimal Instagram id. */
   segments: readonly string[];
   params: Readonly<Record<string, ParamRule>>;
@@ -240,6 +251,26 @@ const READER_ROUTES: readonly RouteSpec[] = [
   },
 ];
 
+/**
+ * ADR 0017: subscribing the account to the messaging webhook fields (exact field list), and
+ * sending a text reply ([doc] `POST /<IG_ID>/messages`, Bearer token, JSON body).
+ */
+const MESSAGING_ROUTES: readonly RouteSpec[] = [
+  {
+    method: "POST",
+    segments: [":id", "subscribed_apps"],
+    params: { subscribed_fields: exact(INSTAGRAM_SUBSCRIBED_FIELDS) },
+    required: ["subscribed_fields"],
+  },
+  { method: "POST", segments: [":id", "messages"], params: {}, required: [], body: "json" },
+];
+
+const GRAPH_ROUTES: Readonly<Record<Exclude<InstagramCaller, "oauth">, readonly RouteSpec[]>> = {
+  graph_reader: READER_ROUTES,
+  sdk: SDK_ROUTES,
+  messaging: MESSAGING_ROUTES,
+};
+
 const ID_SEGMENT = /^\d{1,32}$/;
 const BEARER = /^Bearer [\x21-\x7e]{1,4096}$/;
 
@@ -264,8 +295,16 @@ function checkQuery(entries: [string, string][], route: RouteSpec): BlockReason 
 
 function graphRoute(target: Target, routes: readonly RouteSpec[]): BlockReason | undefined {
   if (target.url.hostname !== GRAPH_HOST) return "host";
-  if (target.method !== "GET") return "method";
-  if (target.hasBody) return "body";
+  const methodOf = (route: RouteSpec) => route.method ?? "GET";
+  const takesBody = (route: RouteSpec) => route.body === "json";
+  if (!routes.some((route) => methodOf(route) === target.method)) return "method";
+  if (target.hasBody) {
+    if (!routes.some((route) => takesBody(route) && methodOf(route) === target.method)) {
+      return "body";
+    }
+    const type = target.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+    if (type !== "application/json") return "body";
+  }
   const authorization = target.headers.get("authorization");
   if (authorization === null || !BEARER.test(authorization)) return "authorization";
   const path = target.url.pathname;
@@ -275,6 +314,8 @@ function graphRoute(target: Target, routes: readonly RouteSpec[]): BlockReason |
   const rest = segments.slice(1);
   const candidates = routes.filter(
     (r) =>
+      methodOf(r) === target.method &&
+      takesBody(r) === target.hasBody &&
       r.segments.length === rest.length &&
       r.segments.every((s, i) => (s === ":id" ? ID_SEGMENT.test(rest[i]!) : s === rest[i])),
   );
@@ -344,7 +385,7 @@ export function assertAllowedRequest(caller: InstagramCaller, target: Target): v
       // The global rule: Graph reads never put a secret in the URL.
       reason = "secret_in_url";
     } else {
-      reason = graphRoute(target, caller === "sdk" ? SDK_ROUTES : READER_ROUTES);
+      reason = graphRoute(target, GRAPH_ROUTES[caller]);
     }
   }
   if (reason !== undefined) throw new TransportBlockedError(reason);

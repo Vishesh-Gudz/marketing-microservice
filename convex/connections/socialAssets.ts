@@ -2,6 +2,10 @@ import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { internalMutation, type DatabaseReader, type MutationCtx } from "../_generated/server";
 import { isSocialConnectionProvider } from "../domain/types";
+import {
+  stopMessagingForConnection,
+  stopMessagingForSocialAccount,
+} from "../instagram/messaging/accounts";
 import { AUDIT_ACTIONS, writeAudit } from "../lib/audit";
 import { apiError } from "../lib/errors";
 import { getOwned, type Tenant } from "../lib/tenancy";
@@ -150,17 +154,21 @@ export async function linkSocialAccounts(
     }
     // ADR 0016 (Checkpoint 3b): a YouTube channel whose stored data is still being deleted is
     // linked again only once the purge completed (then as a new channel, backfilled afresh).
-    if (connection.provider === "youtube") {
+    // ADR 0017 (IM6): the same for an Instagram account under a Meta data-deletion request.
+    if (connection.provider === "youtube" || connection.provider === "instagram") {
+      const platform = connection.provider;
       const pending = await ctx.db
         .query("socialAccounts")
         .withIndex("by_org_platform_external", (q) =>
-          q.eq("orgId", ctx.tenant.orgId).eq("platform", "youtube").eq("externalId", externalId),
+          q.eq("orgId", ctx.tenant.orgId).eq("platform", platform).eq("externalId", externalId),
         )
         .first();
       if (pending?.status === "disconnected") {
         throw apiError(
           "CONFLICT",
-          "This channel's stored data is still being deleted. Try again shortly.",
+          platform === "youtube"
+            ? "This channel's stored data is still being deleted. Try again shortly."
+            : "This account's stored data is still being deleted. Try again shortly.",
           {
             reason: "purge_pending",
             externalId,
@@ -237,12 +245,17 @@ export async function unlinkSocialAccount(
   if (account.platform === "youtube" && account.status !== "disconnected") {
     await markYouTubeAccountForPurge(ctx, account, "unlinked", ctx.tenant, now);
   }
+  // ADR 0017: an unlinked account stops receiving direct messages (its grace period starts).
+  if (account.platform === "instagram") {
+    await stopMessagingForSocialAccount(ctx.db, ctx.tenant, account._id, "unlinked");
+  }
   return (await ctx.db.get(account._id))!;
 }
 
 /**
  * Disconnect path (lifecycle.ts): unlink every social account of the connection. YouTube
- * channels are marked for purge (ADR 0016, Checkpoint 3b).
+ * channels are marked for purge (ADR 0016, Checkpoint 3b); Instagram direct messages stop
+ * (ADR 0017).
  */
 export async function unlinkSocialAccountsOfConnection(
   ctx: TenantCtx,
@@ -271,6 +284,8 @@ export async function unlinkSocialAccountsOfConnection(
       await markYouTubeAccountForPurge(ctx, account, "disconnected", ctx.tenant, now);
     }
   }
+  // ADR 0017: every Instagram messaging account of the connection stops (grace period starts).
+  await stopMessagingForConnection(ctx.db, ctx.tenant, connectionId, "disconnected");
   for (const row of await discoveredSocialAccountsOf(ctx.db, ctx.tenant.orgId, connectionId)) {
     await ctx.db.delete(row._id);
   }

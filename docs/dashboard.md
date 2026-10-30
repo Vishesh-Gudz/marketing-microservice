@@ -86,6 +86,10 @@ lib/analytics/                    pure logic: types, format, filters, deltas, st
 | `/whatsapp`                                     | WhatsApp inbox: conversations, newest activity first, reply window                       | `whatsapp:listConversations`                                                                                              |
 | `/whatsapp/conversations/[conversationId]`      | One conversation: messages and statuses, reply window, reply, templates                  | `whatsapp:getConversation`/`listMessages`/`sendText`/`listTemplates`/`sendTemplate`                                       |
 | `/whatsapp/settings`                            | WhatsApp settings: Connect WhatsApp (Embedded Signup), setup, connected accounts         | `whatsapp:getSignupConfig`/`completeSignup`/`retrySetup`/`listAccounts`, `connections:list`                               |
+| `/inbox`                                        | Unified inbox (ADR 0018): every channel's conversations, channel filter, reply state     | `inbox:listThreads`                                                                                                       |
+| `/instagram/messages`                           | Instagram DMs (ADR 0017): conversations, newest activity first, reply window             | `instagramMessaging:listConversations`                                                                                    |
+| `/instagram/messages/conversations/[id]`        | One Instagram conversation: messages and statuses, reply window, reply                   | `instagramMessaging:getConversation`/`listMessages`/`sendText`                                                            |
+| `/instagram/messages/settings`                  | Instagram DM settings: turn direct messages on or off per linked account                 | `instagramMessaging:listAccounts`/`getAvailability`/`enable`/`retrySetup`/`disable`, `socialAccounts:list`                |
 
 There is no org-wide ads page: the API requires a campaign or ad-group parent for ads (read budget).
 Connection management is on `/connections` for the **ad platforms, Google Ads and Meta Ads**

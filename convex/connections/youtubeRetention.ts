@@ -83,10 +83,16 @@ const countsValidator = v.object({
   runs: v.number(),
   tasks: v.number(),
 });
-type PurgeCounts = { posts: number; snapshots: number; days: number; runs: number; tasks: number };
-const NO_COUNTS: PurgeCounts = { posts: 0, snapshots: 0, days: 0, runs: 0, tasks: 0 };
+export type PurgeCounts = {
+  posts: number;
+  snapshots: number;
+  days: number;
+  runs: number;
+  tasks: number;
+};
+export const NO_COUNTS: PurgeCounts = { posts: 0, snapshots: 0, days: 0, runs: 0, tasks: 0 };
 
-type Budget = { left: number };
+export type Budget = { left: number };
 type Actor = { orgId: Id<"organizations">; issuer: string; subject: string };
 
 async function systemActor(db: DatabaseWriter, orgId: Id<"organizations">): Promise<Actor> {
@@ -167,8 +173,12 @@ async function deleteVideo(
   return true;
 }
 
-/** One bounded pass over the channel's dependent rows. True when none is left. */
-async function deleteChannelRows(
+/**
+ * One bounded pass over the channel's dependent rows. True when none is left. Keyed only by the
+ * account's org and id (no platform-specific table), so Meta's Instagram data-deletion callback
+ * (ADR 0017, IM6) reuses it for an Instagram account's rows.
+ */
+export async function deleteChannelRows(
   ctx: MutationCtx,
   account: Doc<"socialAccounts">,
   budget: Budget,

@@ -4,6 +4,7 @@ import { internalMutation, type DatabaseReader } from "../_generated/server";
 import { connectionProviderValidator } from "../domain/validators";
 import { AUDIT_ACTIONS, writeAudit } from "../lib/audit";
 import { apiError } from "../lib/errors";
+import { INSTAGRAM_MESSAGING_SCOPE } from "../providers/instagram/config";
 import { MAX_PENDING_STATES_PER_ORG, OAUTH_STATE_TTL_MS } from "./config";
 import { sanitizeOAuthDiagnostics } from "./oauthDiagnostics";
 import { isAllowedReturnUrl } from "./returnUrls";
@@ -38,7 +39,13 @@ async function activeApp(db: DatabaseReader, issuer: string) {
   return app !== null && app.status === "active" ? app : null;
 }
 
-/** Creates a pending state. Called by the tenant-resolved beginConnect action. */
+/**
+ * Creates a pending state. Called by the tenant-resolved beginConnect action.
+ *
+ * ADR 0017: returns the scopes to request in addition to the provider's own. Instagram asks for
+ * the messaging permission when `instagramMessaging` is requested, and also on every reconnect
+ * of a connection already granted it, so a reconnect never drops it silently.
+ */
 export const create = internalMutation({
   args: {
     orgId: v.id("organizations"),
@@ -50,8 +57,9 @@ export const create = internalMutation({
     // S2: required; the claim code is returned only to this URL.
     returnUrl: v.string(),
     reconnectConnectionId: v.optional(v.string()),
+    instagramMessaging: v.optional(v.boolean()),
   },
-  returns: v.object({ expiresAt: v.number() }),
+  returns: v.object({ expiresAt: v.number(), extraScopes: v.array(v.string()) }),
   handler: async (ctx, args) => {
     const now = Date.now();
     const app = await activeApp(ctx.db, args.issuer);
@@ -64,7 +72,13 @@ export const create = internalMutation({
       });
     }
 
+    if (args.instagramMessaging === true && args.provider !== "instagram") {
+      throw apiError("INVALID_ARGUMENT", "Direct messages are only available for Instagram.", {
+        field: "instagramMessaging",
+      });
+    }
     let reconnectConnectionId: Id<"connections"> | undefined;
+    let keepsMessaging = false;
     if (args.reconnectConnectionId !== undefined) {
       const id = ctx.db.normalizeId("connections", args.reconnectConnectionId);
       const target = id === null ? null : await ctx.db.get(id);
@@ -74,7 +88,11 @@ export const create = internalMutation({
         });
       }
       reconnectConnectionId = target._id;
+      keepsMessaging =
+        target.provider === "instagram" && target.grantedScopes.includes(INSTAGRAM_MESSAGING_SCOPE);
     }
+    const extraScopes =
+      args.instagramMessaging === true || keepsMessaging ? [INSTAGRAM_MESSAGING_SCOPE] : [];
 
     const recent = await ctx.db
       .query("oauthStates")
@@ -111,10 +129,13 @@ export const create = internalMutation({
         action: AUDIT_ACTIONS.connectionOAuthStarted,
         targetType: "oauthState",
         targetId: stateId,
-        changes: { provider: { from: null, to: args.provider } },
+        changes: {
+          provider: { from: null, to: args.provider },
+          ...(extraScopes.length > 0 ? { messagingScope: { from: null, to: true } } : {}),
+        },
       },
     );
-    return { expiresAt };
+    return { expiresAt, extraScopes };
   },
 });
 

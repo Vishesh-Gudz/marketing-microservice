@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { MAX_FUTURE_SKEW_MS, SERVICE_WINDOW_MS } from "./config";
+import {
+  effectiveInboundAt,
+  isServiceWindowOpen,
+  MAX_FUTURE_SKEW_MS,
+  SERVICE_WINDOW_MS,
+  serviceWindowExpiresAt,
+} from "../messaging/window";
 import { applyDeliveryStatus, type DeliveryState } from "./status";
-import { effectiveInboundAt, isServiceWindowOpen, serviceWindowExpiresAt } from "./window";
 
 function run(start: DeliveryState, reports: Parameters<typeof applyDeliveryStatus>[1][]) {
   let state = start;

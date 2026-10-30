@@ -75,9 +75,11 @@ export async function disconnectConnection(
     await ctx.db.delete(asset._id);
   }
   const socialUnlinked = await unlinkSocialAccountsOfConnection(ctx, connection._id, now);
+  // The disconnected authorization only: a reconnect increments credentialVersion.
   await ctx.scheduler.runAfter(0, internal.connections.oauthFlow.revokeAtPlatform, {
     connectionId: connection._id,
     actorSubject: ctx.tenant.subject,
+    credentialVersion: connection.credentialVersion,
   });
   await writeAudit(ctx.db, ctx.tenant, {
     action: AUDIT_ACTIONS.connectionDisconnected,

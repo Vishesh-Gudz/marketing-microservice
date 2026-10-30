@@ -1,9 +1,10 @@
 import { v } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import { internalMutation, type DatabaseWriter } from "../_generated/server";
+import { touchThread } from "../inbox/threads";
 import { applyDeliveryStatus } from "./status";
 import type { WebhookEventInput } from "./validators";
-import { effectiveInboundAt } from "./window";
+import { effectiveInboundAt } from "../messaging/window";
 
 /**
  * Asynchronous webhook processing (scheduled by convex/whatsapp/ingest.ts).
@@ -60,7 +61,9 @@ async function applyInboundMessage(
     .unique();
 
   let conversationId;
+  let lastMessageAt;
   if (existing === null) {
+    lastMessageAt = at;
     conversationId = await db.insert("whatsappConversations", {
       orgId: row.orgId,
       numberId: number._id,
@@ -69,12 +72,13 @@ async function applyInboundMessage(
         ? { contactName: event.contactName, contactNameAt: at }
         : {}),
       lastInboundAt: at,
-      lastMessageAt: at,
+      lastMessageAt,
       createdAt: now,
       updatedAt: now,
     });
   } else {
     conversationId = existing._id;
+    lastMessageAt = Math.max(existing.lastMessageAt, at);
     const name =
       event.contactName !== undefined && replacesContactName(existing, at)
         ? event.contactName
@@ -82,10 +86,12 @@ async function applyInboundMessage(
     await db.patch(existing._id, {
       ...(name !== undefined ? { contactName: name, contactNameAt: at } : {}),
       lastInboundAt: Math.max(existing.lastInboundAt ?? 0, at),
-      lastMessageAt: Math.max(existing.lastMessageAt, at),
+      lastMessageAt,
       updatedAt: now,
     });
   }
+  // ADR 0018: the unified inbox's thread row follows the conversation (same transaction).
+  await touchThread(db, row.orgId, { channel: "whatsapp", conversationId }, lastMessageAt);
 
   await db.insert("whatsappMessages", {
     orgId: row.orgId,

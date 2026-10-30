@@ -1,9 +1,14 @@
 import { internal } from "../_generated/api";
 import type { ActionCtx } from "../_generated/server";
-import { configuredSecret, MAX_WEBHOOK_BODY_BYTES, WHATSAPP_ENV } from "./config";
+import {
+  configuredSecret,
+  SIGNATURE_HEADER,
+  timingSafeEqualString,
+  verifyWebhookSignature,
+} from "../messaging/signature";
+import { MAX_WEBHOOK_BODY_BYTES, WHATSAPP_ENV } from "./config";
 import { handlePartnerRemovals } from "./partnerRemoval";
 import { parseWebhookPayload } from "./payload";
-import { SIGNATURE_HEADER, timingSafeEqualString, verifyWebhookSignature } from "./signature";
 
 /**
  * WhatsApp Cloud API webhook endpoint (`/whatsapp/webhook`, convex/http.ts).

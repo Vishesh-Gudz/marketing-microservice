@@ -628,7 +628,7 @@ export async function connectInstagramFake(
   fake: FakeInstagram,
   user = "business",
   identityInput: IdentityInput = {},
-  extra: { reconnectConnectionId?: string } = {},
+  extra: { reconnectConnectionId?: string; instagramMessaging?: boolean } = {},
 ): Promise<URLSearchParams> {
   const { authorizeUrl } = await as(t, identityInput).action(api.v1.connections.beginConnect, {
     provider: "instagram",
