@@ -19,10 +19,15 @@ import { apiError } from "../../lib/errors";
 import { isServiceWindowOpen } from "../../messaging/window";
 import {
   GRAPH_ORIGIN,
+  hasInstagramMessagingPermission,
   INSTAGRAM_GRAPH_VERSION,
-  INSTAGRAM_MESSAGING_SCOPE,
+  UNIFIED_GRAPH_ORIGIN,
+  UNIFIED_GRAPH_VERSION,
 } from "../../providers/instagram/config";
-import { isInstagramCredential } from "../../providers/instagram/credential";
+import {
+  isInstagramMessagingCredential,
+  isInstagramUnifiedCredential,
+} from "../../providers/instagram/credential";
 import { classifyInstagramFailure } from "../../providers/instagram/errors";
 import { RequestBudget, sendInstagram } from "../../providers/instagram/transport";
 import { messagingHolder } from "./accounts";
@@ -114,7 +119,7 @@ export async function senderOf(
     return refuse("messaging_unavailable");
   }
   if (connection.status !== "active") return refuse("reconnect_required");
-  if (!connection.grantedScopes.includes(INSTAGRAM_MESSAGING_SCOPE)) return refuse("scope_missing");
+  if (!hasInstagramMessagingPermission(connection.grantedScopes)) return refuse("scope_missing");
   return {
     ok: true,
     sender: {
@@ -319,12 +324,18 @@ type Outcome = Infer<typeof outcomeValidator>;
 async function send(ctx: ActionCtx, claim: Infer<typeof claimValidator>): Promise<Outcome> {
   try {
     return await withConnectionCredential(ctx, claim.connectionId, async (credential, binding) => {
-      if (!isInstagramCredential(credential) || credential.userId !== claim.igAccountId) {
+      if (!isInstagramMessagingCredential(credential) || credential.userId !== claim.igAccountId) {
         return { kind: "refused", reason: "credential_invalid", tokenRefused: false };
       }
+      // Unified Login: graph.facebook.com with the system-user token. [assume] Meta documents
+      // no send endpoint for Unified Login; this is Instagram Login's documented
+      // `POST /<IG_ID>/messages` on the Unified host (the first real reply verifies it).
+      const sendUrl = isInstagramUnifiedCredential(credential)
+        ? `${UNIFIED_GRAPH_ORIGIN}/${UNIFIED_GRAPH_VERSION}/${claim.igAccountId}/messages`
+        : `${GRAPH_ORIGIN}/${INSTAGRAM_GRAPH_VERSION}/${claim.igAccountId}/messages`;
       const result = await sendInstagram(
         "messaging",
-        new URL(`${GRAPH_ORIGIN}/${INSTAGRAM_GRAPH_VERSION}/${claim.igAccountId}/messages`),
+        new URL(sendUrl),
         {
           method: "POST",
           headers: {

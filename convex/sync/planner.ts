@@ -3,6 +3,7 @@ import { internal } from "../_generated/api";
 import type { Doc } from "../_generated/dataModel";
 import { internalMutation, type MutationCtx } from "../_generated/server";
 import { providerRegistry } from "../connections/config";
+import { isUnifiedInstagramGrant } from "../providers/instagram/config";
 import { SYNC_CADENCE, SYNC_LIMITS } from "./config";
 import { buildRunPlan, dueKind, nextDueAt, type SyncRunKind } from "./plan";
 import { isBlockingError, retainBlockingError, sanitizeFailure } from "./policy";
@@ -145,6 +146,13 @@ async function planAccount(
       lastError,
     });
     return "deferred";
+  }
+  // A Unified Login Instagram connection (providers/instagram/config.ts) never syncs organic
+  // data (its token cannot read graph.instagram.com): a schedule left from an earlier Instagram
+  // Login link is parked instead of failing as an auth error.
+  if (connection.provider === "instagram" && isUnifiedInstagramGrant(connection.grantedScopes)) {
+    await park(ctx, row, now);
+    return "parked";
   }
   if (row.throttledUntil !== undefined && row.throttledUntil > now) {
     await defer(ctx, row, row.throttledUntil, now);

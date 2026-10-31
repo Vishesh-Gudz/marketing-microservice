@@ -87,9 +87,50 @@ so this set only shrinks.
 | `INSTAGRAM_WEBHOOK_VERIFY_TOKEN`           | The verify token you also enter in the App Dashboard                                               |
 | `INSTAGRAM_CALLBACK_APP_SECRET` (secret)   | The ONLY secret that verifies the deauthorize / data-deletion `signed_request`; no fallback (RI14) |
 | `INSTAGRAM_MESSAGING_ENABLED`              | Exactly `true` opens asking for the permission, `enable` and `retrySetup` on cloud deployments     |
+| `INSTAGRAM_LOGIN_CONFIG_ID`                | Set: Instagram API with Unified Login (below) instead of Instagram Login                           |
 
 Local deployments and tests are open without `INSTAGRAM_MESSAGING_ENABLED`. Turning messaging
 off, disconnecting, the webhook and both callbacks are never gated by it.
+
+## Instagram API with Unified Login (new Meta apps)
+
+Meta apps created since late October 2026 show "API setup with Instagram login is not available
+for newer apps" and use **Unified Login**: a Facebook Login for Business configuration that issues
+a Business Integration System User access token; every call goes to `graph.facebook.com` with
+the Instagram account id. The Instagram provider switches to it when `INSTAGRAM_LOGIN_CONFIG_ID`
+is set (unset: Instagram Login, unchanged):
+
+| Variable                       | Value under Unified Login                                    |
+| ------------------------------ | ------------------------------------------------------------ |
+| `INSTAGRAM_APP_ID`             | The Meta app id                                              |
+| `INSTAGRAM_APP_SECRET`         | The Meta app secret (App settings > Basic)                   |
+| `INSTAGRAM_LOGIN_CONFIG_ID`    | The configuration id ("API setup with Unified login" step 1) |
+| `INSTAGRAM_WEBHOOK_APP_SECRET` | The Meta app secret ([doc] "your app's App Secret")          |
+
+Meta configuration: redirect URL `<CONVEX_SITE_URL>/oauth/callback`; webhooks on the "API setup
+with Unified login" tab with callback `<CONVEX_SITE_URL>/instagram/webhook`, the verify token,
+and the fields `messages` and `messaging_seen` (the only messaging fields Meta lists for Unified
+Login). The configuration needs `instagram_basic` (account lookup) and
+`instagram_manage_messages`.
+
+| Step         | Request                                                               | Status        |
+| ------------ | --------------------------------------------------------------------- | ------------- |
+| Sign-in      | `www.facebook.com/dialog/oauth` with `config_id`, no `scope`          | [doc]         |
+| Exchange     | `GET /v26.0/oauth/access_token` (client_id, secret, code, redirect)   | [doc]         |
+| Inspect      | `GET /v26.0/debug_token`: valid, this app, `instagram_basic` required | [doc] (Graph) |
+| Account      | `GET /v26.0/me/assigned_instagram_accounts?fields=id,username`, one   | [doc]         |
+| Subscribe    | `POST /v26.0/{ig-id}/subscribed_apps` (`messages,messaging_seen`)     | [doc]         |
+| Send         | `POST /v26.0/{ig-id}/messages`                                        | **[assume]**  |
+| Token header | `Authorization: Bearer` on Graph calls                                | **[assume]**  |
+| Payload      | `object: instagram`, `entry[].id` = account id, echoes in `messages`  | **[assume]**  |
+
+Differences from Instagram Login: the token never expires and is never refreshed (no expiry is
+stored); a Unified connection gets **no organic sync** (its token cannot read
+`graph.instagram.com`; a leftover schedule is parked); discovery records the account type as
+`business` (PROVISIONAL: `graph.facebook.com` has no `account_type`); there is no platform
+revoke (the client removes the app in Business Settings > Integrations > Connected apps). Not
+covered yet: the deauthorize / data-deletion callbacks cannot match a Unified connection (no
+app-scoped user id), so leave `INSTAGRAM_CALLBACK_APP_SECRET` unset until that is designed.
 
 ## Meta configuration (per app, when the user decides to go live)
 

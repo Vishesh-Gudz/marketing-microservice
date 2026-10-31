@@ -43,6 +43,58 @@ export const INSTAGRAM_MESSAGING_SCOPE = "instagram_business_manage_messages";
  */
 export const INSTAGRAM_SUBSCRIBED_FIELDS = "messages,messaging_seen,message_edit";
 
+/**
+ * Instagram API with Unified Login (2026-10-31): Meta apps created since late October 2026 no
+ * longer offer Instagram Login; they use a Facebook Login for Business configuration
+ * (`config_id`) that issues a Business Integration System User access token, and every call
+ * goes to graph.facebook.com with the Instagram account id [doc: "Instagram API with Unified
+ * Login" get-started / authentication / webhooks setup]. The connection layer switches the
+ * Instagram provider to this mode when INSTAGRAM_LOGIN_CONFIG_ID is set; without it, the
+ * Instagram Login implementation above is used unchanged.
+ */
+export const UNIFIED_DIALOG_URL = "https://www.facebook.com/dialog/oauth";
+export const UNIFIED_GRAPH_HOST = "graph.facebook.com";
+export const UNIFIED_GRAPH_ORIGIN = `https://${UNIFIED_GRAPH_HOST}`;
+/** [doc] The Unified Login examples use v26.0. */
+export const UNIFIED_GRAPH_VERSION = "v26.0";
+/** [doc] Reading the assigned Instagram accounts needs this permission. */
+export const UNIFIED_BASIC_PERMISSION = "instagram_basic";
+/** [doc] Sending and receiving messages under Unified Login. */
+export const UNIFIED_MESSAGING_PERMISSION = "instagram_manage_messages";
+/**
+ * [doc] Webhook fields listed for Unified Login (`message_edit` and `message_echoes` are not
+ * listed, so they are not requested; echoes are expected under `messages`).
+ */
+export const UNIFIED_SUBSCRIBED_FIELDS = "messages,messaging_seen";
+
+/** A Facebook Login for Business configuration id (decimal). */
+export function isValidUnifiedConfigId(value: string | undefined): value is string {
+  return value !== undefined && NUMERIC_ID.test(value);
+}
+
+/**
+ * Whether a connection's granted permissions allow direct messages, under either setup:
+ * Instagram Login tokens carry `instagram_business_manage_messages`, Unified Login tokens
+ * `instagram_manage_messages` (each setup's names never appear in the other's tokens).
+ */
+export function hasInstagramMessagingPermission(grantedScopes: readonly string[]): boolean {
+  return (
+    grantedScopes.includes(INSTAGRAM_MESSAGING_SCOPE) ||
+    grantedScopes.includes(UNIFIED_MESSAGING_PERMISSION)
+  );
+}
+
+/**
+ * Whether an Instagram connection was made through Unified Login, from its granted permissions
+ * (the Unified exchange requires `instagram_basic`; Instagram Login never grants it).
+ */
+export function isUnifiedInstagramGrant(grantedScopes: readonly string[]): boolean {
+  return (
+    grantedScopes.includes(UNIFIED_BASIC_PERMISSION) &&
+    !grantedScopes.includes("instagram_business_basic")
+  );
+}
+
 /** OAuth calls run inside the OAuth callback action. */
 export const OAUTH_TIMEOUT_MS = 15_000;
 /** Sync calls stay well under the 5-minute task lease. */

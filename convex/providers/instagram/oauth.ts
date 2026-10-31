@@ -9,11 +9,18 @@ import {
   isValidInstagramSecret,
   LONG_LIVED_EXCHANGE_PATH,
   OAUTH_TIMEOUT_MS,
+  isValidUnifiedConfigId,
   REFRESH_MIN_AGE_MS,
   REFRESH_PATH,
   TOKEN_EXCHANGE_URL,
+  UNIFIED_DIALOG_URL,
 } from "./config";
-import { isInstagramCredential, type InstagramCredential } from "./credential";
+import {
+  isInstagramCredential,
+  isInstagramUnifiedCredential,
+  type InstagramCredential,
+  type InstagramUnifiedCredential,
+} from "./credential";
 import { classifyInstagramFailure, instagramError, instagramProviderError } from "./errors";
 import { createInstagramGraphReader } from "./graphReader";
 import {
@@ -26,6 +33,7 @@ import {
   type RawShortLivedToken,
 } from "./schemas";
 import { RequestBudget, sendInstagram, type InstagramResult } from "./transport";
+import { exchangeUnifiedCode, inspectUnifiedToken, readUnifiedAccounts } from "./unified";
 
 /**
  * Instagram OAuthSpec (Phase 10, I-D1/I-D2): Instagram API with Instagram Login, our own
@@ -39,8 +47,13 @@ import { RequestBudget, sendInstagram, type InstagramResult } from "./transport"
  * No PKCE (not documented for Instagram Login): the single-use state nonce is the CSRF
  * defense. Every request goes through the transport allowlist (transport.ts).
  *
+ * Unified Login (config.ts, unified.ts): with a configuration id (INSTAGRAM_LOGIN_CONFIG_ID)
+ * the authorization goes through the Facebook Login for Business dialog (`config_id`, no
+ * scope) and the exchange is code -> system-user token -> debug_token -> the one assigned
+ * Instagram account, all on graph.facebook.com/v26.0. Without it, nothing below changes.
+ *
  * D28b stages (providerCode "<stage>:<code>"): token_exchange, long_lived_exchange,
- * identity, config; refresh failures use token_refresh. Authorization codes and short-lived
+ * identity, config; refresh failures use token_refresh; Unified Login adds debug_token. Authorization codes and short-lived
  * tokens only ever exist in this function's memory; only the long-lived token is returned
  * (inside the credential, which the connection layer encrypts).
  */
@@ -79,6 +92,30 @@ function requireConfig(config: OAuthClientConfig, operation: "oauthExchange" | "
   return { appId: config.clientId, appSecret: config.clientSecret } satisfies Config;
 }
 
+/**
+ * Unified Login (config.ts) is used when the connection layer passes a configuration id
+ * (INSTAGRAM_LOGIN_CONFIG_ID); an invalid one is a configuration error, never a fallback.
+ */
+function unifiedConfigId(
+  config: OAuthClientConfig,
+  operation: "oauthExchange" | "oauthRefresh",
+): string | undefined {
+  const configId = config.extra?.configId;
+  if (configId === undefined) return undefined;
+  if (!isValidUnifiedConfigId(configId)) {
+    throw instagramError(
+      "unknown",
+      operation,
+      `config:${INSTAGRAM_CONFIG_INVALID}`,
+      "Instagram app configuration is missing or invalid",
+    );
+  }
+  return configId;
+}
+
+/** Requests of one Unified Login exchange: code exchange + debug_token + account lookup. */
+const UNIFIED_EXCHANGE_BUDGET = 3;
+
 /** Seconds -> epoch ms from `now`; absent or non-positive = no expiry reported. */
 function expiryFrom(now: number, expiresIn: number | undefined): number | undefined {
   return expiresIn !== undefined && Number.isFinite(expiresIn) && expiresIn > 0
@@ -112,7 +149,7 @@ function shortLivedEntry(body: unknown): RawShortLivedToken {
 
 export function createInstagramOAuthSpec(
   options: { timeoutMs?: number } = {},
-): OAuthSpec<InstagramCredential> {
+): OAuthSpec<InstagramCredential | InstagramUnifiedCredential> {
   const timeoutMs = options.timeoutMs ?? OAUTH_TIMEOUT_MS;
   const reader = createInstagramGraphReader({ timeoutMs });
 
@@ -134,7 +171,7 @@ export function createInstagramOAuthSpec(
     return instagramProviderError(classification, operation, stage);
   };
 
-  const spec: OAuthSpec<InstagramCredential> = {
+  const spec: OAuthSpec<InstagramCredential | InstagramUnifiedCredential> = {
     platform: "instagram",
     providerId: INSTAGRAM_PROVIDER_ID,
     requestedScopes: INSTAGRAM_SCOPES,
@@ -153,6 +190,18 @@ export function createInstagramOAuthSpec(
           "Instagram scope not allowed",
         );
       }
+      const configId = unifiedConfigId(config, "oauthExchange");
+      if (configId !== undefined) {
+        // [doc] Unified Login: the configuration defines the permissions; no `scope` is sent,
+        // so the messaging permission (extraScopes) comes from the configuration itself.
+        const url = new URL(UNIFIED_DIALOG_URL);
+        url.searchParams.set("client_id", appId);
+        url.searchParams.set("config_id", configId);
+        url.searchParams.set("redirect_uri", redirectUri);
+        url.searchParams.set("response_type", "code");
+        url.searchParams.set("state", state);
+        return url.toString();
+      }
       const url = new URL(AUTHORIZE_URL);
       url.searchParams.set("client_id", appId);
       url.searchParams.set("redirect_uri", redirectUri);
@@ -168,8 +217,49 @@ export function createInstagramOAuthSpec(
       redirectUri,
       config,
       now,
-    }): Promise<OAuthGrant<InstagramCredential>> {
+    }): Promise<OAuthGrant<InstagramCredential | InstagramUnifiedCredential>> {
       const { appId, appSecret } = requireConfig(config, "oauthExchange");
+      if (unifiedConfigId(config, "oauthExchange") !== undefined) {
+        const call = { timeoutMs, budget: new RequestBudget(UNIFIED_EXCHANGE_BUDGET) };
+        const token = await exchangeUnifiedCode({ code, redirectUri, appId, appSecret }, call);
+        const grantedScopes = await inspectUnifiedToken({ token, appId, appSecret }, call);
+        const accounts = await readUnifiedAccounts(token, "oauthExchange", {
+          ...call,
+          stage: "identity",
+        });
+        if (accounts.length !== 1) {
+          // One connection is one Instagram account: the client assigns exactly one.
+          throw instagramError(
+            "data",
+            "oauthExchange",
+            accounts.length === 0 ? "identity:no_account" : "identity:multiple_accounts",
+            accounts.length === 0
+              ? "No Instagram account was assigned to the app"
+              : "Assign exactly one Instagram account to the app",
+          );
+        }
+        const account = accounts[0]!;
+        return {
+          credential: {
+            kind: "instagram",
+            v: 1,
+            setup: "unified",
+            accessToken: token,
+            tokenType: "system_user",
+            appId,
+            userId: account.userId,
+            issuedAt: now,
+          },
+          identity: {
+            externalUserId: account.userId,
+            ...(account.username !== undefined ? { displayName: account.username } : {}),
+          },
+          grantedScopes,
+          // [doc] The configuration's token never expires and is never refreshed: no expiry is
+          // stored, so the refresh job never selects it.
+          refreshable: false,
+        };
+      }
       const budget = new RequestBudget(EXCHANGE_BUDGET);
 
       // 1. Authorization code -> short-lived token (form POST: secrets never in a URL).
@@ -262,7 +352,20 @@ export function createInstagramOAuthSpec(
      * exception). Identity and scopes are unchanged by a refresh: the returned grant keeps
      * the stored identity and reports NO scopes (callers must not overwrite granted scopes).
      */
-    async refresh(credential, config, now): Promise<OAuthGrant<InstagramCredential>> {
+    async refresh(
+      credential,
+      config,
+      now,
+    ): Promise<OAuthGrant<InstagramCredential | InstagramUnifiedCredential>> {
+      if (isInstagramUnifiedCredential(credential)) {
+        // Never selected (no expiry is stored); refused without touching the connection.
+        throw instagramError(
+          "invalid_request",
+          "oauthRefresh",
+          "token_refresh:not_refreshable",
+          "Unified Login tokens are not refreshed",
+        );
+      }
       if (!isInstagramCredential(credential)) {
         throw instagramError(
           "auth",

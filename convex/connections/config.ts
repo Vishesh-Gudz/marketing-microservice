@@ -159,8 +159,14 @@ const CLIENT_ENV: Record<
     extra: { configId: "META_LOGIN_CONFIG_ID" },
   },
   google_ads: { clientId: "GOOGLE_CLIENT_ID", clientSecret: "GOOGLE_CLIENT_SECRET", extra: {} },
-  // Phase 10: Instagram API with Instagram Login (organic Instagram only).
-  instagram: { clientId: "INSTAGRAM_APP_ID", clientSecret: "INSTAGRAM_APP_SECRET", extra: {} },
+  // Phase 10: Instagram API with Instagram Login. With INSTAGRAM_LOGIN_CONFIG_ID set (a new
+  // Meta app's Facebook Login for Business configuration), the same provider uses Instagram API
+  // with Unified Login instead; INSTAGRAM_APP_ID / _SECRET are then that Meta app's id/secret.
+  instagram: {
+    clientId: "INSTAGRAM_APP_ID",
+    clientSecret: "INSTAGRAM_APP_SECRET",
+    extra: { configId: "INSTAGRAM_LOGIN_CONFIG_ID" },
+  },
   // ADR 0016 (Y-D3): YouTube's OWN Google OAuth client. The Google Ads client id is read only
   // to refuse a shared client (a YouTube revoke must never revoke a Google Ads grant).
   youtube: {

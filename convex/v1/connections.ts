@@ -22,6 +22,7 @@ import {
 import { isOAuthConnectionProvider, type StoredConnectionProvider } from "../domain/types";
 import { connectionProviderValidator } from "../domain/validators";
 import { instagramMessagingEnabled } from "../instagram/messaging/config";
+import { isUnifiedInstagramGrant, UNIFIED_BASIC_PERMISSION } from "../providers/instagram/config";
 import { pkceChallengeS256, randomToken, sha256Base64Url } from "../lib/crypto";
 import { toIso } from "../lib/dto";
 import { apiError } from "../lib/errors";
@@ -49,7 +50,19 @@ import {
  * separate functions and tables and can never be linked through each other's path.
  */
 
-function requiredScopes(provider: StoredConnectionProvider) {
+/**
+ * The permissions a connection needs. A Unified Login Instagram connection
+ * (providers/instagram/config.ts) is checked against its own setup's permission, not Instagram
+ * Login's, so it is not reported as missing access.
+ */
+function requiredScopes(connection: {
+  provider: StoredConnectionProvider;
+  grantedScopes: readonly string[];
+}): readonly string[] {
+  const { provider } = connection;
+  if (provider === "instagram" && isUnifiedInstagramGrant(connection.grantedScopes)) {
+    return [UNIFIED_BASIC_PERMISSION];
+  }
   const registry = providerRegistry();
   return isOAuthConnectionProvider(provider) && registry.hasOAuth(provider)
     ? registry.oauth(provider).requiredScopes
@@ -196,7 +209,7 @@ export const list = orgQuery({
       .query("connections")
       .withIndex("by_org_provider_identity", (q) => q.eq("orgId", ctx.tenant.orgId))
       .take(100);
-    return connections.map((c) => toConnectionDto(c, requiredScopes(c.provider), now));
+    return connections.map((c) => toConnectionDto(c, requiredScopes(c), now));
   },
 });
 
@@ -205,7 +218,7 @@ export const get = orgQuery({
   returns: connectionDto,
   handler: async (ctx, { connectionId }) => {
     const connection = await getOwned(ctx, "connections", connectionId);
-    return toConnectionDto(connection, requiredScopes(connection.provider), Date.now());
+    return toConnectionDto(connection, requiredScopes(connection), Date.now());
   },
 });
 
@@ -288,7 +301,7 @@ export const disconnect = orgAdminMutation({
   returns: connectionDto,
   handler: async (ctx, { connectionId }) => {
     const connection = await disconnectConnection(ctx, connectionId);
-    return toConnectionDto(connection, requiredScopes(connection.provider), Date.now());
+    return toConnectionDto(connection, requiredScopes(connection), Date.now());
   },
 });
 

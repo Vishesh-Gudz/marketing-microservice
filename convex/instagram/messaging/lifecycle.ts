@@ -12,8 +12,14 @@ import {
   GRAPH_ORIGIN,
   INSTAGRAM_GRAPH_VERSION,
   INSTAGRAM_SUBSCRIBED_FIELDS,
+  UNIFIED_GRAPH_ORIGIN,
+  UNIFIED_GRAPH_VERSION,
+  UNIFIED_SUBSCRIBED_FIELDS,
 } from "../../providers/instagram/config";
-import { isInstagramCredential } from "../../providers/instagram/credential";
+import {
+  isInstagramMessagingCredential,
+  isInstagramUnifiedCredential,
+} from "../../providers/instagram/credential";
 import {
   RequestBudget,
   sendInstagram,
@@ -136,7 +142,11 @@ export const beginSetupAttempt = internalMutation({
 });
 
 const outcomeValidator = v.union(
-  v.object({ kind: v.literal("subscribed") }),
+  v.object({
+    kind: v.literal("subscribed"),
+    /** The fields actually subscribed (Unified Login has its own list). Absent: Instagram Login's. */
+    fields: v.optional(v.array(v.string())),
+  }),
   v.object({
     kind: v.literal("failed"),
     reason: v.string(),
@@ -176,7 +186,12 @@ export const recordSubscriptionResult = internalMutation({
       return "stale" as const;
     }
     if (outcome.kind === "subscribed") {
-      await recordSubscribed(ctx.db, actor, accountId, INSTAGRAM_SUBSCRIBED_FIELDS.split(","));
+      await recordSubscribed(
+        ctx.db,
+        actor,
+        accountId,
+        outcome.fields ?? INSTAGRAM_SUBSCRIBED_FIELDS.split(","),
+      );
       return "applied" as const;
     }
     await recordActionRequired(ctx.db, actor, accountId, outcome.reason);
@@ -223,13 +238,19 @@ async function callSubscribe(
 ): Promise<Outcome> {
   try {
     return await withConnectionCredential(ctx, target.connectionId, async (credential, binding) => {
-      if (!isInstagramCredential(credential) || credential.userId !== target.igAccountId) {
+      if (!isInstagramMessagingCredential(credential) || credential.userId !== target.igAccountId) {
         return { kind: "failed", reason: "credential_invalid", tokenRefused: false };
       }
+      // [doc] Unified Login subscribes on graph.facebook.com with the system-user token and its
+      // own field list; Instagram Login on graph.instagram.com, unchanged.
+      const unified = isInstagramUnifiedCredential(credential);
+      const fields = unified ? UNIFIED_SUBSCRIBED_FIELDS : INSTAGRAM_SUBSCRIBED_FIELDS;
       const url = new URL(
-        `${GRAPH_ORIGIN}/${INSTAGRAM_GRAPH_VERSION}/${target.igAccountId}/subscribed_apps`,
+        unified
+          ? `${UNIFIED_GRAPH_ORIGIN}/${UNIFIED_GRAPH_VERSION}/${target.igAccountId}/subscribed_apps`
+          : `${GRAPH_ORIGIN}/${INSTAGRAM_GRAPH_VERSION}/${target.igAccountId}/subscribed_apps`,
       );
-      url.searchParams.set("subscribed_fields", INSTAGRAM_SUBSCRIBED_FIELDS);
+      url.searchParams.set("subscribed_fields", fields);
       const result = await sendInstagram(
         "messaging",
         url,
@@ -245,7 +266,7 @@ async function callSubscribe(
       if (result.ok) {
         const body = result.body as { success?: unknown } | null;
         return body !== null && typeof body === "object" && body.success === true
-          ? { kind: "subscribed" }
+          ? { kind: "subscribed", ...(unified ? { fields: fields.split(",") } : {}) }
           : { kind: "failed", reason: "unexpected_response", tokenRefused: false };
       }
       return {

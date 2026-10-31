@@ -117,6 +117,7 @@ import type * as providers_instagram_oauth from "../providers/instagram/oauth.js
 import type * as providers_instagram_schemas from "../providers/instagram/schemas.js";
 import type * as providers_instagram_semantics from "../providers/instagram/semantics.js";
 import type * as providers_instagram_transport from "../providers/instagram/transport.js";
+import type * as providers_instagram_unified from "../providers/instagram/unified.js";
 import type * as providers_meta_capabilities from "../providers/meta/capabilities.js";
 import type * as providers_meta_carry from "../providers/meta/carry.js";
 import type * as providers_meta_client from "../providers/meta/client.js";
@@ -355,6 +356,7 @@ declare const fullApi: ApiFromModules<{
   "providers/instagram/schemas": typeof providers_instagram_schemas;
   "providers/instagram/semantics": typeof providers_instagram_semantics;
   "providers/instagram/transport": typeof providers_instagram_transport;
+  "providers/instagram/unified": typeof providers_instagram_unified;
   "providers/meta/capabilities": typeof providers_meta_capabilities;
   "providers/meta/carry": typeof providers_meta_carry;
   "providers/meta/client": typeof providers_meta_client;

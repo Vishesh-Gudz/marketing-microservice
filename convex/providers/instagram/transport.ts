@@ -5,6 +5,9 @@ import {
   LONG_LIVED_EXCHANGE_PATH,
   REFRESH_PATH,
   TOKEN_HOST,
+  UNIFIED_GRAPH_HOST,
+  UNIFIED_GRAPH_VERSION,
+  UNIFIED_SUBSCRIBED_FIELDS,
 } from "./config";
 
 /**
@@ -33,6 +36,19 @@ import {
  * Graph requests carry the token ONLY in an `Authorization: Bearer` header. (Meta's
  * subscribed_apps sample puts the token in the query, which is refused here; [assume] Meta
  * accepts it as Bearer.)
+ *
+ * Unified Login (config.ts) uses graph.facebook.com/v26.0 instead, on its own exact routes:
+ * - "oauth":        GET /v26.0/oauth/access_token (client_id, client_secret, code,
+ *                   redirect_uri) and GET /v26.0/debug_token (input_token, access_token = the
+ *                   app token): Meta documents only these GET forms, so they are approved
+ *                   secret-in-URL exceptions like the two above (built right before the fetch,
+ *                   never logged, persisted or carried by an error)
+ * - "graph_reader": GET /v26.0/me/assigned_instagram_accounts?fields=id,username
+ * - "messaging":    POST /v26.0/{id}/subscribed_apps (`subscribed_fields` = messages,
+ *                   messaging_seen) and POST /v26.0/{id}/messages (JSON body)
+ * - "sdk":          nothing (organic sync never runs on a Unified Login token)
+ * The token travels as `Authorization: Bearer` here too ([assume] for Unified Login: Meta's
+ * samples use the access_token parameter).
  *
  * Nothing here logs. Errors carry a reason code only — never the URL, a header or a body.
  */
@@ -271,6 +287,32 @@ const GRAPH_ROUTES: Readonly<Record<Exclude<InstagramCaller, "oauth">, readonly 
   messaging: MESSAGING_ROUTES,
 };
 
+/** [doc] The fields of the Unified Login account lookup. */
+export const UNIFIED_ACCOUNT_FIELDS = "id,username";
+
+/** Unified Login (graph.facebook.com/v26.0): discovery, the subscription and a text reply. */
+const UNIFIED_GRAPH_ROUTES: Readonly<
+  Record<Exclude<InstagramCaller, "oauth">, readonly RouteSpec[]>
+> = {
+  graph_reader: [
+    {
+      segments: ["me", "assigned_instagram_accounts"],
+      params: { fields: exact(UNIFIED_ACCOUNT_FIELDS) },
+      required: ["fields"],
+    },
+  ],
+  sdk: [],
+  messaging: [
+    {
+      method: "POST",
+      segments: [":id", "subscribed_apps"],
+      params: { subscribed_fields: exact(UNIFIED_SUBSCRIBED_FIELDS) },
+      required: ["subscribed_fields"],
+    },
+    { method: "POST", segments: [":id", "messages"], params: {}, required: [], body: "json" },
+  ],
+};
+
 const ID_SEGMENT = /^\d{1,32}$/;
 const BEARER = /^Bearer [\x21-\x7e]{1,4096}$/;
 
@@ -293,8 +335,11 @@ function checkQuery(entries: [string, string][], route: RouteSpec): BlockReason 
   return route.required.every((name) => seen.has(name)) ? undefined : "query";
 }
 
-function graphRoute(target: Target, routes: readonly RouteSpec[]): BlockReason | undefined {
-  if (target.url.hostname !== GRAPH_HOST) return "host";
+function graphRoute(
+  target: Target,
+  routes: readonly RouteSpec[],
+  version: string = INSTAGRAM_GRAPH_VERSION,
+): BlockReason | undefined {
   const methodOf = (route: RouteSpec) => route.method ?? "GET";
   const takesBody = (route: RouteSpec) => route.body === "json";
   if (!routes.some((route) => methodOf(route) === target.method)) return "method";
@@ -310,7 +355,7 @@ function graphRoute(target: Target, routes: readonly RouteSpec[]): BlockReason |
   const path = target.url.pathname;
   if (path.includes("%") || path.includes("//")) return "path";
   const segments = path.split("/").slice(1);
-  if (segments[0] !== INSTAGRAM_GRAPH_VERSION) return "path";
+  if (segments[0] !== version) return "path";
   const rest = segments.slice(1);
   const candidates = routes.filter(
     (r) =>
@@ -353,6 +398,31 @@ function tokenExceptionRoute(target: Target): BlockReason | undefined {
   return "path";
 }
 
+/** Unified Login's two documented GET forms (exact parameter sets; see the module comment). */
+function unifiedTokenExceptionRoute(target: Target): BlockReason | undefined {
+  if (target.method !== "GET") return "method";
+  if (target.hasBody) return "body";
+  if (target.headers.get("authorization") !== null) return "authorization";
+  const entries = queryEntries(target.url);
+  const names = entries.map(([name]) => name).sort();
+  const values = new Map(entries);
+  const nonEmpty = (name: string) => (values.get(name) ?? "").length > 0;
+  if (target.url.pathname === `/${UNIFIED_GRAPH_VERSION}/oauth/access_token`) {
+    const required = ["client_id", "client_secret", "code", "redirect_uri"];
+    return names.join("&") === required.join("&") && required.every(nonEmpty)
+      ? undefined
+      : "secret_in_url";
+  }
+  if (target.url.pathname === `/${UNIFIED_GRAPH_VERSION}/debug_token`) {
+    return names.join("&") === "access_token&input_token" &&
+      nonEmpty("access_token") &&
+      nonEmpty("input_token")
+      ? undefined
+      : "secret_in_url";
+  }
+  return "path";
+}
+
 /** Throws TransportBlockedError unless the request is on the caller's allowlist. */
 export function assertAllowedRequest(caller: InstagramCaller, target: Target): void {
   const { url } = target;
@@ -378,14 +448,20 @@ export function assertAllowedRequest(caller: InstagramCaller, target: Target): v
                   : target.headers.get("authorization") !== null
                     ? "authorization"
                     : undefined;
+      } else if (url.hostname === UNIFIED_GRAPH_HOST) {
+        reason = unifiedTokenExceptionRoute(target);
       } else {
         reason = tokenExceptionRoute(target);
       }
     } else if (secretInQuery) {
       // The global rule: Graph reads never put a secret in the URL.
       reason = "secret_in_url";
-    } else {
+    } else if (url.hostname === GRAPH_HOST) {
       reason = graphRoute(target, GRAPH_ROUTES[caller]);
+    } else if (url.hostname === UNIFIED_GRAPH_HOST) {
+      reason = graphRoute(target, UNIFIED_GRAPH_ROUTES[caller], UNIFIED_GRAPH_VERSION);
+    } else {
+      reason = "host";
     }
   }
   if (reason !== undefined) throw new TransportBlockedError(reason);

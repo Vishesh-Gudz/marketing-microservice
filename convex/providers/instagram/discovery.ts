@@ -2,10 +2,11 @@ import type { PageRequest, ProviderContext, ProviderPage } from "../types";
 import type { ProviderDiscoveredSocialAccount, SocialAccountDiscovery } from "../social/types";
 import { assertValidSocialRecord } from "../social/validate";
 import { INSTAGRAM_PROVIDER_ID, OAUTH_TIMEOUT_MS } from "./config";
-import { isInstagramCredential } from "./credential";
+import { isInstagramCredential, isInstagramUnifiedCredential } from "./credential";
 import { instagramError } from "./errors";
 import { createInstagramGraphReader } from "./graphReader";
 import { RequestBudget } from "./transport";
+import { readUnifiedAccounts } from "./unified";
 
 /**
  * Instagram account discovery (Phase 10, Stage 0 decision): from the OAuth IDENTITY, in the
@@ -31,6 +32,34 @@ export function createInstagramDiscovery(
       if (request.cursor !== undefined) {
         // Discovery is a single page: any cursor is foreign.
         throw instagramError("invalid_request", operation, "cursor_invalid", "Unexpected cursor");
+      }
+      if (isInstagramUnifiedCredential(ctx.credential)) {
+        // Unified Login (config.ts): the token's assigned accounts [doc]; ours must be among them.
+        const credential = ctx.credential;
+        const accounts = await readUnifiedAccounts(credential.accessToken, operation, {
+          timeoutMs: options.timeoutMs ?? OAUTH_TIMEOUT_MS,
+          budget: new RequestBudget(1),
+        });
+        const account = accounts.find((a) => a.userId === credential.userId);
+        if (account === undefined) {
+          throw instagramError(
+            "data",
+            operation,
+            "identity_mismatch",
+            "Unexpected Instagram account",
+          );
+        }
+        const record: ProviderDiscoveredSocialAccount = {
+          platform: "instagram",
+          externalId: account.userId,
+          ...(account.username !== undefined ? { username: account.username } : {}),
+          // PROVISIONAL: graph.facebook.com has no account_type field [doc: IG User], and
+          // Unified Login requires a professional account; business vs creator is unknown.
+          // Display only: organic sync never runs on a Unified Login connection.
+          accountType: "business",
+        };
+        assertValidSocialRecord("discoveredSocialAccount", record, "instagram", operation);
+        return { items: [record] };
       }
       if (!isInstagramCredential(ctx.credential)) {
         throw instagramError(

@@ -1,7 +1,7 @@
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { DatabaseReader, DatabaseWriter } from "../../_generated/server";
 import { AUDIT_ACTIONS, writeAudit } from "../../lib/audit";
-import { INSTAGRAM_MESSAGING_SCOPE } from "../../providers/instagram/config";
+import { hasInstagramMessagingPermission } from "../../providers/instagram/config";
 import { RETENTION_GRACE_MS } from "./config";
 import type { MessagingAccountStatus } from "./validators";
 
@@ -15,7 +15,8 @@ import type { MessagingAccountStatus } from "./validators";
  *   `by_ig_account_status` and runs in the same transaction as the write, so two orgs can never
  *   both hold it. Linking the account for analytics in several orgs is not affected.
  * - Messaging uses the account's own Instagram connection: active, for the same Instagram
- *   account, and granted `instagram_business_manage_messages` [doc].
+ *   account, and granted `instagram_business_manage_messages` (Instagram Login) or
+ *   `instagram_manage_messages` (Unified Login) [doc].
  * - Every enable, and every re-enable after a turn-off, starts a new hold at `activatedAt`:
  *   webhook events from before it are dropped (ingest.ts), so late retries meant for an earlier
  *   holder never reach this org.
@@ -181,7 +182,7 @@ export async function enableCheck(
     return refuse("not_linked");
   }
   if (connection.status !== "active") return refuse("connection_inactive");
-  if (!connection.grantedScopes.includes(INSTAGRAM_MESSAGING_SCOPE)) return refuse("scope_missing");
+  if (!hasInstagramMessagingPermission(connection.grantedScopes)) return refuse("scope_missing");
   if (await heldElsewhere(db, social.externalId, orgId)) return refuse("in_use");
   // D14: once the grace period has ended the history is deleted before messaging can be on
   // again, whether or not the hourly sweep has started the purge yet.
@@ -342,7 +343,7 @@ export async function stopMessagingWithoutPermission(
   connectionId: Id<"connections">,
   grantedScopes: readonly string[],
 ): Promise<number> {
-  if (grantedScopes.includes(INSTAGRAM_MESSAGING_SCOPE)) return 0;
+  if (hasInstagramMessagingPermission(grantedScopes)) return 0;
   return await stopMessagingForConnection(db, actor, connectionId, "permission_removed");
 }
 

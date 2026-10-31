@@ -10,6 +10,7 @@ import { AUDIT_ACTIONS, writeAudit } from "../lib/audit";
 import { apiError } from "../lib/errors";
 import { getOwned, type Tenant } from "../lib/tenancy";
 import { orgScopeFromTenant } from "../mapping/scope";
+import { isUnifiedInstagramGrant } from "../providers/instagram/config";
 import type { ProviderDiscoveredSocialAccount } from "../providers/social/types";
 import { SOCIAL_RECORD_VALIDATORS } from "../providers/social/validate";
 import { ensureSocialSyncAccount } from "../sync/state";
@@ -203,6 +204,13 @@ export async function linkSocialAccounts(
       });
     }
     const account = (await ctx.db.get(socialAccountId))!;
+    // A Unified Login Instagram connection (providers/instagram/config.ts) is for direct messages
+    // only: organic sync reads graph.instagram.com, which its token cannot use [doc], and the
+    // failure would mark the connection for reconnection. It gets no sync schedule.
+    if (connection.provider === "instagram" && isUnifiedInstagramGrant(connection.grantedScopes)) {
+      linked.push(account);
+      continue;
+    }
     // The account gets (or resumes) a sync schedule in the same transaction.
     await ensureSocialSyncAccount(
       ctx.db,

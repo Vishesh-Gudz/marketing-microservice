@@ -307,6 +307,8 @@ describe("Graph reader allowlist (minimal, read-only)", () => {
     expect(check("graph_reader", url, { headers: BEARER })).not.toBe("allowed");
   });
 
+  // graph.facebook.com is allowed for Unified Login's exact routes only (unified.test.ts):
+  // Instagram Login reads and ads endpoints on it are still refused, on the path.
   it.each([
     [
       "graph.facebook.com (Meta Ads host)",
@@ -314,11 +316,21 @@ describe("Graph reader allowlist (minimal, read-only)", () => {
     ],
     ["an ads endpoint", "https://graph.facebook.com/v25.0/act_1/insights?metric=views"],
     [
-      "a lookalike host",
-      "https://graph.instagram.com.evil.example/v25.0/me?fields=user_id,username,account_type",
+      "an ads endpoint on the Unified version",
+      "https://graph.facebook.com/v26.0/act_1/insights?metric=views",
     ],
   ])("rejects %s", (_label, url) => {
-    expect(check("graph_reader", url, { headers: BEARER })).toBe("host");
+    expect(check("graph_reader", url, { headers: BEARER })).toBe("path");
+  });
+
+  it("rejects a lookalike host", () => {
+    expect(
+      check(
+        "graph_reader",
+        "https://graph.instagram.com.evil.example/v25.0/me?fields=user_id,username,account_type",
+        { headers: BEARER },
+      ),
+    ).toBe("host");
   });
 
   it("requires GET, no body and a Bearer token", () => {

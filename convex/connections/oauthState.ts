@@ -4,7 +4,10 @@ import { internalMutation, type DatabaseReader } from "../_generated/server";
 import { connectionProviderValidator } from "../domain/validators";
 import { AUDIT_ACTIONS, writeAudit } from "../lib/audit";
 import { apiError } from "../lib/errors";
-import { INSTAGRAM_MESSAGING_SCOPE } from "../providers/instagram/config";
+import {
+  hasInstagramMessagingPermission,
+  INSTAGRAM_MESSAGING_SCOPE,
+} from "../providers/instagram/config";
 import { MAX_PENDING_STATES_PER_ORG, OAUTH_STATE_TTL_MS } from "./config";
 import { sanitizeOAuthDiagnostics } from "./oauthDiagnostics";
 import { isAllowedReturnUrl } from "./returnUrls";
@@ -89,7 +92,7 @@ export const create = internalMutation({
       }
       reconnectConnectionId = target._id;
       keepsMessaging =
-        target.provider === "instagram" && target.grantedScopes.includes(INSTAGRAM_MESSAGING_SCOPE);
+        target.provider === "instagram" && hasInstagramMessagingPermission(target.grantedScopes);
     }
     const extraScopes =
       args.instagramMessaging === true || keepsMessaging ? [INSTAGRAM_MESSAGING_SCOPE] : [];
