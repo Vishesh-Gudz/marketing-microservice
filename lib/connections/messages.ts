@@ -76,8 +76,9 @@ function reasonMessage(
   reason: string | undefined,
   provider: ConnectionProvider,
 ): string | undefined {
-  // YouTube has no allowlisted reasons (the reasons are Google Ads / Meta discovery reasons).
-  if (provider === "youtube") return undefined;
+  // YouTube and Instagram have no allowlisted reasons (the reasons are Google Ads / Meta Ads
+  // discovery reasons).
+  if (provider === "youtube" || provider === "instagram") return undefined;
   const messages = REASON_MESSAGES[provider];
   return reason !== undefined && Object.prototype.hasOwnProperty.call(messages, reason)
     ? messages[reason as ErrorReason]
@@ -153,7 +154,9 @@ export function discoveryErrorNotice(
         message:
           provider === "youtube"
             ? "Google needs you to sign in again. Reconnect YouTube."
-            : REASON_MESSAGES[provider].reauth_required,
+            : provider === "instagram"
+              ? "Meta needs you to sign in again. Reconnect Instagram."
+              : REASON_MESSAGES[provider].reauth_required,
       };
     case "rate_limited":
     case "transient":
@@ -280,7 +283,9 @@ export function connectionActionNotice(error: unknown, provider: ConnectionProvi
               ? "Choose an ad account from the discovered list."
               : provider === "youtube"
                 ? "Choose the channel from the discovered list."
-                : "Choose a client account from the discovered list.",
+                : provider === "instagram"
+                  ? "Choose the Instagram account from the discovered list."
+                  : "Choose a client account from the discovered list.",
         };
       case "NOT_FOUND":
         return {
@@ -294,7 +299,9 @@ export function connectionActionNotice(error: unknown, provider: ConnectionProvi
             tone: "warning",
             title: "Stored data is still being deleted",
             message:
-              "This channel's stored YouTube data is still being deleted. Try again in a few minutes.",
+              provider === "instagram"
+                ? "This account's stored Instagram data is still being deleted. Try again in a few minutes."
+                : "This channel's stored YouTube data is still being deleted. Try again in a few minutes.",
           };
         }
         return details?.reason === "connection_inactive"

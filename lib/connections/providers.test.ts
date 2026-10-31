@@ -44,12 +44,23 @@ describe("ad connection providers", () => {
 
 describe("YouTube on the Connections page (ADR 0016)", () => {
   it("is a connection provider, but never an ad connection provider", () => {
-    expect([...CONNECTION_PROVIDERS]).toEqual(["google_ads", "meta", "youtube"]);
+    expect([...CONNECTION_PROVIDERS]).toEqual(["google_ads", "meta", "youtube", "instagram"]);
     expect(isConnectionProvider("youtube")).toBe(true);
     expect(isAdConnectionProvider("youtube")).toBe(false);
-    for (const value of ["instagram", "YouTube", "", undefined]) {
+    for (const value of ["YouTube", "Instagram", "", undefined]) {
       expect(isConnectionProvider(value)).toBe(false);
     }
+  });
+
+  it("offers Instagram (ADR 0017) as a connection provider, never an ad one, signed in through Meta", () => {
+    expect(isConnectionProvider("instagram")).toBe(true);
+    expect(isAdConnectionProvider("instagram")).toBe(false);
+    expect(PROVIDERS.instagram).toMatchObject({
+      name: "Instagram",
+      platform: "Meta",
+      accountNoun: "Instagram account",
+    });
+    expect(PROVIDERS.instagram.formatAccountId("17841400000000301")).toBe("17841400000000301");
   });
 
   it("names YouTube in its own words and shows channel ids as they are", () => {

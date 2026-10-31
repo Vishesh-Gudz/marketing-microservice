@@ -683,8 +683,10 @@ describe("Meta Ads card", () => {
     renderWithOrg(<ConnectionsView />);
     expect(within(meta()).getByText("Meta Ads is not connected.")).toBeInTheDocument();
     expect(within(google()).getByText("Google Ads is not connected.")).toBeInTheDocument();
-    expect(document.body.textContent).not.toMatch(/Instagram|mock_1/);
-    expect(screen.queryByRole("region", { name: /Instagram/ })).not.toBeInTheDocument();
+    expect(meta()).not.toHaveTextContent(/Instagram|mock_1/);
+    expect(google()).not.toHaveTextContent(/Instagram|mock_1/);
+    // It has its own card (ADR 0017; instagram-connection.test.tsx).
+    expect(screen.getByRole("region", { name: "Instagram" })).toBeInTheDocument();
     expect(lastArgs(DISCOVERED)).toBeUndefined();
   });
 

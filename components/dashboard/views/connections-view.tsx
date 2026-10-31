@@ -16,6 +16,7 @@ import type { Notice } from "@/lib/connections/types";
 import { AD_CONNECTION_PROVIDERS, PROVIDERS } from "@/lib/connections/providers";
 import { AdConnection } from "../connections/ad-connection";
 import { ConnectionNotice } from "../connections/connection-notice";
+import { InstagramConnection } from "../connections/instagram-connection";
 import { YouTubeConnection } from "../connections/youtube-connection";
 import { PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
@@ -92,7 +93,7 @@ export function ConnectionsView() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Connections"
-        description="Connect Google Ads, Meta Ads or YouTube and choose what to sync."
+        description="Connect Google Ads, Meta Ads, YouTube or Instagram and choose what to sync."
       />
       {notice && <ConnectionNotice notice={notice} />}
       {AD_CONNECTION_PROVIDERS.map((provider) => {
@@ -120,6 +121,16 @@ export function ConnectionsView() {
         </h2>
         <QueryBoundary resetKey="youtube" title="YouTube">
           <YouTubeConnection
+            preferredConnectionId={result.kind === "connected" ? result.connectionId : undefined}
+          />
+        </QueryBoundary>
+      </section>
+      <section aria-labelledby="connections-instagram" className="flex flex-col gap-4">
+        <h2 id="connections-instagram" className="text-lg font-semibold">
+          Instagram
+        </h2>
+        <QueryBoundary resetKey="instagram" title="Instagram">
+          <InstagramConnection
             preferredConnectionId={result.kind === "connected" ? result.connectionId : undefined}
           />
         </QueryBoundary>

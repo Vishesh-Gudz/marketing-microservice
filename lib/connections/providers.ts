@@ -1,10 +1,11 @@
 import { formatCustomerId } from "./customer-id";
 
 /**
- * The platforms the Connections page manages: the ad platforms (ADR 0008, D17 amendment) and
- * YouTube organic (ADR 0016, Checkpoint 5). Instagram organic connections stay out of the
- * dashboard. Each provider's wording and display rules live here so the shared card never
- * shows one platform's wording for another.
+ * The platforms the Connections page manages: the ad platforms (ADR 0008, D17 amendment),
+ * YouTube organic (ADR 0016, Checkpoint 5) and Instagram for direct messages (ADR 0017; the
+ * connect itself goes through Meta's Unified Login when the backend is configured for it).
+ * Each provider's wording and display rules live here so the shared card never shows one
+ * platform's wording for another.
  */
 export const AD_CONNECTION_PROVIDERS = ["google_ads", "meta"] as const;
 export type AdConnectionProvider = (typeof AD_CONNECTION_PROVIDERS)[number];
@@ -13,8 +14,8 @@ export function isAdConnectionProvider(value: unknown): value is AdConnectionPro
   return (AD_CONNECTION_PROVIDERS as readonly unknown[]).includes(value);
 }
 
-/** Every provider the Connections page offers: the ad platforms, then YouTube. */
-export const CONNECTION_PROVIDERS = [...AD_CONNECTION_PROVIDERS, "youtube"] as const;
+/** Every provider the Connections page offers: the ad platforms, then YouTube and Instagram. */
+export const CONNECTION_PROVIDERS = [...AD_CONNECTION_PROVIDERS, "youtube", "instagram"] as const;
 export type ConnectionProvider = (typeof CONNECTION_PROVIDERS)[number];
 
 export function isConnectionProvider(value: unknown): value is ConnectionProvider {
@@ -68,6 +69,18 @@ export const PROVIDERS: Readonly<Record<ConnectionProvider, ProviderInfo>> = {
     platform: "Google",
     identity: "Google account",
     accountNoun: "YouTube channel",
+    formatAccountId: (id) => id,
+    reportsAccountType: false,
+    parentLabel: "—",
+    noParent: "—",
+  },
+  // ADR 0017: one connection = one Instagram professional account (shown by its id), signed in
+  // through Meta.
+  instagram: {
+    name: "Instagram",
+    platform: "Meta",
+    identity: "Instagram account",
+    accountNoun: "Instagram account",
     formatAccountId: (id) => id,
     reportsAccountType: false,
     parentLabel: "—",

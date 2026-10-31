@@ -34,7 +34,7 @@ describe("parseConnectResult", () => {
       error: "identity_mismatch",
       provider: "google_ads",
     });
-    for (const hint of ["instagram", "META", "", "meta&connect=meta", "google_ads&connect=meta"]) {
+    for (const hint of ["INSTAGRAM", "META", "", "meta&connect=meta", "google_ads&connect=meta"]) {
       expect(parse(`status=error&error=internal&connect=${hint}`)).toEqual({
         kind: "error",
         error: "internal",
@@ -334,9 +334,11 @@ describe("the YouTube provider hint (ADR 0016)", () => {
     ).toMatchObject({
       title: "YouTube access was not granted",
     });
+    // Instagram is on the Connections page too (ADR 0017): its hint is read, not dropped.
     expect(parse("status=error&error=internal&connect=instagram")).toEqual({
       kind: "error",
       error: "internal",
+      provider: "instagram",
     });
   });
 });

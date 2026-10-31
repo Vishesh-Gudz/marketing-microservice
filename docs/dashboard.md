@@ -81,7 +81,7 @@ lib/analytics/                    pure logic: types, format, filters, deltas, st
 | `/social` (nav "Organic")                       | One Instagram account: 6 headline + 7 detail KPIs, UTC series, posts (lifetime totals)   | `socialAccounts:list`/`get`, `organicAnalytics:overview`/`accountSeries`, `socialPosts:list`, `connections:list`          |
 | `/social?platform=youtube`                      | One YouTube channel: Pacific Time day table (as reported), videos (lifetime statistics)  | `socialAccounts:list`, `youtubeAnalytics:channelDays`/`videos`                                                            |
 | `/social/posts/[postId]`                        | One post: caption, latest lifetime totals, lifetime totals at each capture               | `socialPosts:get`                                                                                                         |
-| `/connections`                                  | Google Ads and Meta Ads: status, Connect/Reconnect/Disconnect, accounts, link, sync      | `connections:list`/`listDiscoveredAssets`/`beginConnect`/`linkAdAccounts`/`refreshAssets`/`disconnect`, `adAccounts:list` |
+| `/connections`                                  | Google Ads, Meta Ads, YouTube, Instagram: status, Connect/Reconnect/Disconnect, link     | `connections:list`/`listDiscoveredAssets`/`beginConnect`/`linkAdAccounts`/`refreshAssets`/`disconnect`, `adAccounts:list` |
 |                                                 | YouTube: status, Connect/Reconnect, link the channel, Disconnect + data deletion         | `connections:list`/`listDiscoveredSocialAccounts`/`beginConnect`/`linkSocialAccounts`/`disconnect`, `socialAccounts:list` |
 | `/whatsapp`                                     | WhatsApp inbox: conversations, newest activity first, reply window                       | `whatsapp:listConversations`                                                                                              |
 | `/whatsapp/conversations/[conversationId]`      | One conversation: messages and statuses, reply window, reply, templates                  | `whatsapp:getConversation`/`listMessages`/`sendText`/`listTemplates`/`sendTemplate`                                       |
@@ -93,8 +93,11 @@ lib/analytics/                    pure logic: types, format, filters, deltas, st
 
 There is no org-wide ads page: the API requires a campaign or ad-group parent for ads (read budget).
 Connection management is on `/connections` for the **ad platforms, Google Ads and Meta Ads**
-(ADR 0008, D17 amendments), and for **YouTube** (ADR 0016, Checkpoint 5). Instagram (organic)
-connections stay out of the dashboard. An admin can
+(ADR 0008, D17 amendments), for **YouTube** (ADR 0016, Checkpoint 5) and for **Instagram**
+direct messages (ADR 0017; components/dashboard/connections/instagram-connection.tsx): status,
+Connect/Reconnect/Disconnect, link the discovered account, and a link to
+`/instagram/messages/settings` to turn its direct messages on (on new Meta apps the connect runs
+through Unified Login, see docs/instagram-messaging.md). An admin can
 disconnect a connection (after a confirmation); single accounts cannot be unlinked here. The
 "reconnect required" banner (Overview, Accounts, Organic) links to `/connections` for a Google
 Ads or Meta Ads connection and to `/whatsapp/settings` for a WhatsApp connection; for Instagram it
