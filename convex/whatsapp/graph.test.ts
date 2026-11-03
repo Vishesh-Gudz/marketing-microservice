@@ -263,7 +263,7 @@ describe("listMessageTemplates", () => {
       authorization: `Bearer ${TOKEN}`,
     });
     expect(first.params).toMatchObject({
-      fields: "id,name,language,status,category,parameter_format,components",
+      fields: "id,name,language,status,category,parameter_format,components,rejected_reason",
       limit: "100",
     });
     expect(first.params.appsecret_proof).toMatch(/^[0-9a-f]{64}$/);

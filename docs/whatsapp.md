@@ -414,6 +414,32 @@ reply.
 (`meta_<code>`, `http_<status>`, `timeout`, ...), never Meta's text; the token travels only in
 the `Authorization` header.
 
+## Template management (ADR 0020)
+
+Tested against a fake Graph only ([ADR 0020](adr/0020-whatsapp-templates.md), "Real-account
+validation required"). `/whatsapp/templates` lists every template of a connected account and lets
+admins create and delete them; approved ones then appear in the conversation's template picker.
+
+- `v1/whatsapp:listAccountTemplates` (`{ accountId }`, every member): all templates of the
+  caller's account, any status, read from Meta (`GET /{waba}/message_templates`, with
+  `rejected_reason`) with the account's own token; nothing is stored.
+- `v1/whatsapp:createTemplate` (`{ accountId, draft }`, admins): `draft` is the name, language,
+  category (`UTILITY` or `MARKETING`), optional TEXT header, body, optional footer, buttons
+  (quick reply, URL with an optional trailing `{{1}}` and its `example`, phone number) and one
+  sample per header / body variable. `convex/whatsapp/templateDrafts.ts` checks every documented
+  rule first (INVALID_ARGUMENT with `reason` and `field`); then `POST /{waba}/message_templates`.
+  Meta's refusal is CONFLICT with `reason` `meta_<code>` or `meta_<code>_<subcode>`
+  (`retryable: false`); no answer is PROVIDER_ERROR (`retryable: true`). Audited
+  (`whatsapp.template_created`).
+- `v1/whatsapp:deleteTemplate` (`{ accountId, templateId, name, language }`, admins): one template
+  in one language (`DELETE /{waba}/message_templates?hsm_id&name`). Audited
+  (`whatsapp.template_deleted`).
+- Every call refuses another org's account (NOT_FOUND), a disconnected one
+  (`account_disconnected`) and a connection Meta no longer accepts (`reconnect_required`; a
+  refused token marks it needs_reauth).
+- The builder starts from 21 ready-made templates (`lib/whatsapp/template-starters.ts`) or a blank
+  one; see the ADR for the list and the writing rules they follow.
+
 ## Public API
 
 Inbox: `v1/whatsapp:listConversations` (`{ paginationOpts }`), `v1/whatsapp:getConversation`

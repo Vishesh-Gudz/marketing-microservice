@@ -54,6 +54,10 @@ export const AUDIT_ACTIONS = {
   whatsappOffboardingFailed: "whatsapp.offboarding_failed",
   // WhatsApp partner removal (ADR 0014 B4b): Meta confirmed our access to the WABA is gone.
   whatsappPartnerRemoved: "whatsapp.partner_removed",
+  // WhatsApp template management (ADR 0020): a template submitted for Meta's review or deleted.
+  // Entries carry the template id, name, language and category only, never its text.
+  whatsappTemplateCreated: "whatsapp.template_created",
+  whatsappTemplateDeleted: "whatsapp.template_deleted",
   // Instagram messaging (ADR 0017): direct messages turned on or off for an org's Instagram
   // account, its webhook setup, and the D14 purge of its stored messages. Entries carry Convex
   // ids, statuses, reasons, sanitized codes and counts only, never an Instagram id or content.

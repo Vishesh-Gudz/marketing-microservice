@@ -1,6 +1,9 @@
 "use client";
 
+import { FileText } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { api } from "@/convex/_generated/api";
 import { useOrg } from "@/lib/analytics/org-context";
 import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
@@ -40,7 +43,14 @@ export function WhatsAppView() {
       <PageHeader
         title="WhatsApp settings"
         description="Connect your WhatsApp Business number and follow its setup."
-      />
+      >
+        <Button asChild variant="outline" size="sm">
+          <Link href="/whatsapp/templates">
+            <FileText aria-hidden="true" />
+            Templates
+          </Link>
+        </Button>
+      </PageHeader>
       {notice && (
         <div ref={noticeRef} tabIndex={-1} className="outline-none">
           <ConnectionNotice notice={notice} />

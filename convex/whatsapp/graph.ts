@@ -357,7 +357,7 @@ export async function listMessageTemplates(
       "GET",
       nodePath(wabaId, "message_templates"),
       {
-        fields: "id,name,language,status,category,parameter_format,components",
+        fields: "id,name,language,status,category,parameter_format,components,rejected_reason",
         limit: "100",
         ...(after !== undefined ? { after } : {}),
       },
@@ -383,6 +383,63 @@ export async function listMessageTemplates(
     after = next;
   }
   return { ok: true, templates, complete: false };
+}
+
+/** A template id as Meta returns it (numeric). */
+const TEMPLATE_ID = /^\d{1,32}$/;
+const TEMPLATE_STATE = /^[A-Z_]{1,32}$/;
+
+export type CreatedTemplate = { id: string; status?: string; category?: string };
+
+/**
+ * Template management (ADR 0020; Meta "Message templates", "Template management", 2026-11-03):
+ * submits a new template for review (POST /{waba}/message_templates; the request is built and
+ * checked by convex/whatsapp/templateDrafts.ts). `ok` means Meta accepted it for review and
+ * returned its id; its status (usually PENDING) and category may change during review.
+ */
+export async function createMessageTemplate(
+  wabaId: string,
+  request: Record<string, unknown>,
+  auth: { accessToken: string; appSecret: string },
+): Promise<{ ok: true; template: CreatedTemplate } | { ok: false; failure: GraphFailure }> {
+  const result = await withToken("POST", nodePath(wabaId, "message_templates"), {}, auth, request);
+  if (!result.ok) return result;
+  const body = result.body as { id?: unknown; status?: unknown; category?: unknown } | null;
+  const id = body?.id;
+  if (typeof id !== "string" || !TEMPLATE_ID.test(id)) {
+    return { ok: false, failure: { kind: "invalid_json", status: 200 } };
+  }
+  const state = (value: unknown) =>
+    typeof value === "string" && TEMPLATE_STATE.test(value) ? value : undefined;
+  const status = state(body?.status);
+  const category = state(body?.category);
+  return {
+    ok: true,
+    template: {
+      id,
+      ...(status !== undefined ? { status } : {}),
+      ...(category !== undefined ? { category } : {}),
+    },
+  };
+}
+
+/**
+ * Deletes one template in one language (DELETE /{waba}/message_templates with `hsm_id` and
+ * `name`; Meta: deleting by name alone would delete every language). Success: `{"success": true}`.
+ * The name and id are not secret; they travel in the query string as Meta documents.
+ */
+export async function deleteMessageTemplate(
+  wabaId: string,
+  template: { id: string; name: string },
+  auth: { accessToken: string; appSecret: string },
+): Promise<GraphOutcome> {
+  if (!TEMPLATE_ID.test(template.id)) throw new Error("Invalid template id");
+  return await withToken(
+    "DELETE",
+    nodePath(wabaId, "message_templates"),
+    { hsm_id: template.id, name: template.name },
+    auth,
+  );
 }
 
 /** Meta's documented success body for subscribe / register: `{"success": true}`. */

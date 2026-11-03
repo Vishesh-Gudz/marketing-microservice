@@ -86,6 +86,7 @@ lib/analytics/                    pure logic: types, format, filters, deltas, st
 | `/whatsapp`                                     | WhatsApp inbox: conversations, newest activity first, reply window                       | `whatsapp:listConversations`                                                                                              |
 | `/whatsapp/conversations/[conversationId]`      | One conversation: messages and statuses, reply window, reply, templates                  | `whatsapp:getConversation`/`listMessages`/`sendText`/`listTemplates`/`sendTemplate`                                       |
 | `/whatsapp/settings`                            | WhatsApp settings: Connect WhatsApp (Embedded Signup), setup, connected accounts         | `whatsapp:getSignupConfig`/`completeSignup`/`retrySetup`/`listAccounts`, `connections:list`                               |
+| `/whatsapp/templates`                           | WhatsApp templates (ADR 0020): list by status, ready-made gallery, builder, delete       | `whatsapp:listAccounts`/`listAccountTemplates`/`createTemplate`/`deleteTemplate`, `connections:list`                      |
 | `/inbox`                                        | Unified inbox (ADR 0018): every channel's conversations, channel filter, reply state     | `inbox:listThreads`                                                                                                       |
 | `/instagram/messages`                           | Instagram DMs (ADR 0017): conversations, newest activity first, reply window             | `instagramMessaging:listConversations`                                                                                    |
 | `/instagram/messages/conversations/[id]`        | One Instagram conversation: messages and statuses, reply window, reply                   | `instagramMessaging:getConversation`/`listMessages`/`sendText`                                                            |
@@ -383,6 +384,33 @@ with the shared Connect / Reconnect / Disconnect buttons and YouTube's own wordi
   server side). Deletions this page did not start (another admin, an unlink, a failed
   authorization check) are shown too. This is the **in-product deletion path** required by the
   YouTube API Services Developer Policies (III.E.4.g, ADR 0016).
+
+## WhatsApp templates
+
+`/whatsapp/templates` ([ADR 0020](adr/0020-whatsapp-templates.md)) shows the templates of a
+connected WhatsApp Business account (a selector when there are several), read from Meta when the
+page opens and on **Refresh**: each with its status (Approved, In review, Rejected, Paused,
+Disabled), category, language, a WhatsApp-style preview, Meta's rejection reason in fixed words,
+and a note when this app cannot send it. Status filters show their counts. It is linked from the
+WhatsApp inbox, the settings page and the template picker.
+
+| Part                                    | Admin | Editor, viewer |
+| --------------------------------------- | ----- | -------------- |
+| List, filters, Refresh                  | yes   | yes            |
+| New template (gallery, builder), Delete | yes   | no             |
+
+1. **Gallery.** **New template** opens 21 ready-made templates by use case (orders and delivery,
+   appointments and bookings, payments, support and account, marketing), each with its category
+   and a preview filled with samples, plus **Start from scratch**.
+2. **Builder.** Name (normalized to lowercase letters, digits and `_`), language (Meta's list),
+   category with its meaning, optional header, body with counters and **Insert into body** for a
+   named variable, optional footer, buttons (quick replies are kept first; the add buttons stop
+   at Meta's limits), and a sample field for every variable found. A live preview shows the
+   samples in place. **Submit for review** stays disabled while the "Before submitting" list has
+   items (for example the starter's placeholder link or an empty phone number). Refusals are
+   shown in fixed words; the form stays open.
+3. **Delete** asks for confirmation (Cancel has focus; Escape cancels) and warns that an approved
+   template's name is blocked for 30 days.
 
 ## WhatsApp inbox
 

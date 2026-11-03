@@ -154,6 +154,38 @@ export const MESSAGE_TYPES = [...INBOUND_MESSAGE_TYPES, "template"] as const;
 export type MessageType = (typeof MESSAGE_TYPES)[number];
 export const messageTypeValidator = literalUnion(MESSAGE_TYPES);
 
+/**
+ * A new template as the dashboard submits it (ADR 0020; convex/whatsapp/templateDrafts.ts
+ * TemplateDraft, which checks every rule).
+ */
+export const templateDraftValidator = v.object({
+  name: v.string(),
+  language: v.string(),
+  category: v.union(v.literal("MARKETING"), v.literal("UTILITY")),
+  header: v.optional(v.string()),
+  body: v.string(),
+  footer: v.optional(v.string()),
+  buttons: v.array(
+    v.union(
+      v.object({ type: v.literal("QUICK_REPLY"), text: v.string() }),
+      v.object({
+        type: v.literal("URL"),
+        text: v.string(),
+        url: v.string(),
+        example: v.optional(v.string()),
+      }),
+      v.object({ type: v.literal("PHONE_NUMBER"), text: v.string(), phoneNumber: v.string() }),
+    ),
+  ),
+  examples: v.array(
+    v.object({
+      component: v.union(v.literal("header"), v.literal("body")),
+      name: v.string(),
+      value: v.string(),
+    }),
+  ),
+});
+
 /** One text value sent for a template placeholder (convex/whatsapp/graph.ts TemplateParameter). */
 const templateParameterValidator = v.object({
   type: v.literal("text"),

@@ -153,6 +153,72 @@ export const whatsappTemplateDto = v.object({
 });
 export type WhatsappTemplateDto = Infer<typeof whatsappTemplateDto>;
 
+/**
+ * Template management (ADR 0020): one template of an account as Meta lists it, of any status
+ * (APPROVED, PENDING, REJECTED, PAUSED, DISABLED, …). `id` is Meta's template id (needed to
+ * delete it); `sendable` says whether this app can send it (`unsupportedReason` otherwise).
+ */
+export const whatsappManagedTemplateDto = v.object({
+  id: v.optional(v.string()),
+  name: v.string(),
+  language: v.string(),
+  category: v.string(),
+  status: v.string(),
+  rejectedReason: v.optional(v.string()),
+  parameterFormat: v.union(v.literal("POSITIONAL"), v.literal("NAMED")),
+  header: v.optional(v.string()),
+  body: v.string(),
+  footer: v.optional(v.string()),
+  buttons: v.array(
+    v.object({
+      type: v.string(),
+      text: v.string(),
+      url: v.optional(v.string()),
+      phoneNumber: v.optional(v.string()),
+    }),
+  ),
+  sendable: v.boolean(),
+  unsupportedReason: v.optional(v.string()),
+});
+export type WhatsappManagedTemplateDto = Infer<typeof whatsappManagedTemplateDto>;
+
+export const whatsappManagedTemplateListDto = v.object({
+  templates: v.array(whatsappManagedTemplateDto),
+  complete: v.boolean(),
+});
+
+export function toWhatsappManagedTemplateDto(template: ParsedTemplate): WhatsappManagedTemplateDto {
+  return {
+    ...(template.id !== undefined ? { id: template.id } : {}),
+    name: template.name,
+    language: template.language,
+    category: template.category,
+    status: template.status,
+    ...(template.rejectedReason !== undefined ? { rejectedReason: template.rejectedReason } : {}),
+    parameterFormat: template.parameterFormat,
+    ...(template.header !== undefined ? { header: template.header } : {}),
+    body: template.body,
+    ...(template.footer !== undefined ? { footer: template.footer } : {}),
+    buttons: template.buttons.map((button) => ({
+      type: button.type,
+      text: button.text,
+      ...(button.url !== undefined ? { url: button.url } : {}),
+      ...(button.phoneNumber !== undefined ? { phoneNumber: button.phoneNumber } : {}),
+    })),
+    sendable: template.unsupported === undefined,
+    ...(template.unsupported !== undefined ? { unsupportedReason: template.unsupported } : {}),
+  };
+}
+
+/** createTemplate: the template Meta accepted for review (status and category may change). */
+export const whatsappCreatedTemplateDto = v.object({
+  id: v.string(),
+  name: v.string(),
+  language: v.string(),
+  status: v.optional(v.string()),
+  category: v.optional(v.string()),
+});
+
 /** listTemplates: `complete` is false when Meta had more templates than one listing reads. */
 export const whatsappTemplateListDto = v.object({
   templates: v.array(whatsappTemplateDto),
@@ -168,7 +234,7 @@ export function toWhatsappTemplateDto(template: ParsedTemplate): WhatsappTemplat
     ...(template.header !== undefined ? { header: template.header } : {}),
     body: template.body,
     ...(template.footer !== undefined ? { footer: template.footer } : {}),
-    buttons: template.buttons,
+    buttons: template.buttons.map((button) => ({ type: button.type, text: button.text })),
     variables: template.variables,
     supported: template.unsupported === undefined,
     ...(template.unsupported !== undefined ? { unsupportedReason: template.unsupported } : {}),

@@ -16,16 +16,24 @@ import {
   whatsappConnectionsEnabled,
 } from "../whatsapp/config";
 import { completeSignup as runSignup, retrySetup as runRetry } from "../whatsapp/signup";
-import { onboardingTypeValidator } from "../whatsapp/validators";
+import {
+  createTemplateFor,
+  deleteTemplateFor,
+  listAccountTemplatesFor,
+} from "../whatsapp/templateAdmin";
+import { onboardingTypeValidator, templateDraftValidator } from "../whatsapp/validators";
 import {
   toWhatsappAccountDto,
   toWhatsappConversationDto,
   toWhatsappDisconnectResultDto,
+  toWhatsappManagedTemplateDto,
   toWhatsappMessageDto,
   toWhatsappTemplateDto,
   whatsappAccountDto,
   whatsappConversationDto,
+  whatsappCreatedTemplateDto,
   whatsappDisconnectResultDto,
+  whatsappManagedTemplateListDto,
   whatsappMessageDto,
   whatsappSetupResultDto,
   whatsappSignupConfigDto,
@@ -270,6 +278,62 @@ export const sendTemplate = orgAction({
   returns: whatsappMessageDto,
   handler: async (ctx, args): Promise<WhatsappMessageDto> => {
     return toWhatsappMessageDto(await sendTemplateFor(ctx, ctx.tenant, args));
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Template management (ADR 0020). Meta holds the templates; nothing is cached here.
+// ---------------------------------------------------------------------------
+
+const TEMPLATE_LANGUAGE = /^[a-z]{2,3}(_[A-Za-z0-9]{2,4})?$/;
+
+/**
+ * Every member: all templates of one of the caller's WhatsApp Business Accounts, of every
+ * status, read from Meta with that account's own connection (no cache). Refused (CONFLICT) for a
+ * disconnected account (`account_disconnected`) or one Meta no longer accepts
+ * (`reconnect_required`); PROVIDER_ERROR when Meta does not answer.
+ */
+export const listAccountTemplates = orgAction({
+  args: { accountId: v.string() },
+  returns: whatsappManagedTemplateListDto,
+  handler: async (ctx, { accountId }) => {
+    const { templates, complete } = await listAccountTemplatesFor(ctx, ctx.tenant, accountId);
+    return { templates: templates.map(toWhatsappManagedTemplateDto), complete };
+  },
+});
+
+/**
+ * Admin only: submits a new template for Meta's review. The draft is checked completely first
+ * (INVALID_ARGUMENT with `field` and `reason`, convex/whatsapp/templateDrafts.ts); Meta's
+ * refusal is CONFLICT with `reason` `meta_<code>` or `meta_<code>_<subcode>`. Audited.
+ */
+export const createTemplate = orgAdminAction({
+  args: { accountId: v.string(), draft: templateDraftValidator },
+  returns: whatsappCreatedTemplateDto,
+  handler: async (ctx, args) => await createTemplateFor(ctx, ctx.tenant, args),
+});
+
+/**
+ * Admin only: deletes one template in one language (`templateId` and `name` as
+ * listAccountTemplates reports them). Meta: an approved template's name cannot be used again
+ * for 30 days. Audited.
+ */
+export const deleteTemplate = orgAdminAction({
+  args: {
+    accountId: v.string(),
+    templateId: v.string(),
+    name: v.string(),
+    language: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, { accountId, templateId, name, language }) => {
+    if (!TEMPLATE_LANGUAGE.test(language)) {
+      throw apiError("INVALID_ARGUMENT", "language is not a template language code.", {
+        field: "language",
+      });
+    }
+    await deleteTemplateFor(ctx, ctx.tenant, { accountId, templateId, name, language });
+    return null;
   },
 });
 

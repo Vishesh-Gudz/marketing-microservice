@@ -30,6 +30,11 @@ import { FAKE_WA_APP_SECRET, stubWhatsAppEnv } from "./fakeWebhook.fixtures";
  *   number (a repeat is refused with a generic code 100: Meta documents no code for it). A
  *   number on the app can send without a registration. Imported data is not simulated: tests
  *   post the webhooks themselves.
+ * - Template management (ADR 0020): POST /{waba}/message_templates stores the template as
+ *   PENDING with a new id and answers { id, status, category } (a name already used in that
+ *   language is refused with code 100, subcode 2388024: PROVISIONAL, Meta's code for it is not
+ *   verified); DELETE /{waba}/message_templates?hsm_id&name removes that one template ->
+ *   { success: true }. Created bodies are kept in `createdTemplates`.
  *
  * It is NOT evidence of real Meta behavior: error codes are generic (code 100) unless a test
  * injects a documented one, and nothing here is a recording. All ids and secrets are fake.
@@ -93,7 +98,9 @@ export type FakeRoute =
   | "send"
   | "templates"
   | "number_platform"
-  | "app_data";
+  | "app_data"
+  | "create_template"
+  | "delete_template";
 
 /** An HTTP answer (any status, JSON body), a thrown fetch, a call that never answers, or HTML. */
 export type FakeFailure = { status: number; body?: unknown } | "network" | "hang" | "invalid_json";
@@ -132,6 +139,10 @@ export type FakeWhatsAppGraph = {
   ): void;
   /** Coexistence imports Meta accepted, in order. */
   appDataRequests: { phoneNumberId: string; syncType: string; requestId: string }[];
+  /** Template creation requests Meta accepted, in order (the exact JSON bodies). */
+  createdTemplates: Record<string, unknown>[];
+  /** The templates of a WABA as GET /{waba}/message_templates lists them. */
+  templatesOf(wabaId: string): FakeTemplate[];
   calls(route?: FakeRoute): number;
 };
 
@@ -168,6 +179,8 @@ function routeOf(
   }
   if (method === "GET" && /^\d+$/.test(path)) return "waba";
   if (method === "POST" && /^\d+\/smb_app_data$/.test(path)) return "app_data";
+  if (method === "POST" && /^\d+\/message_templates$/.test(path)) return "create_template";
+  if (method === "DELETE" && /^\d+\/message_templates$/.test(path)) return "delete_template";
   if (method === "GET" && /^\d+\/phone_numbers$/.test(path)) return "phone_numbers";
   if (method === "POST" && /^\d+\/subscribed_apps$/.test(path)) return "subscribe";
   if (method === "DELETE" && /^\d+\/subscribed_apps$/.test(path)) return "unsubscribe";
@@ -244,6 +257,8 @@ export function createFakeWhatsAppGraph(): FakeWhatsAppGraph {
   const sent: FakeSentMessage[] = [];
   const platforms = new Map<string, { onBusinessApp: boolean; platformType?: string }>();
   const appDataRequests: { phoneNumberId: string; syncType: string; requestId: string }[] = [];
+  const createdTemplates: Record<string, unknown>[] = [];
+  let templateSeq = 0;
   const log: GraphCall[] = [];
   let codeSeq = 0;
 
@@ -429,6 +444,60 @@ export function createFakeWhatsAppGraph(): FakeWhatsAppGraph {
           },
         });
       }
+      case "create_template": {
+        const signup = await bearer(call);
+        const wabaId = call.path.split("/")[0]!;
+        if (signup === null || sharedWaba(signup, wabaId) === undefined) {
+          return json(400, graphError(100, 400, 33).body);
+        }
+        const body = (call.body ?? {}) as Record<string, unknown>;
+        if (
+          typeof body.name !== "string" ||
+          typeof body.language !== "string" ||
+          typeof body.category !== "string" ||
+          !Array.isArray(body.components)
+        ) {
+          return json(400, graphError(100).body);
+        }
+        const existing = templates.get(wabaId) ?? [];
+        if (existing.some((t) => t.name === body.name && t.language === body.language)) {
+          return json(400, graphError(100, 400, 2388024).body);
+        }
+        templateSeq += 1;
+        const id = String(900000000000000 + templateSeq);
+        createdTemplates.push(body);
+        templates.set(wabaId, [
+          ...existing,
+          {
+            id,
+            name: body.name,
+            language: body.language,
+            status: "PENDING",
+            category: body.category,
+            ...(body.parameter_format === "named" ? { parameter_format: "NAMED" as const } : {}),
+            components: body.components,
+          },
+        ]);
+        return json(200, { id, status: "PENDING", category: body.category });
+      }
+      case "delete_template": {
+        const signup = await bearer(call);
+        const wabaId = call.path.split("/")[0]!;
+        if (signup === null || sharedWaba(signup, wabaId) === undefined) {
+          return json(400, graphError(100, 400, 33).body);
+        }
+        const { hsm_id: hsmId, name } = call.params;
+        const existing = templates.get(wabaId) ?? [];
+        const target = existing.find((t) => t.id === hsmId && t.name === name);
+        if (hsmId === undefined || name === undefined || target === undefined) {
+          return json(400, graphError(100).body);
+        }
+        templates.set(
+          wabaId,
+          existing.filter((t) => t !== target),
+        );
+        return json(200, { success: true });
+      }
       case "number_platform": {
         const signup = await bearer(call);
         if (!ownsNumber(signup, call.path)) return json(400, graphError(100, 400, 33).body);
@@ -537,6 +606,8 @@ export function createFakeWhatsAppGraph(): FakeWhatsAppGraph {
       platforms.set(phoneId, platform);
     },
     appDataRequests,
+    createdTemplates,
+    templatesOf: (wabaId) => templates.get(wabaId) ?? [],
     calls: (route) =>
       route === undefined ? log.length : log.filter((c) => c.route === route).length,
   };

@@ -1,7 +1,7 @@
 "use client";
 
 import { usePaginatedQuery } from "convex/react";
-import { Settings } from "lucide-react";
+import { FileText, Settings } from "lucide-react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,17 @@ function SettingsLink() {
       <Link href="/whatsapp/settings">
         <Settings aria-hidden="true" />
         WhatsApp settings
+      </Link>
+    </Button>
+  );
+}
+
+function TemplatesLink() {
+  return (
+    <Button asChild variant="outline" size="sm">
+      <Link href="/whatsapp/templates">
+        <FileText aria-hidden="true" />
+        Templates
       </Link>
     </Button>
   );
@@ -96,7 +107,7 @@ function ConversationList() {
 /**
  * WhatsApp inbox (ADR 0013): the org's conversations, most recent activity first, each opening
  * its thread. Every member may read; replying comes from the thread. Connection management is
- * on /whatsapp/settings.
+ * on /whatsapp/settings, templates on /whatsapp/templates.
  */
 export function WhatsAppInboxView() {
   return (
@@ -105,7 +116,8 @@ export function WhatsAppInboxView() {
         title="WhatsApp"
         description="Conversations with your customers on your connected WhatsApp numbers."
       >
-        <div className="pt-2">
+        <div className="flex flex-wrap gap-2 pt-2">
+          <TemplatesLink />
           <SettingsLink />
         </div>
       </PageHeader>

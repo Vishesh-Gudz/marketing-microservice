@@ -25,7 +25,8 @@ export type TemplateVariable = {
   example?: string;
 };
 
-export type TemplateButton = { type: string; text: string };
+/** A template button as Meta lists it; `url` / `phoneNumber` for those button types. */
+export type TemplateButton = { type: string; text: string; url?: string; phoneNumber?: string };
 
 export const UNSUPPORTED_REASONS = [
   "media_header",
@@ -38,6 +39,8 @@ export const UNSUPPORTED_REASONS = [
 export type UnsupportedReason = (typeof UNSUPPORTED_REASONS)[number];
 
 export type ParsedTemplate = {
+  /** Meta's template id (the `hsm_id` a deletion names), when Meta listed one. */
+  id?: string;
   name: string;
   language: string;
   status: string;
@@ -52,6 +55,8 @@ export type ParsedTemplate = {
   /** URL buttons that carry a variable, by index (the button component's `index`). */
   urlButtons: number[];
   unsupported?: UnsupportedReason;
+  /** Meta's reason for a rejection (e.g. "INVALID_FORMAT"); absent when there is none. */
+  rejectedReason?: string;
 };
 
 /** Longest header and body Meta allows (creation limits; checked again after filling in). */
@@ -206,7 +211,14 @@ export function parseTemplate(raw: Json): ParsedTemplate | null {
         if (!isObject(button)) return flag("unsupported_button");
         const buttonType = str(button.type) ?? "";
         if (!SUPPORTED_BUTTONS.has(buttonType)) flag("unsupported_button");
-        buttons.push({ type: buttonType, text: str(button.text) ?? "" });
+        const url = str(button.url);
+        const phoneNumber = str(button.phone_number);
+        buttons.push({
+          type: buttonType,
+          text: str(button.text) ?? "",
+          ...(url !== undefined ? { url } : {}),
+          ...(phoneNumber !== undefined ? { phoneNumber } : {}),
+        });
         if (buttonType === "URL") {
           const names = placeholdersOf(str(button.url) ?? "");
           if (names.length > 1) flag("unsupported_placeholder");
@@ -221,7 +233,10 @@ export function parseTemplate(raw: Json): ParsedTemplate | null {
     }
   }
   if (body === undefined) return null;
+  const id = str(raw.id);
+  const rejectedReason = str(raw.rejected_reason);
   return {
+    ...(id !== undefined && /^\d{1,32}$/.test(id) ? { id } : {}),
     name,
     language,
     status,
@@ -234,6 +249,9 @@ export function parseTemplate(raw: Json): ParsedTemplate | null {
     variables: [...headerVars, ...bodyVars, ...buttonVars],
     urlButtons,
     ...(unsupported !== undefined ? { unsupported } : {}),
+    ...(rejectedReason !== undefined && rejectedReason !== "NONE"
+      ? { rejectedReason: rejectedReason.slice(0, 64) }
+      : {}),
   };
 }
 

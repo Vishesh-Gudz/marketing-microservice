@@ -1,6 +1,7 @@
 "use client";
 
 import { useAction } from "convex/react";
+import Link from "next/link";
 import { useId, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -176,8 +177,11 @@ export function TemplatePicker({ conversationId }: { conversationId: string }) {
           <p className="font-medium">Approved templates</p>
           {state.list.templates.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              This WhatsApp account has no approved templates yet. Templates are created and
-              approved in Meta&apos;s WhatsApp Manager.
+              This WhatsApp account has no approved templates yet. Create one on the{" "}
+              <Link href="/whatsapp/templates" className="underline underline-offset-4">
+                Templates page
+              </Link>
+              ; it can be sent here once Meta approves it.
             </p>
           ) : (
             <ul aria-label="Approved templates" className="flex flex-col gap-2">

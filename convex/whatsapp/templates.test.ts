@@ -52,6 +52,7 @@ const body = (text: string, extra: Record<string, unknown> = {}) => ({
 describe("parseTemplate", () => {
   it("reads a positional template: parts, buttons and variables in send order, with examples", () => {
     expect(parsed()).toEqual({
+      id: "990000000000001",
       name: "order_update",
       language: "en_US",
       status: "APPROVED",
@@ -62,8 +63,8 @@ describe("parseTemplate", () => {
       footer: "Thanks for shopping",
       buttons: [
         { type: "QUICK_REPLY", text: "Stop updates" },
-        { type: "URL", text: "Track" },
-        { type: "PHONE_NUMBER", text: "Call us" },
+        { type: "URL", text: "Track", url: "https://example.com/track/{{1}}" },
+        { type: "PHONE_NUMBER", text: "Call us", phoneNumber: "+15550009999" },
       ],
       variables: [
         { component: "header", name: "1", example: "A-1" },
@@ -74,6 +75,13 @@ describe("parseTemplate", () => {
       ],
       urlButtons: [1],
     });
+  });
+
+  it("keeps Meta's rejection reason, never NONE", () => {
+    expect(parsed({ status: "REJECTED", rejected_reason: "INVALID_FORMAT" }).rejectedReason).toBe(
+      "INVALID_FORMAT",
+    );
+    expect(parsed({ rejected_reason: "NONE" }).rejectedReason).toBeUndefined();
   });
 
   it("reads a NAMED template with its example values", () => {
