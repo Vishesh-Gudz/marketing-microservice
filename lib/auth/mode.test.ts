@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isClerkPublishableKey,
   isPublicAuthPath,
+  isPublicInfoPath,
   isSessionTaskPath,
   resolveAuthMode,
 } from "./mode";
@@ -46,6 +47,26 @@ describe("auth paths", () => {
     }
     for (const path of ["/", "/connections", "/sign-inx", "/organization", "/session-tasks"]) {
       expect(isPublicAuthPath(path), path).toBe(false);
+    }
+  });
+
+  it("makes exactly the Privacy Policy and Data Deletion pages public, nothing below or beside them", () => {
+    for (const path of ["/privacy", "/data-deletion"]) {
+      expect(isPublicInfoPath(path), path).toBe(true);
+    }
+    for (const path of [
+      "/",
+      "/privacy/",
+      "/privacy/x",
+      "/privacyx",
+      "/data-deletion/status",
+      "/data-deletionx",
+      "/PRIVACY",
+      "/connections",
+      "/instagram/messages",
+      "/inbox",
+    ]) {
+      expect(isPublicInfoPath(path), path).toBe(false);
     }
   });
 

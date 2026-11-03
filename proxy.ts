@@ -1,7 +1,12 @@
 import { clerkMiddleware } from "@clerk/nextjs/server";
 import { NextResponse, type NextFetchEvent, type NextRequest } from "next/server";
 import { CLERK_ENABLED } from "@/lib/auth/config";
-import { CHOOSE_ORGANIZATION_PATH, isPublicAuthPath, isSessionTaskPath } from "@/lib/auth/mode";
+import {
+  CHOOSE_ORGANIZATION_PATH,
+  isPublicAuthPath,
+  isPublicInfoPath,
+  isSessionTaskPath,
+} from "@/lib/auth/mode";
 
 // Next.js 16 "proxy" (formerly middleware). With Clerk configured it keeps the session in sync
 // and sends visitors to sign-in (no session) or to "choose an organization" (signed in, no
@@ -13,7 +18,8 @@ const clerk =
   CLERK_ENABLED && process.env.CLERK_SECRET_KEY
     ? clerkMiddleware(async (auth, request) => {
         const path = request.nextUrl.pathname;
-        if (isPublicAuthPath(path)) return;
+        // Sign-in / sign-up, and the Privacy Policy and Data Deletion pages (public by design).
+        if (isPublicAuthPath(path) || isPublicInfoPath(path)) return;
         const { userId, sessionStatus, redirectToSignIn } = await auth({
           treatPendingAsSignedOut: false,
         });

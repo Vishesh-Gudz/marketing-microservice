@@ -38,6 +38,19 @@ export function isPublicAuthPath(pathname: string): boolean {
   return under(pathname, SIGN_IN_PATH) || under(pathname, SIGN_UP_PATH);
 }
 
+/** The Privacy Policy and Data Deletion pages (Meta and Google require both to be public). */
+export const PRIVACY_PATH = "/privacy";
+export const DATA_DELETION_PATH = "/data-deletion";
+const PUBLIC_INFO_PATHS: ReadonlySet<string> = new Set([PRIVACY_PATH, DATA_DELETION_PATH]);
+
+/**
+ * Public information pages anyone (including the platforms' crawlers) may open without a
+ * session. Exact paths only: nothing below them, and no other page, becomes public.
+ */
+export function isPublicInfoPath(pathname: string): boolean {
+  return PUBLIC_INFO_PATHS.has(pathname);
+}
+
 /** Session-task pages a signed-in user without an organization may open. */
 export function isSessionTaskPath(pathname: string): boolean {
   return under(pathname, "/session-tasks");
