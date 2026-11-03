@@ -249,6 +249,30 @@ describe("connectResultNotice", () => {
     });
   });
 
+  it("says 'an Instagram account', and explains Meta's account step for Instagram", () => {
+    expect(
+      connectResultNotice({ kind: "error", error: "exchange_failed", provider: "instagram" })!
+        .message,
+    ).toContain("has access to an Instagram account");
+    expect(
+      connectResultNotice({ kind: "error", error: "no_account", provider: "instagram" }),
+    ).toMatchObject({
+      tone: "error",
+      title: "No Instagram account was shared",
+      message: expect.stringContaining("Instagram accounts step"),
+    });
+    expect(
+      connectResultNotice({ kind: "error", error: "multiple_accounts", provider: "instagram" }),
+    ).toMatchObject({
+      title: "Choose one Instagram account",
+      message: expect.stringContaining("tick only one account"),
+    });
+    expect(parseConnectResult(new URLSearchParams("status=error&error=no_account"))).toMatchObject({
+      kind: "error",
+      error: "no_account",
+    });
+  });
+
   it("access_denied is a warning (the user's choice), not a failure", () => {
     expect(connectResultNotice({ kind: "error", error: "access_denied" })!.tone).toBe("warning");
   });

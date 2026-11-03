@@ -89,7 +89,9 @@ authorization codes or messages):
   remove the code from its URL and call `completeConnect` as the signed-in user that started the
   connection, within 10 minutes. The code is a single-use capability: never log or display it.
 - `status=error&error=<code>`, where `<code>` is one of `access_denied`, `invalid_state`,
-  `expired_state`, `exchange_failed`, `identity_mismatch`, `internal`. The published code set
+  `expired_state`, `exchange_failed`, `identity_mismatch`, `internal`, and, for Instagram under
+  Unified Login, `no_account` / `multiple_accounts` (Meta shared no Instagram account, or more
+  than one, with the app; the audit keeps the same code). The published code set
   (`CALLBACK_ERROR_CODES`) also contains `discovery_failed`; discovery now runs in
   `completeConnect` and is reported as `discoveryFailed: true` (the connection is kept and its
   `lastError` says why).

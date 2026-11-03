@@ -207,9 +207,18 @@ export async function handleOAuthCallback(ctx: ActionCtx, request: Request): Pro
     });
   } catch (error) {
     // D28b: only the error's kind and staged providerCode are passed on; the mutation
-    // keeps allowlisted values only. Messages, URLs and payloads never leave here.
+    // keeps allowlisted values only. Messages, URLs and payloads never leave here. Instagram
+    // Unified Login's account step has its own codes, so the page can say what to change.
+    const accountStep = isProviderError(error)
+      ? (
+          {
+            "identity:no_account": "no_account",
+            "identity:multiple_accounts": "multiple_accounts",
+          } as const
+        )[error.providerCode as "identity:no_account" | "identity:multiple_accounts"]
+      : undefined;
     return await fail(
-      "exchange_failed",
+      accountStep ?? "exchange_failed",
       isProviderError(error)
         ? {
             kind: error.kind,

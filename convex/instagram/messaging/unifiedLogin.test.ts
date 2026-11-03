@@ -104,6 +104,64 @@ async function thread(t: Backend, who: Who = {}) {
   return { connectionId, socialAccountId: social!.id, accountId };
 }
 
+describe("Unified Login account step", () => {
+  it.each([
+    ["no account", [], "no_account"],
+    [
+      "two accounts",
+      [
+        { id: "17841400000000301", username: "a" },
+        { id: "17841400000000302", username: "b" },
+      ],
+      "multiple_accounts",
+    ],
+  ] as const)(
+    "returns its own error when Meta shares %s, and audits the step",
+    async (_label, accounts, error) => {
+      fake = createFakeUnified({
+        clients: {
+          other: {
+            accounts: [...accounts],
+            scopes: ["instagram_basic", "instagram_manage_messages"],
+          },
+        },
+      });
+      vi.stubGlobal("fetch", fake.fetch);
+      const t = newBackend();
+      await setupSyncOrg(t);
+      const { authorizeUrl } = await as(t).action(api.v1.connections.beginConnect, {
+        provider: "instagram",
+        returnUrl: RETURN_URL,
+        instagramMessaging: true,
+      });
+      const state = new URL(authorizeUrl).searchParams.get("state")!;
+      const params = redirectParams(
+        await t.fetch(
+          `/oauth/callback?state=${encodeURIComponent(state)}&code=${encodeURIComponent(fake.issueCode("other"))}`,
+          { method: "GET", redirect: "manual" },
+        ),
+      );
+      expect(params.get("status")).toBe("error");
+      expect(params.get("error")).toBe(error);
+      const audits = await t.run(async (ctx) =>
+        (await ctx.db.query("auditLog").collect()).filter(
+          (a) => a.action === "connection.oauth_failed",
+        ),
+      );
+      expect(audits.map((a) => a.changes)).toEqual([
+        {
+          reason: { from: null, to: error },
+          failureKind: { from: null, to: "data" },
+          failureStage: { from: null, to: "identity" },
+          providerCode: { from: null, to: error },
+        },
+      ]);
+      const connections = await t.run((ctx) => ctx.db.query("connections").collect());
+      expect(connections).toEqual([]);
+    },
+  );
+});
+
 describe("Unified Login connect", () => {
   it("authorizes through the configuration and stores a system-user connection", async () => {
     const t = newBackend();

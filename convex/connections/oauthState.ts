@@ -28,6 +28,9 @@ export const CALLBACK_ERROR_CODES = [
   "identity_mismatch",
   "discovery_failed",
   "internal",
+  // Instagram Unified Login: Meta shared no Instagram account, or more than one, with the app.
+  "no_account",
+  "multiple_accounts",
 ] as const;
 export type CallbackErrorCode = (typeof CALLBACK_ERROR_CODES)[number];
 export const callbackErrorValidator = v.union(

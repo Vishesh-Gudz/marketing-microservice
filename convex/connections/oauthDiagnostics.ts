@@ -75,6 +75,9 @@ const INSTAGRAM_CODES: ReadonlySet<string> = new Set([
   "instagram_config_invalid",
   "account_type_unsupported",
   "identity_invalid",
+  // Unified Login: no Instagram account, or more than one, assigned to the app.
+  "no_account",
+  "multiple_accounts",
   "credential_invalid",
   "token_too_new",
   "transport_blocked",

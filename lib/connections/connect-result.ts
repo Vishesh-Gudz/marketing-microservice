@@ -24,6 +24,8 @@ export const CALLBACK_ERRORS = [
   "identity_mismatch",
   "discovery_failed",
   "internal",
+  "no_account",
+  "multiple_accounts",
 ] as const;
 export type CallbackError = (typeof CALLBACK_ERRORS)[number];
 
@@ -59,6 +61,11 @@ type ReadableParams = Pick<URLSearchParams, "get" | "getAll">;
 
 function isCallbackError(value: string | null): value is CallbackError {
   return value !== null && (CALLBACK_ERRORS as readonly string[]).includes(value);
+}
+
+/** "a Google Ads account", "an Instagram account". */
+function withArticle(noun: string): string {
+  return `${/^[aeiou]/i.test(noun) ? "an" : "a"} ${noun}`;
 }
 
 function providerHint(params: ReadableParams): Hint {
@@ -143,7 +150,7 @@ function errorNotice(error: CallbackError | "unknown", provider?: ConnectionProv
         ? {
             tone: "error",
             title: `${p.platform} sign-in could not be completed`,
-            message: `Make sure the ${p.identity} you sign in with has access to a ${p.accountNoun}, then try again.`,
+            message: `Make sure the ${p.identity} you sign in with has access to ${withArticle(p.accountNoun)}, then try again.`,
           }
         : {
             tone: "error",
@@ -163,6 +170,21 @@ function errorNotice(error: CallbackError | "unknown", provider?: ConnectionProv
             message:
               "Reconnect only accepts the account that created this connection. To use another account, an admin must disconnect it first, then connect again.",
           };
+    case "no_account":
+      return {
+        tone: "error",
+        title: `No ${p?.accountNoun ?? "account"} was shared`,
+        message:
+          provider === "instagram"
+            ? "In Meta's window, tick your Instagram professional account on the Instagram accounts step and finish every step. If no account is listed, add it to your business portfolio first (Meta Business Settings, Accounts, Instagram accounts), then connect again."
+            : `In the sign-in window, choose ${withArticle(p?.accountNoun ?? "account")} and finish every step, then connect again.`,
+      };
+    case "multiple_accounts":
+      return {
+        tone: "error",
+        title: `Choose one ${p?.accountNoun ?? "account"}`,
+        message: `Each connection is one ${p?.accountNoun ?? "account"}, but more than one was shared. Connect again and tick only one account in the sign-in window.`,
+      };
     case "discovery_failed":
       return {
         tone: "error",
