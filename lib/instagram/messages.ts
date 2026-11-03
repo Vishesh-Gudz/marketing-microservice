@@ -99,14 +99,19 @@ export function senderLabel(
   return message.origin === "instagram" ? "You, in the Instagram app" : "You";
 }
 
-/** Small notes under a bubble: a story reply, an edit. */
+/** Small notes under a bubble: a story reply, a tap (ADR 0021), a Human Agent reply, an edit. */
 export function messageNotes(
-  message: Pick<InstagramMessage, "type" | "editedAt" | "deletedAt" | "text">,
+  message: Pick<InstagramMessage, "type" | "editedAt" | "deletedAt" | "text"> &
+    Partial<Pick<InstagramMessage, "tap" | "humanAgent">>,
 ): string[] {
   const notes: string[] = [];
   if (message.type === "story_reply" && message.text !== undefined) {
     notes.push("Replied to your story");
   }
+  if (message.tap === "quick_reply") notes.push("Tapped a quick reply");
+  if (message.tap === "ice_breaker") notes.push("Tapped an ice breaker");
+  if (message.tap === "button") notes.push("Tapped a button");
+  if (message.humanAgent === true) notes.push("Sent as a human agent reply");
   if (message.editedAt !== undefined && message.deletedAt === undefined) notes.push("Edited");
   return notes;
 }
@@ -154,6 +159,42 @@ export const REPLY_BLOCKED_TEXT: Readonly<
   window_unopened: "The customer has not written yet. Instagram allows a reply only after they do.",
 };
 
+/** ADR 0021: questions offered when an account has no ice breakers yet (the admin edits them). */
+export const SUGGESTED_ICE_BREAKERS = [
+  "What are your opening hours?",
+  "How much does it cost?",
+  "Where are you located?",
+  "How can I place an order?",
+] as const;
+
+export const MAX_ICE_BREAKERS = 4;
+export const MAX_ICE_BREAKER_CHARS = 80;
+
+const ICE_BREAKER_ERRORS: Readonly<Record<string, string>> = {
+  ice_breaker_count: "Add between 1 and 4 questions.",
+  ice_breaker_text: "Every question needs 1 to 80 characters on one line.",
+  duplicate_ice_breaker: "Every question must be different.",
+};
+
+/** A refused ice breaker change (ADR 0021), in fixed words. */
+export function iceBreakerErrorNotice(error: unknown): Notice {
+  const reason = detail(error, "reason");
+  const known = reason !== undefined ? ICE_BREAKER_ERRORS[reason] : undefined;
+  if (known) return { tone: "error", title: "Ice breakers not saved", message: known };
+  if (isMarketingError(error) && error.data.code === "PROVIDER_ERROR") {
+    return {
+      tone: "error",
+      title: "Instagram did not accept the change",
+      message: `Instagram did not answer as expected. Try again. ${SUPPORT}`,
+    };
+  }
+  return controlErrorNotice(error);
+}
+
+/** ADR 0021: the reply window has closed, but a person may still reply until the Human Agent end. */
+export const HUMAN_AGENT_TEXT =
+  "The 24-hour window has closed. Until the time shown, a member of your team may still reply personally (Meta's Human Agent rule).";
+
 function detail(error: unknown, key: "reason"): string | undefined {
   if (!isMarketingError(error)) return undefined;
   const value = error.data.details?.[key];
@@ -179,6 +220,18 @@ const SEND_ERROR_MESSAGES: Readonly<Record<string, Omit<Notice, "tone">>> = {
   client_message_id_reused: {
     title: "Message not sent",
     message: "Write the message again and send it.",
+  },
+  too_many_quick_replies: {
+    title: "Too many buttons",
+    message: "Use at most 13 quick-reply buttons.",
+  },
+  quick_reply_text: {
+    title: "Button label not valid",
+    message: "Every quick-reply button needs a label of up to 20 characters.",
+  },
+  duplicate_quick_reply: {
+    title: "Button labels repeat",
+    message: "Every quick-reply button needs a different label.",
   },
 };
 

@@ -214,7 +214,7 @@ export const recordSubscriptionResult = internalMutation({
 });
 
 /** A sanitized reason code for a failed request (never a URL, body or Meta text). */
-function failureReason(failure: InstagramFailure): string {
+export function failureReason(failure: InstagramFailure): string {
   switch (failure.type) {
     case "blocked":
       return "transport_blocked";

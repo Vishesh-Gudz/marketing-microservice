@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import {
   messagingAccountStatusValidator,
   messageOriginValidator,
+  tapValidator,
   messageStatusValidator,
   messageTypeValidator,
   webhookEventKindValidator,
@@ -63,6 +64,17 @@ export const instagramMessagingTables = {
     purgeAfter: v.optional(v.number()),
     /** When the purge began; a re-enable waits until it is done. */
     purgeStartedAt: v.optional(v.number()),
+    /**
+     * ADR 0021: the ice breakers (up to 4 questions) Meta accepted for the account, as set from
+     * this app. Absent: none set from here.
+     */
+    iceBreakers: v.optional(
+      v.object({
+        questions: v.array(v.string()),
+        updatedAt: v.number(),
+        updatedBySubject: v.string(),
+      }),
+    ),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -161,6 +173,12 @@ export const instagramMessagingTables = {
     sendAttemptedAt: v.optional(v.number()),
     /** Outbound, failed or unknown: a sanitized reason code. */
     failureReason: v.optional(v.string()),
+    /** Outbound from this app (ADR 0021): the quick-reply buttons sent with it. */
+    quickReplies: v.optional(v.array(v.string())),
+    /** Outbound from this app (ADR 0021): sent with Meta's HUMAN_AGENT tag (after 24 hours). */
+    tag: v.optional(v.literal("human_agent")),
+    /** Inbound (ADR 0021): what the customer tapped to send it. */
+    tap: v.optional(tapValidator),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

@@ -1,10 +1,15 @@
 import { v, type Infer } from "convex/values";
 import type { Doc } from "../../_generated/dataModel";
 import {
+  humanAgentWindowExpiresAt,
+  instagramHumanAgentEnabled,
+} from "../../instagram/messaging/config";
+import {
   messageOriginValidator,
   messageStatusValidator,
   messageTypeValidator,
   messagingAccountStatusValidator,
+  tapValidator,
 } from "../../instagram/messaging/validators";
 import type { SetupState } from "../../instagram/messaging/lifecycle";
 import { toIso } from "../../lib/dto";
@@ -40,6 +45,8 @@ export const instagramMessagingAccountDto = v.object({
   setupReason: v.optional(v.string()),
   /** Turned off: when its stored conversations will be deleted (absent: not planned). */
   purgeAfter: v.optional(v.string()),
+  /** ADR 0021: the ice breakers set from this app (absent: none). */
+  iceBreakers: v.optional(v.array(v.string())),
 });
 export type InstagramMessagingAccountDto = Infer<typeof instagramMessagingAccountDto>;
 
@@ -59,6 +66,7 @@ export function toInstagramMessagingAccountDto(
       account.status === "action_required" ? account.setupError?.reason : undefined,
     ),
     ...optionalIso("purgeAfter", account.purgeAfter),
+    ...optional("iceBreakers", account.iceBreakers?.questions),
   };
 }
 
@@ -113,6 +121,11 @@ export const instagramConversationDto = v.object({
   lastInboundAt: v.optional(v.string()),
   replyWindowExpiresAt: v.optional(v.string()),
   /**
+   * ADR 0021, only while Human Agent replies are on (Meta approved them): until when a person may
+   * still reply with the HUMAN_AGENT tag (7 days after the customer's last message).
+   */
+  humanAgentWindowExpiresAt: v.optional(v.string()),
+  /**
    * Why no reply can be sent now whatever the window (the same check as sendText; IM5): the
    * account's messaging is off or not available here, its setup needs attention, its connection
    * needs reconnecting, or the messaging permission is missing. Absent: the window decides.
@@ -142,6 +155,12 @@ export function toInstagramConversationDto(
     lastMessageAt: toIso(conversation.lastMessageAt),
     ...optionalIso("lastInboundAt", conversation.lastInboundAt),
     ...optionalIso("replyWindowExpiresAt", serviceWindowExpiresAt(conversation.lastInboundAt)),
+    ...optionalIso(
+      "humanAgentWindowExpiresAt",
+      instagramHumanAgentEnabled()
+        ? humanAgentWindowExpiresAt(conversation.lastInboundAt)
+        : undefined,
+    ),
     ...optional("replyBlocker", replyBlocker),
   };
 }
@@ -166,6 +185,12 @@ export const instagramMessageDto = v.object({
   failedAt: v.optional(v.string()),
   editedAt: v.optional(v.string()),
   deletedAt: v.optional(v.string()),
+  /** ADR 0021, sent from here: its quick-reply buttons. */
+  quickReplies: v.optional(v.array(v.string())),
+  /** ADR 0021, sent from here: true when sent with the Human Agent tag. */
+  humanAgent: v.optional(v.boolean()),
+  /** ADR 0021, from the customer: what they tapped to send it. */
+  tap: v.optional(tapValidator),
 });
 export type InstagramMessageDto = Infer<typeof instagramMessageDto>;
 
@@ -186,5 +211,8 @@ export function toInstagramMessageDto(message: Doc<"instagramMessages">): Instag
     ...optionalIso("failedAt", message.failedAt),
     ...optionalIso("editedAt", message.editedAt),
     ...optionalIso("deletedAt", message.deletedAt),
+    ...optional("quickReplies", message.quickReplies),
+    ...(message.tag === "human_agent" ? { humanAgent: true } : {}),
+    ...optional("tap", message.tap),
   };
 }

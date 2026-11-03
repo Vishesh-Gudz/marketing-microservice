@@ -149,7 +149,12 @@ function Composer({ conversation }: { conversation: WhatsAppConversation }) {
         Reply
       </h2>
       {open ? (
-        <ReplyBox conversationId={conversation.id} />
+        <ReplyBox
+          conversationId={conversation.id}
+          {...(conversation.contactName !== undefined
+            ? { contactName: conversation.contactName }
+            : {})}
+        />
       ) : (
         <p className="text-sm text-muted-foreground">
           The reply window is closed: only an approved template can be sent.

@@ -71,10 +71,21 @@ export const webhookEventKindValidator = literalUnion(WEBHOOK_EVENT_KINDS);
 /** What every stored event carries: Meta's message id, the customer's IGSID and its time. */
 const eventBase = { mid: v.string(), customerIgsid: v.string(), timestampMs: v.number() };
 
+/**
+ * What the customer tapped to send a message (ADR 0021): one of the account's quick replies, an
+ * ice breaker (a postback with our ICE_BREAKER_ payload) or another button's postback.
+ */
+export const tapValidator = v.union(
+  v.literal("quick_reply"),
+  v.literal("ice_breaker"),
+  v.literal("button"),
+);
+
 const messageContent = {
   messageType: messageTypeValidator,
   text: v.optional(v.string()),
   replyToMid: v.optional(v.string()),
+  tap: v.optional(tapValidator),
 };
 
 /**

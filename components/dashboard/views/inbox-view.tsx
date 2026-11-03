@@ -1,5 +1,6 @@
 "use client";
 
+import { BookmarkPlus } from "lucide-react";
 import { usePaginatedQuery } from "convex/react";
 import Link from "next/link";
 import { useState } from "react";
@@ -135,8 +136,14 @@ export function InboxView() {
         title="Inbox"
         description="Messages from your customers on WhatsApp and Instagram, newest first."
       >
-        <div className="pt-2">
+        <div className="flex flex-wrap items-center gap-2 pt-2">
           <ChannelFilter value={filter} onChange={setFilter} />
+          <Button asChild variant="outline" size="sm">
+            <Link href="/inbox/saved-replies">
+              <BookmarkPlus aria-hidden="true" />
+              Saved replies
+            </Link>
+          </Button>
         </div>
       </PageHeader>
       <QueryBoundary resetKey={`inbox-${filter}`} title="Conversations">

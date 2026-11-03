@@ -297,6 +297,12 @@ exports[`schema inventory > declares the approved indexes 1`] = `
       "externalOrgId",
     ],
   },
+  "savedReplies": {
+    "by_org_title": [
+      "orgId",
+      "title",
+    ],
+  },
   "socialAccountMetricsDaily": {
     "by_org_account_date": [
       "orgId",

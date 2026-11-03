@@ -9,12 +9,17 @@ import { api } from "@/convex/_generated/api";
 import { useOrg } from "@/lib/analytics/org-context";
 import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
 import type { Notice } from "@/lib/connections/types";
+import { Input } from "@/components/ui/input";
 import {
   accountLabel,
   AVAILABILITY_TEXT,
   controlErrorNotice,
+  iceBreakerErrorNotice,
+  MAX_ICE_BREAKER_CHARS,
+  MAX_ICE_BREAKERS,
   setupReasonText,
   setupResultNotice,
+  SUGGESTED_ICE_BREAKERS,
 } from "@/lib/instagram/messages";
 import type { MessagingAvailability } from "@/lib/instagram/types";
 import { EmptyState } from "../empty-state";
@@ -224,10 +229,167 @@ function Controls({
   }
 }
 
+/**
+ * Ice breakers (ADR 0021): up to 4 questions Instagram shows people opening a chat with the
+ * account; a tap arrives in the inbox as their message. Admins set or remove them
+ * (v1/instagramMessaging:setIceBreakers / clearIceBreakers); everyone sees them.
+ */
+function IceBreakers({
+  accountId,
+  current,
+  isAdmin,
+  onNotice,
+}: {
+  accountId: string;
+  current: readonly string[] | undefined;
+  isAdmin: boolean;
+  onNotice: OnNotice;
+}) {
+  const setIceBreakers = useAction(api.v1.instagramMessaging.setIceBreakers);
+  const clearIceBreakers = useAction(api.v1.instagramMessaging.clearIceBreakers);
+  const [editing, setEditing] = useState<string[] | null>(null);
+  const { pending, run } = useOnce();
+  const headingId = useId();
+  const filled = (editing ?? []).map((q) => q.trim()).filter((q) => q !== "");
+  const valid =
+    filled.length > 0 &&
+    filled.length <= MAX_ICE_BREAKERS &&
+    filled.every((q) => q.length <= MAX_ICE_BREAKER_CHARS) &&
+    new Set(filled).size === filled.length;
+
+  return (
+    <section
+      aria-labelledby={headingId}
+      className="flex w-full flex-col gap-2 rounded-md border p-3"
+    >
+      <h4 id={headingId} className="text-sm font-medium">
+        Ice breakers
+      </h4>
+      <p className="text-xs text-muted-foreground">
+        Up to 4 questions Instagram shows people who open a chat with you. A tap arrives here as
+        their message, and you can reply right away.
+      </p>
+      {editing === null ? (
+        <>
+          {current !== undefined && current.length > 0 ? (
+            <ul aria-label="Current ice breakers" className="flex flex-wrap gap-2">
+              {current.map((question) => (
+                <li key={question} className="rounded-full border px-3 py-1 text-sm">
+                  {question}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">None set from here.</p>
+          )}
+          {isAdmin && (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  setEditing(
+                    current !== undefined && current.length > 0
+                      ? [...current, "", "", "", ""].slice(0, MAX_ICE_BREAKERS)
+                      : [...SUGGESTED_ICE_BREAKERS],
+                  )
+                }
+              >
+                {current !== undefined && current.length > 0
+                  ? "Edit ice breakers"
+                  : "Set ice breakers"}
+              </Button>
+              {current !== undefined && current.length > 0 && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={pending}
+                  onClick={() =>
+                    void run(async () => {
+                      onNotice(null);
+                      try {
+                        await clearIceBreakers({ accountId });
+                        onNotice({
+                          tone: "success",
+                          title: "Ice breakers removed",
+                          message: "Instagram no longer shows them to new chats.",
+                        });
+                      } catch (error) {
+                        onNotice(iceBreakerErrorNotice(error));
+                      }
+                    })
+                  }
+                >
+                  {pending ? "Removing…" : "Remove"}
+                </Button>
+              )}
+            </div>
+          )}
+        </>
+      ) : (
+        <form
+          aria-label="Edit ice breakers"
+          className="flex flex-col gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!valid) return;
+            void run(async () => {
+              onNotice(null);
+              try {
+                await setIceBreakers({ accountId, questions: filled });
+                setEditing(null);
+                onNotice({
+                  tone: "success",
+                  title: "Ice breakers saved",
+                  message: "Instagram shows them to people who open a chat with you.",
+                });
+              } catch (error) {
+                onNotice(iceBreakerErrorNotice(error));
+              }
+            });
+          }}
+        >
+          {editing.map((question, i) => (
+            <div key={i} className="flex flex-col gap-1">
+              <label htmlFor={`${headingId}-q${i}`} className="text-xs text-muted-foreground">
+                Question {i + 1}
+                {i > 0 ? " (optional)" : ""}
+              </label>
+              <Input
+                id={`${headingId}-q${i}`}
+                value={question}
+                maxLength={MAX_ICE_BREAKER_CHARS}
+                onChange={(e) => setEditing(editing.map((q, j) => (j === i ? e.target.value : q)))}
+              />
+            </div>
+          ))}
+          <div className="flex gap-2">
+            <Button type="submit" size="sm" disabled={pending || !valid}>
+              {pending ? "Saving…" : "Save ice breakers"}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={pending}
+              onClick={() => setEditing(null)}
+            >
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+    </section>
+  );
+}
+
 function AccountRow({
   socialAccountId,
   username,
   setupReasons,
+  iceBreakers,
   isAdmin,
   onNotice,
 }: {
@@ -235,6 +397,8 @@ function AccountRow({
   username: string | undefined;
   /** Sanitized setup reasons of the org's messaging accounts, by account id. */
   setupReasons: ReadonlyMap<string, string | undefined>;
+  /** The ice breakers of the org's messaging accounts, by account id. */
+  iceBreakers: ReadonlyMap<string, readonly string[] | undefined>;
   isAdmin: boolean;
   onNotice: OnNotice;
 }) {
@@ -282,6 +446,16 @@ function AccountRow({
           Only organization admins can turn direct messages on or off.
         </p>
       )}
+      {availability.accountId !== undefined &&
+        (availability.availability === "active" ||
+          availability.availability === "action_required") && (
+          <IceBreakers
+            accountId={availability.accountId}
+            current={iceBreakers.get(availability.accountId)}
+            isAdmin={isAdmin}
+            onNotice={onNotice}
+          />
+        )}
     </li>
   );
 }
@@ -315,6 +489,7 @@ export function MessagingAccounts({ onNotice }: { onNotice: OnNotice }) {
     );
   }
   const setupReasons = new Map(messaging.map((account) => [account.id, account.setupReason]));
+  const iceBreakers = new Map(messaging.map((account) => [account.id, account.iceBreakers]));
   return (
     <ul aria-label="Instagram accounts" className="flex flex-col divide-y rounded-lg border">
       {accounts.map((account) => (
@@ -323,6 +498,7 @@ export function MessagingAccounts({ onNotice }: { onNotice: OnNotice }) {
           socialAccountId={account.id}
           username={account.username}
           setupReasons={setupReasons}
+          iceBreakers={iceBreakers}
           isAdmin={role === "admin"}
           onNotice={onNotice}
         />

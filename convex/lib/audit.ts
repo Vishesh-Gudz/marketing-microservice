@@ -67,6 +67,9 @@ export const AUDIT_ACTIONS = {
   instagramMessagingSetupCompleted: "instagram.messaging_setup_completed",
   instagramMessagingPurgeStarted: "instagram.messaging_purge_started",
   instagramMessagingPurged: "instagram.messaging_purged",
+  // ADR 0021: the ice breakers of an org's Instagram account set or removed (count only).
+  instagramIceBreakersSet: "instagram.ice_breakers_set",
+  instagramIceBreakersCleared: "instagram.ice_breakers_cleared",
   // Meta's Instagram data-deletion callback (ADR 0017, IM6): one org's part of a verified
   // request started (what is deleted) and finished. Convex ids and counts only.
   instagramDataDeletionRequested: "instagram.data_deletion_requested",

@@ -414,6 +414,13 @@ reply.
 (`meta_<code>`, `http_<status>`, `timeout`, ...), never Meta's text; the token travels only in
 the `Authorization` header.
 
+## Saved replies (ADR 0021)
+
+The reply box of a WhatsApp conversation offers the org's saved replies for WhatsApp
+(`v1/savedReplies:list` with `channel: "whatsapp"`, managed at `/inbox/saved-replies`). One is
+inserted with `{{customer_name}}` filled in and edited before sending; it is an ordinary text
+reply, so it works only inside the 24-hour window (templates stay for anything later).
+
 ## Template management (ADR 0020)
 
 Tested against a fake Graph only ([ADR 0020](adr/0020-whatsapp-templates.md), "Real-account

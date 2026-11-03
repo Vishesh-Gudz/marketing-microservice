@@ -21,7 +21,41 @@ export const INSTAGRAM_MESSAGING_ENV = {
   webhookAppSecret: "INSTAGRAM_WEBHOOK_APP_SECRET",
   /** The verify token entered in Meta's webhook settings (GET handshake). */
   webhookVerifyToken: "INSTAGRAM_WEBHOOK_VERIFY_TOKEN",
+  /**
+   * ADR 0021 (fail closed, on every deployment): "true" (exactly) once Meta approved the app's
+   * Human Agent permission. Replies 24 hours to 7 days after the customer's last message are
+   * then sent with the HUMAN_AGENT tag; without it, none.
+   */
+  humanAgentEnabled: "INSTAGRAM_HUMAN_AGENT_ENABLED",
 } as const;
+
+/** Whether Human Agent replies are on (ADR 0021): only with Meta's approval, never by default. */
+export function instagramHumanAgentEnabled(
+  env: { enabled?: string } = { enabled: process.env[INSTAGRAM_MESSAGING_ENV.humanAgentEnabled] },
+): boolean {
+  return env.enabled === "true";
+}
+
+/** [doc] HUMAN_AGENT: "Messages can be sent within 7 days of the person's message." */
+export const HUMAN_AGENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** When the Human Agent window opened by `lastInboundAt` closes, or undefined. */
+export function humanAgentWindowExpiresAt(lastInboundAt: number | undefined): number | undefined {
+  return lastInboundAt === undefined ? undefined : lastInboundAt + HUMAN_AGENT_WINDOW_MS;
+}
+
+export function isHumanAgentWindowOpen(lastInboundAt: number | undefined, now: number): boolean {
+  const expiresAt = humanAgentWindowExpiresAt(lastInboundAt);
+  return expiresAt !== undefined && now < expiresAt;
+}
+
+/** ADR 0021: ice breakers ([doc] at most 4 questions; the length is ours: Meta states none). */
+export const MAX_ICE_BREAKERS = 4;
+export const MAX_ICE_BREAKER_CHARS = 80;
+/** The payload prefix of our ice breakers; a postback with it is an ice breaker tap. */
+export const ICE_BREAKER_PAYLOAD_PREFIX = "ICE_BREAKER_";
+/** The ice breaker call (one request, inside an admin action). */
+export const ICE_BREAKER_TIMEOUT_MS = 15_000;
 
 /**
  * Whether new messaging consent and enabling are open. Local deployments and in-process tests

@@ -150,10 +150,31 @@ app-scoped user id), so leave `INSTAGRAM_CALLBACK_APP_SECRET` unset until that i
 3. Per org: reconnect Instagram with `instagramMessaging: true`, then turn DMs on in
    `/instagram/messages/settings`.
 
+## Reply tools (ADR 0021)
+
+Tested in-process only ([ADR 0021](adr/0021-messaging-reply-tools.md)). Going live and App
+Review: [instagram-app-review.md](instagram-app-review.md).
+
+- **Saved replies** (`v1/savedReplies`, shared with WhatsApp): inserted from "Saved replies" in
+  the reply box, `{{customer_name}}` filled in, edited before sending.
+- **Quick-reply buttons**: `sendText` with `quickReplies` (1-13, 1-20 characters, different),
+  sent as `message.quick_replies` with payloads `QUICK_REPLY_n` [doc]; a customer's tap is
+  stored with `tap: "quick_reply"` (the payload never).
+- **Ice breakers** (admins, Instagram DM settings): `setIceBreakers` (1-4 questions, 80
+  characters) and `clearIceBreakers`: `POST` / `DELETE /<IG_ID>/messenger_profile` [doc;
+  [assume] on the Unified host]. Audited. A tap (`messaging_postbacks`, payload
+  `ICE_BREAKER_n`) becomes the customer's message with `tap: "ice_breaker"`; it needs the
+  app's webhook field `messaging_postbacks` (not part of the per-account subscription).
+- **Human Agent** (`INSTAGRAM_HUMAN_AGENT_ENABLED=true` only after Meta's approval): replies
+  after 24 hours and within 7 days of the customer's last message go out with
+  `messaging_type: "MESSAGE_TAG"` and `tag: "HUMAN_AGENT"` [doc]; the conversation shows the
+  Human Agent window and "Send as human agent".
+
 ## Public API (v1, ADR 0017)
 
 Viewers: `listAccounts`, `getAvailability`, `listConversations`, `getConversation`,
-`listMessages`. Editors and admins: `sendText`. Admins: `enable`, `retrySetup`, `disable`. Refusals
+`listMessages`. Editors and admins: `sendText`. Admins: `enable`, `retrySetup`, `disable`,
+`setIceBreakers`, `clearIceBreakers` (ADR 0021). Refusals
 are fixed codes and reasons; another org's ids are `NOT_FOUND`.
 
 ## Operations

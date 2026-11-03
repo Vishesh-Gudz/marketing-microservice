@@ -10,6 +10,7 @@ import { metricTables } from "./tables/metrics";
 import { socialTables } from "./tables/social";
 import { syncTables } from "./tables/sync";
 import { tenancyTables } from "./tables/tenancy";
+import { savedReplyTables } from "./tables/savedReplies";
 import { whatsappTables } from "./tables/whatsapp";
 
 // Conventions (enforced by convex/schema.test.ts):
@@ -30,6 +31,7 @@ export default defineSchema({
   ...syncTables,
   ...analyticsTables,
   ...whatsappTables,
+  ...savedReplyTables,
   ...instagramMessagingTables,
   ...instagramDataDeletionTables,
   ...maintenanceTables,

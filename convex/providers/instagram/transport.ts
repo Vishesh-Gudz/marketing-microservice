@@ -192,7 +192,7 @@ const metricList =
 
 type RouteSpec = {
   /** Absent: GET. */
-  method?: "POST";
+  method?: "POST" | "DELETE";
   /** "json": the route takes (and requires) a JSON body. Absent: no body allowed. */
   body?: "json";
   /** Segments after /v25.0/; ":id" = a decimal Instagram id. */
@@ -268,6 +268,27 @@ const READER_ROUTES: readonly RouteSpec[] = [
 ];
 
 /**
+ * ADR 0021: setting and removing the account's ice breakers ([doc] `POST` / `DELETE
+ * /<IG_ID>/messenger_profile` with a JSON body; the token in the header, never the query).
+ */
+const ICE_BREAKER_ROUTES: readonly RouteSpec[] = [
+  {
+    method: "POST",
+    segments: [":id", "messenger_profile"],
+    params: {},
+    required: [],
+    body: "json",
+  },
+  {
+    method: "DELETE",
+    segments: [":id", "messenger_profile"],
+    params: {},
+    required: [],
+    body: "json",
+  },
+];
+
+/**
  * ADR 0017: subscribing the account to the messaging webhook fields (exact field list), and
  * sending a text reply ([doc] `POST /<IG_ID>/messages`, Bearer token, JSON body).
  */
@@ -279,6 +300,7 @@ const MESSAGING_ROUTES: readonly RouteSpec[] = [
     required: ["subscribed_fields"],
   },
   { method: "POST", segments: [":id", "messages"], params: {}, required: [], body: "json" },
+  ...ICE_BREAKER_ROUTES,
 ];
 
 const GRAPH_ROUTES: Readonly<Record<Exclude<InstagramCaller, "oauth">, readonly RouteSpec[]>> = {
@@ -310,6 +332,8 @@ const UNIFIED_GRAPH_ROUTES: Readonly<
       required: ["subscribed_fields"],
     },
     { method: "POST", segments: [":id", "messages"], params: {}, required: [], body: "json" },
+    // [assume] Instagram Login's documented messenger_profile path on the Unified host.
+    ...ICE_BREAKER_ROUTES,
   ],
 };
 
@@ -578,7 +602,7 @@ export type SendOptions = { timeoutMs: number; budget?: RequestBudget };
 export async function sendInstagram(
   caller: InstagramCaller,
   url: URL,
-  init: { method: "GET" | "POST"; headers?: Record<string, string>; body?: string },
+  init: { method: "GET" | "POST" | "DELETE"; headers?: Record<string, string>; body?: string },
   options: SendOptions,
 ): Promise<InstagramResult> {
   const headers = new Headers(init.headers ?? {});

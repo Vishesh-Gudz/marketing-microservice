@@ -83,7 +83,7 @@ describe("parseWebhookPayload", () => {
     expect(JSON.stringify(result)).not.toContain("https");
   });
 
-  it("ignores reactions, postbacks, self-messaging tests and entries without messaging", () => {
+  it("ignores reactions, self-messaging tests and entries without messaging; skips a postback without a title", () => {
     const result = parseWebhookPayload(
       delivery(
         entry([
@@ -106,7 +106,7 @@ describe("parseWebhookPayload", () => {
       ),
       NOW,
     );
-    expect(result).toEqual({ ok: true, entries: [], skipped: 0, ignored: 5 });
+    expect(result).toEqual({ ok: true, entries: [], skipped: 1, ignored: 4 });
   });
 
   it.each([

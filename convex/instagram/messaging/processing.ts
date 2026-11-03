@@ -157,6 +157,7 @@ async function applyMessage(
     messageType: event.messageType,
     ...(event.text !== undefined && deletion === null ? { text: event.text } : {}),
     ...(event.replyToMid !== undefined ? { replyToMid: event.replyToMid } : {}),
+    ...(inbound && event.tap !== undefined ? { tap: event.tap } : {}),
     status: inbound ? "received" : seen !== null ? "read" : "sent",
     platformAt: at,
     ...(inbound ? {} : { sentAt: at }),

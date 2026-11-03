@@ -239,3 +239,77 @@ describe("admin controls", () => {
     expect(screen.getByLabelText("Direct messages are off")).toHaveTextContent("kept until");
   });
 });
+
+describe("ice breakers (ADR 0021)", () => {
+  const SET = "v1/instagramMessaging:setIceBreakers";
+  const CLEAR = "v1/instagramMessaging:clearIceBreakers";
+  const ACTIVE: MessagingAvailability = { availability: "active", accountId: "acct1" };
+  const account = (iceBreakers?: string[]) => ({
+    id: "acct1",
+    socialAccountId: "s1",
+    username: "shop_s1",
+    status: "active",
+    activatedAt: "2026-10-30T10:00:00.000Z",
+    ...(iceBreakers ? { iceBreakers } : {}),
+  });
+
+  it("starts from suggested questions and saves the filled ones", async () => {
+    const set = mockAction(SET).mockResolvedValue(null);
+    setup({ s1: ACTIVE }, [account()]);
+    const section = within(row("shop_s1")).getByRole("region", { name: "Ice breakers" });
+    expect(section).toHaveTextContent("None set from here.");
+    fireEvent.click(within(section).getByRole("button", { name: "Set ice breakers" }));
+    const form = within(section).getByRole("form", { name: "Edit ice breakers" });
+    expect(within(form).getByLabelText("Question 1")).toHaveValue("What are your opening hours?");
+    fireEvent.change(within(form).getByLabelText("Question 4 (optional)"), {
+      target: { value: "" },
+    });
+    await act(async () => {
+      fireEvent.click(within(form).getByRole("button", { name: "Save ice breakers" }));
+    });
+    expect(set).toHaveBeenCalledWith({
+      accountId: "acct1",
+      questions: [
+        "What are your opening hours?",
+        "How much does it cost?",
+        "Where are you located?",
+      ],
+    });
+    expect(screen.getByLabelText("Ice breakers saved")).toBeInTheDocument();
+  });
+
+  it("shows the current ones and removes them; editors only see them", async () => {
+    const clear = mockAction(CLEAR).mockResolvedValue(null);
+    setup({ s1: ACTIVE }, [account(["Do you deliver?"])]);
+    const section = within(row("shop_s1")).getByRole("region", { name: "Ice breakers" });
+    expect(within(section).getByRole("list", { name: "Current ice breakers" })).toHaveTextContent(
+      "Do you deliver?",
+    );
+    await act(async () => {
+      fireEvent.click(within(section).getByRole("button", { name: "Remove" }));
+    });
+    expect(clear).toHaveBeenCalledWith({ accountId: "acct1" });
+    expect(screen.getByLabelText("Ice breakers removed")).toBeInTheDocument();
+  });
+
+  it("is read-only for editors and explains a refusal", async () => {
+    setup({ s1: ACTIVE }, [account(["Do you deliver?"])], EDITOR);
+    const section = within(row("shop_s1")).getByRole("region", { name: "Ice breakers" });
+    expect(within(section).queryByRole("button", { name: /ice breakers|Remove/ })).toBeNull();
+  });
+
+  it("explains a refused change in fixed words", async () => {
+    mockAction(SET).mockRejectedValue(
+      apiError("PROVIDER_ERROR", "server text", { reason: "meta_100" }),
+    );
+    setup({ s1: ACTIVE }, [account()]);
+    const section = within(row("shop_s1")).getByRole("region", { name: "Ice breakers" });
+    fireEvent.click(within(section).getByRole("button", { name: "Set ice breakers" }));
+    await act(async () => {
+      fireEvent.click(within(section).getByRole("button", { name: "Save ice breakers" }));
+    });
+    expect(screen.getByLabelText("Instagram did not accept the change")).not.toHaveTextContent(
+      "server text",
+    );
+  });
+});

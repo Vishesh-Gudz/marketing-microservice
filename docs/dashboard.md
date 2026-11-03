@@ -88,6 +88,7 @@ lib/analytics/                    pure logic: types, format, filters, deltas, st
 | `/whatsapp/settings`                            | WhatsApp settings: Connect WhatsApp (Embedded Signup), setup, connected accounts         | `whatsapp:getSignupConfig`/`completeSignup`/`retrySetup`/`listAccounts`, `connections:list`                               |
 | `/whatsapp/templates`                           | WhatsApp templates (ADR 0020): list by status, ready-made gallery, builder, delete       | `whatsapp:listAccounts`/`listAccountTemplates`/`createTemplate`/`deleteTemplate`, `connections:list`                      |
 | `/inbox`                                        | Unified inbox (ADR 0018): every channel's conversations, channel filter, reply state     | `inbox:listThreads`                                                                                                       |
+| `/inbox/saved-replies`                          | Saved replies (ADR 0021): the org's reusable answers, ready-made replies, edit, delete   | `savedReplies:list`/`create`/`update`/`remove`                                                                            |
 | `/instagram/messages`                           | Instagram DMs (ADR 0017): conversations, newest activity first, reply window             | `instagramMessaging:listConversations`                                                                                    |
 | `/instagram/messages/conversations/[id]`        | One Instagram conversation: messages and statuses, reply window, reply                   | `instagramMessaging:getConversation`/`listMessages`/`sendText`                                                            |
 | `/instagram/messages/settings`                  | Instagram DM settings: turn direct messages on or off per linked account                 | `instagramMessaging:listAccounts`/`getAvailability`/`enable`/`retrySetup`/`disable`, `socialAccounts:list`                |
@@ -384,6 +385,23 @@ with the shared Connect / Reconnect / Disconnect buttons and YouTube's own wordi
   server side). Deletions this page did not start (another admin, an unlink, a failed
   authorization check) are shown too. This is the **in-product deletion path** required by the
   YouTube API Services Developer Policies (III.E.4.g, ADR 0016).
+
+## Saved replies
+
+`/inbox/saved-replies` ([ADR 0021](adr/0021-messaging-reply-tools.md)), linked from the inbox:
+the org's reusable answers with their channels (WhatsApp, Instagram) and, for Instagram, their
+quick-reply buttons. Every member reads them; editors and admins add one (from scratch, or from
+20 **Ready-made replies**: greetings, hours, location, orders, returns, bookings, prices, offers,
+Instagram story replies and collaborations), edit it and delete it after a confirmation. The form
+counts Instagram's 1000 bytes when Instagram is chosen (WhatsApp's 4096 characters otherwise) and
+offers **Insert customer name**. In both reply boxes, **Saved replies** lists the ones for that
+channel and inserts the chosen one with the customer's first name, to edit before sending.
+
+The Instagram reply box also adds **quick-reply buttons** (up to 13), and, while Human Agent
+replies are on, offers **Send as human agent** after 24 hours with Meta's rule in words. Instagram
+DM settings has an **Ice breakers** section per account (admins set up to 4 questions, starting
+from suggestions, or remove them). Taps show under the customer's message ("Tapped a quick reply",
+"Tapped an ice breaker").
 
 ## WhatsApp templates
 

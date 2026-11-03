@@ -579,6 +579,33 @@ describe('"messaging" caller (ADR 0017: the webhook subscription)', () => {
     }
   });
 
+  it("allows setting and removing ice breakers: POST or DELETE with a JSON body only (ADR 0021)", () => {
+    const PROFILE = `${G}/v25.0/17841400000000101/messenger_profile`;
+    const json = { ...BEARER, "content-type": "application/json" };
+    for (const method of ["POST", "DELETE"] as const) {
+      expect(check("messaging", PROFILE, { method, headers: json, body: true })).toBe("allowed");
+    }
+    expect(check("messaging", PROFILE, { method: "GET", headers: BEARER })).toBe("method");
+    expect(
+      check("messaging", `${PROFILE}?platform=instagram`, {
+        method: "POST",
+        headers: json,
+        body: true,
+      }),
+    ).toBe("query");
+    expect(check("messaging", PROFILE, { method: "DELETE", headers: BEARER })).toBe("path");
+    expect(
+      check("messaging", `${G}/v25.0/me/messenger_profile`, {
+        method: "POST",
+        headers: json,
+        body: true,
+      }),
+    ).toBe("path");
+    expect(check("graph_reader", PROFILE, { method: "POST", headers: json, body: true })).toBe(
+      "method",
+    );
+  });
+
   it.each([
     ["a GET", SUBSCRIBE, { method: "GET", headers: BEARER }, "method"],
     ["no Bearer token", SUBSCRIBE, { method: "POST" }, "authorization"],

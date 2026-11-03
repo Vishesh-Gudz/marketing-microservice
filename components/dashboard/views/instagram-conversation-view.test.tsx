@@ -366,3 +366,98 @@ describe("the reply box", () => {
     }
   });
 });
+
+describe("reply tools (ADR 0021)", () => {
+  it("sends quick-reply buttons with the reply and lets them be removed", async () => {
+    const send = mockMutation(SEND).mockResolvedValue({});
+    show();
+    await type("Which size?");
+    const newButton = screen.getByRole("textbox", { name: "New quick-reply button" });
+    for (const label of ["Small", "Large", "Medium"]) {
+      fireEvent.change(newButton, { target: { value: label } });
+      fireEvent.click(screen.getByRole("button", { name: "Add button" }));
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Remove Large" }));
+    expect(
+      within(screen.getByRole("list", { name: "Quick-reply buttons" }))
+        .getAllByRole("listitem")
+        .map((li) => li.textContent),
+    ).toEqual(["Small", "Medium"]);
+    await act(async () => {
+      fireEvent.click(sendButton());
+    });
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Which size?", quickReplies: ["Small", "Medium"] }),
+    );
+  });
+
+  it("inserts a saved reply with the customer's first name and its quick replies", async () => {
+    queryResults.set("v1/savedReplies:list", [
+      {
+        id: "r1",
+        title: "Welcome",
+        text: "Hi {{customer_name}}, how can we help?",
+        channels: ["instagram"],
+        quickReplies: ["Prices", "Talk to us"],
+        updatedAt: "2026-10-30T10:00:00.000Z",
+      },
+    ]);
+    show({ contactName: "Ana Souza" });
+    fireEvent.click(screen.getByRole("button", { name: "Saved replies" }));
+    expect(lastArgs("v1/savedReplies:list")).toEqual({ channel: "instagram" });
+    fireEvent.click(screen.getByRole("button", { name: /Welcome/ }));
+    expect(messageBox()).toHaveValue("Hi Ana, how can we help?");
+    expect(screen.getByRole("list", { name: "Quick-reply buttons" })).toHaveTextContent(
+      "PricesTalk to us",
+    );
+  });
+
+  it("offers a human agent reply after 24 hours while Meta's Human Agent window is open", async () => {
+    show({
+      replyWindowExpiresAt: "2026-10-30T11:00:00.000Z",
+      humanAgentWindowExpiresAt: "2026-11-05T11:00:00.000Z",
+    });
+    expect(screen.getByText("Human agent window")).toBeInTheDocument();
+    expect(screen.getByText(/only a personal reply/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send as human agent" })).toBeInTheDocument();
+  });
+
+  it("offers no reply after 24 hours without the Human Agent window", () => {
+    show({ replyWindowExpiresAt: "2026-10-30T11:00:00.000Z" });
+    expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
+  });
+
+  it("marks taps, human agent replies and the buttons a reply carried", () => {
+    queryResults.set(GET, conversation());
+    queryResults.set(
+      MESSAGES,
+      page([
+        message({
+          id: "m3",
+          direction: "outbound",
+          origin: "app",
+          text: "Pick one",
+          status: "sent",
+          quickReplies: ["Yes", "No"],
+          humanAgent: true,
+          at: "2026-10-30T11:20:00.000Z",
+        }),
+        message({
+          id: "m2",
+          text: "What are your hours?",
+          tap: "ice_breaker",
+          at: "2026-10-30T11:10:00.000Z",
+        }),
+        message({ id: "m1", text: "Yes", tap: "quick_reply" }),
+      ]),
+    );
+    renderWithOrg(<InstagramConversationView conversationId="conv1" />);
+    const thread = screen.getByRole("list", { name: "Messages" });
+    expect(thread).toHaveTextContent("Tapped a quick reply");
+    expect(thread).toHaveTextContent("Tapped an ice breaker");
+    expect(thread).toHaveTextContent("Sent as a human agent reply");
+    expect(
+      within(thread).getByRole("list", { name: "Quick-reply buttons sent" }),
+    ).toHaveTextContent("YesNo");
+  });
+});

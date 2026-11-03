@@ -1,5 +1,10 @@
 import { MAX_FUTURE_SKEW_MS } from "../../messaging/window";
-import { EARLIEST_EVENT_MS, MAX_EVENTS_PER_DELIVERY, MAX_TEXT_CHARS } from "./config";
+import {
+  EARLIEST_EVENT_MS,
+  ICE_BREAKER_PAYLOAD_PREFIX,
+  MAX_EVENTS_PER_DELIVERY,
+  MAX_TEXT_CHARS,
+} from "./config";
 import { ATTACHMENT_TYPES, type MessageType, type WebhookEventInput } from "./validators";
 
 /**
@@ -14,11 +19,15 @@ import { ATTACHMENT_TYPES, type MessageType, type WebhookEventInput } from "./va
  * - A wrong envelope (object, entry, entry id, messaging list, too many events) rejects the
  *   whole delivery (400). Inside it, an event that fails validation is skipped and counted, so
  *   one odd item never blocks a batch through Meta's retries.
- * - Only allowlisted fields are copied. Never: URLs (attachments, stories), quick replies,
- *   referrals, or anything that could name an org. The tenant comes only from the account id.
- * - Read: customer messages, echoes, deletions (`is_deleted`), "seen" (`read.mid`) and edits
- *   (`message_edit`). Ignored: reactions, postbacks, referrals, opt-ins, handover, `standby`,
- *   `changes` (comments and other fields), self-messaging tests (`is_self`).
+ * - Only allowlisted fields are copied. Never: URLs (attachments, stories), quick-reply or
+ *   postback payloads, referrals, or anything that could name an org. The tenant comes only from
+ *   the account id.
+ * - Read: customer messages (a quick-reply tap only marks the message `tap: "quick_reply"`),
+ *   echoes, deletions (`is_deleted`), "seen" (`read.mid`), edits (`message_edit`) and, ADR
+ *   0021, postbacks (`messaging_postbacks`: an ice breaker or button tap, stored as the
+ *   customer's message with the tapped title). Ignored: reactions, referrals, opt-ins,
+ *   handover, `standby`, `changes` (comments and other fields), self-messaging tests
+ *   (`is_self`).
  * - Ids keep full precision: strings of digits, or JSON numbers only when exact. Professional
  *   account ids have 17 digits and lose precision as numbers. [assume] IGSIDs are digits too.
  * - Times come from each event's `timestamp`, never `entry[].time` (when the notification was
@@ -115,12 +124,43 @@ function parseMessage(message: Json, parties: Parties, timestampMs: number): Ite
   if (messageType === null) return "skip";
 
   const replyToMid = replyTo !== undefined ? mid(replyTo.mid) : null;
+  const quickReply = !echo && text !== undefined && isObject(message.quick_reply);
   return {
     kind: echo ? "echo" : "message",
     ...base,
     messageType,
     ...(text !== undefined ? { text } : {}),
     ...(replyToMid !== null ? { replyToMid } : {}),
+    ...(quickReply ? { tap: "quick_reply" as const } : {}),
+  };
+}
+
+const MAX_POSTBACK_TITLE_CHARS = 1000;
+
+/**
+ * A tap on an ice breaker or a button ([doc] `messaging_postbacks`: `postback.title`,
+ * `postback.payload`): the customer's message with the title as its text. The payload is read
+ * only to tell our ice breakers (ICE_BREAKER_ prefix) from other buttons, never stored. Meta's
+ * example shows no mid: [assume] `postback.mid` when present, else one built from the
+ * customer and the time (Meta's retries keep both).
+ */
+function parsePostback(postback: Json, parties: Parties, timestampMs: number): ItemResult {
+  const customerIgsid = customerOf(parties, false);
+  const title = postback.title;
+  if (customerIgsid === null) return "skip";
+  if (typeof title !== "string" || title.trim() === "" || title.length > MAX_POSTBACK_TITLE_CHARS) {
+    return "skip";
+  }
+  const id = mid(postback.mid) ?? `postback.${customerIgsid}.${timestampMs}`;
+  const payload = typeof postback.payload === "string" ? postback.payload : "";
+  return {
+    kind: "message",
+    mid: id,
+    customerIgsid,
+    timestampMs,
+    messageType: "text",
+    text: title,
+    tap: payload.startsWith(ICE_BREAKER_PAYLOAD_PREFIX) ? "ice_breaker" : "button",
   };
 }
 
@@ -133,6 +173,7 @@ function parseItem(item: unknown, account: string, receivedAt: number): ItemResu
   const parties = { sender, recipient, account };
 
   if (isObject(item.message)) return parseMessage(item.message, parties, timestampMs);
+  if (isObject(item.postback)) return parsePostback(item.postback, parties, timestampMs);
   if (isObject(item.read)) {
     // The customer saw the account's messages up to `read.mid`.
     const id = mid(item.read.mid);

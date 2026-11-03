@@ -31,11 +31,14 @@ import {
 import { classifyInstagramFailure } from "../../providers/instagram/errors";
 import { RequestBudget, sendInstagram } from "../../providers/instagram/transport";
 import { messagingHolder } from "./accounts";
+import { checkQuickReplies } from "../../messaging/savedReplies";
 import {
   CLIENT_MESSAGE_ID,
+  instagramHumanAgentEnabled,
+  instagramMessagingEnabled,
+  isHumanAgentWindowOpen,
   MAX_OUTBOUND_TEXT_BYTES,
   SEND_TIMEOUT_MS,
-  instagramMessagingEnabled,
   STUCK_SEND_AFTER_MS,
 } from "./config";
 import { earlyEvent, findMessage } from "./processing";
@@ -71,6 +74,13 @@ import { earlyEvent, findMessage } from "./processing";
  * A refused send changes only that message (decided for IM4): Meta's codes do not reliably
  * tell a lost permission from a closed window, so the account's state is never changed here.
  * Nothing logs; the token travels only in the header; failures keep only codes.
+ *
+ * ADR 0021: a reply may carry quick-reply buttons ([doc] `message.quick_replies`, up to 13 of
+ * 20 characters; the payload is the button's position, never customer data). With
+ * INSTAGRAM_HUMAN_AGENT_ENABLED (Meta approved the Human Agent permission), a reply after the
+ * 24-hour window and within 7 days of the customer's last message is sent with
+ * `messaging_type: "MESSAGE_TAG"` and `tag: "HUMAN_AGENT"` [doc], and stored with
+ * `tag: "human_agent"`; claimDelivery checks that window again.
  */
 
 const NO_RESULT = "no_result";
@@ -93,6 +103,21 @@ const REFUSAL_MESSAGES: Readonly<Record<SendRefusal, string>> = {
   window_closed:
     "The customer last wrote more than 24 hours ago. Instagram allows no reply until they write again.",
 };
+
+/**
+ * Whether a reply is allowed now and how: inside the 24-hour window as usual, or with the Human
+ * Agent tag when it is on and the customer wrote within 7 days; null when neither.
+ */
+export function replyModeOf(
+  lastInboundAt: number | undefined,
+  now: number,
+): "standard" | "human_agent" | null {
+  if (isServiceWindowOpen(lastInboundAt, now)) return "standard";
+  if (instagramHumanAgentEnabled() && isHumanAgentWindowOpen(lastInboundAt, now)) {
+    return "human_agent";
+  }
+  return null;
+}
 
 type Sender = { connectionId: Id<"connections">; igAccountId: string; recipient: string };
 
@@ -177,7 +202,7 @@ export async function queueText(
   ctx: Pick<MutationCtx, "db" | "scheduler">,
   tenant: { orgId: Id<"organizations">; subject: string },
   conversation: Doc<"instagramConversations">,
-  args: { accountId: string; text: string; clientMessageId: string },
+  args: { accountId: string; text: string; clientMessageId: string; quickReplies?: string[] },
 ): Promise<Doc<"instagramMessages">> {
   if (!CLIENT_MESSAGE_ID.test(args.clientMessageId)) {
     throw apiError("INVALID_ARGUMENT", "clientMessageId must be 8-64 letters, digits, - or _.", {
@@ -197,6 +222,18 @@ export async function queueText(
       { field: "text" },
     );
   }
+  const quickReplies = checkQuickReplies(args.quickReplies ?? []);
+  if (!quickReplies.ok) {
+    throw apiError(
+      "INVALID_ARGUMENT",
+      "Quick replies are up to 13 different labels of 1-20 characters.",
+      {
+        field:
+          quickReplies.index === undefined ? "quickReplies" : `quickReplies.${quickReplies.index}`,
+        reason: quickReplies.reason,
+      },
+    );
+  }
   const repeated = await repeatedSend(ctx.db, tenant.orgId, conversation._id, args.clientMessageId);
   if (repeated !== null) return repeated;
   const sendable = await senderOf(ctx.db, conversation);
@@ -204,7 +241,8 @@ export async function queueText(
     throw apiError("CONFLICT", REFUSAL_MESSAGES[sendable.reason], { reason: sendable.reason });
   }
   const now = Date.now();
-  if (!isServiceWindowOpen(conversation.lastInboundAt, now)) {
+  const mode = replyModeOf(conversation.lastInboundAt, now);
+  if (mode === null) {
     throw apiError("CONFLICT", REFUSAL_MESSAGES.window_closed, { reason: "window_closed" });
   }
 
@@ -220,6 +258,8 @@ export async function queueText(
     platformAt: now,
     clientMessageId: args.clientMessageId,
     sentBySubject: tenant.subject,
+    ...(quickReplies.titles.length > 0 ? { quickReplies: quickReplies.titles } : {}),
+    ...(mode === "human_agent" ? { tag: "human_agent" as const } : {}),
     createdAt: now,
     updatedAt: now,
   });
@@ -247,6 +287,8 @@ const claimValidator = v.object({
   igAccountId: v.string(),
   recipient: v.string(),
   text: v.string(),
+  quickReplies: v.optional(v.array(v.string())),
+  humanAgent: v.boolean(),
 });
 
 const messageArgs = { orgId: v.id("organizations"), messageId: v.id("instagramMessages") };
@@ -295,12 +337,22 @@ export const claimDelivery = internalMutation({
       await failUnsent(ctx.db, message, sendable.reason, now);
       return null;
     }
-    if (!isServiceWindowOpen(conversation.lastInboundAt, now)) {
+    // The window is checked again: a tagged reply only within the Human Agent window (and while
+    // it is on), any other only within the 24-hour window.
+    const mode = replyModeOf(conversation.lastInboundAt, now);
+    const humanAgent = message.tag === "human_agent";
+    if (mode === null || (!humanAgent && mode !== "standard")) {
       await failUnsent(ctx.db, message, "window_closed", now);
       return null;
     }
     await ctx.db.patch(message._id, { sendAttemptedAt: now, updatedAt: now });
-    return { ...sendable.sender, text: message.text };
+    return {
+      ...sendable.sender,
+      text: message.text,
+      ...(message.quickReplies !== undefined ? { quickReplies: message.quickReplies } : {}),
+      // Tagged only when it is still needed: inside the 24-hour window no tag is sent.
+      humanAgent: humanAgent && mode === "human_agent",
+    };
   },
 });
 
@@ -345,7 +397,19 @@ async function send(ctx: ActionCtx, claim: Infer<typeof claimValidator>): Promis
           },
           body: JSON.stringify({
             recipient: { id: claim.recipient },
-            message: { text: claim.text },
+            ...(claim.humanAgent ? { messaging_type: "MESSAGE_TAG", tag: "HUMAN_AGENT" } : {}),
+            message: {
+              text: claim.text,
+              ...(claim.quickReplies !== undefined && claim.quickReplies.length > 0
+                ? {
+                    quick_replies: claim.quickReplies.map((title, i) => ({
+                      content_type: "text",
+                      title,
+                      payload: `QUICK_REPLY_${i + 1}`,
+                    })),
+                  }
+                : {}),
+            },
           }),
         },
         { timeoutMs: SEND_TIMEOUT_MS, budget: new RequestBudget(1) },

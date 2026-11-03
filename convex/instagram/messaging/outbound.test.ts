@@ -263,7 +263,14 @@ describe("the one Meta call", () => {
     await drain(t);
 
     expect(fake.sent).toEqual([
-      { account: IG, recipient: CUSTOMER, text: "Yes, we ship to Lisbon.", mid: "mid.fake.1" },
+      {
+        account: IG,
+        recipient: CUSTOMER,
+        text: "Yes, we ship to Lisbon.",
+        mid: "mid.fake.1",
+        // Exactly the documented body: no tag, no quick replies (ADR 0021 adds them only when asked).
+        body: { recipient: { id: CUSTOMER }, message: { text: "Yes, we ship to Lisbon." } },
+      },
     ]);
     const [request] = sendRequests();
     expect(request).toMatchObject({ method: "POST", bearer: true, params: [] });

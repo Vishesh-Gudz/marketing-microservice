@@ -16,6 +16,7 @@ import {
   messageContent,
   messageNotes,
   outboundStatusLabel,
+  HUMAN_AGENT_TEXT,
   REPLY_BLOCKED_TEXT,
   senderLabel,
 } from "@/lib/instagram/messages";
@@ -31,13 +32,28 @@ import { QueryBoundary } from "../query-boundary";
 /** Messages loaded per page; the thread shows the newest, oldest at the top. */
 const MESSAGES_PER_PAGE = 30;
 
-/** Why no reply can be sent right now, or null when one can (the server decides again). */
-function replyBlockedText(conversation: InstagramConversation, now: number): string | null {
-  if (conversation.replyBlocker !== undefined) return REPLY_BLOCKED_TEXT[conversation.replyBlocker];
-  if (conversation.replyWindowExpiresAt === undefined) return REPLY_BLOCKED_TEXT.window_unopened;
-  return isReplyWindowOpen(conversation.replyWindowExpiresAt, now)
-    ? null
-    : REPLY_BLOCKED_TEXT.window_closed;
+/**
+ * Whether a reply can be sent right now and how (the server decides again): within the 24-hour
+ * window, or (ADR 0021, only while Human Agent replies are on) as a human agent within 7 days.
+ */
+function replyModeOf(
+  conversation: InstagramConversation,
+  now: number,
+): { mode: "standard" | "human_agent" } | { blocked: string } {
+  if (conversation.replyBlocker !== undefined) {
+    return { blocked: REPLY_BLOCKED_TEXT[conversation.replyBlocker] };
+  }
+  if (conversation.replyWindowExpiresAt === undefined) {
+    return { blocked: REPLY_BLOCKED_TEXT.window_unopened };
+  }
+  if (isReplyWindowOpen(conversation.replyWindowExpiresAt, now)) return { mode: "standard" };
+  if (
+    conversation.humanAgentWindowExpiresAt !== undefined &&
+    isReplyWindowOpen(conversation.humanAgentWindowExpiresAt, now)
+  ) {
+    return { mode: "human_agent" };
+  }
+  return { blocked: REPLY_BLOCKED_TEXT.window_closed };
 }
 
 function ReplyWindow({ conversation }: { conversation: InstagramConversation }) {
@@ -58,6 +74,15 @@ function ReplyWindow({ conversation }: { conversation: InstagramConversation }) 
       <p className="text-sm text-muted-foreground">
         <Badge variant="secondary">Reply window open</Badge> Replies are possible until{" "}
         {formatInstant(expiresAt, timezone)}.
+      </p>
+    );
+  }
+  const humanUntil = conversation.humanAgentWindowExpiresAt;
+  if (humanUntil !== undefined && isReplyWindowOpen(humanUntil, now)) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        <Badge variant="secondary">Human agent window</Badge> {HUMAN_AGENT_TEXT} Until{" "}
+        {formatInstant(humanUntil, timezone)}.
       </p>
     );
   }
@@ -99,6 +124,18 @@ function MessageBubble({ message, contact }: { message: InstagramMessage; contac
           {content.text}
         </p>
       </div>
+      {message.quickReplies !== undefined && message.quickReplies.length > 0 && (
+        <ul
+          aria-label="Quick-reply buttons sent"
+          className="flex max-w-[80%] flex-wrap justify-end gap-1"
+        >
+          {message.quickReplies.map((title) => (
+            <li key={title} className="rounded-full border px-2 py-0.5 text-xs">
+              {title}
+            </li>
+          ))}
+        </ul>
+      )}
       {notes.length > 0 && (
         <span className="text-xs text-muted-foreground">{notes.join(" · ")}</span>
       )}
@@ -157,17 +194,23 @@ function Composer({ conversation }: { conversation: InstagramConversation }) {
   if (role !== "admin" && role !== "editor") {
     return <p className="text-sm text-muted-foreground">Only editors and admins can reply.</p>;
   }
-  const blocked = replyBlockedText(conversation, now);
+  const reply = replyModeOf(conversation, now);
+  const contactName = conversation.contactName ?? conversation.contactUsername;
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-4 rounded-lg border p-4">
       <h2 id={headingId} className="text-lg font-semibold">
         Reply
       </h2>
-      {blocked === null ? (
-        <ReplyBox accountId={conversation.messagingAccountId} conversationId={conversation.id} />
+      {"mode" in reply ? (
+        <ReplyBox
+          accountId={conversation.messagingAccountId}
+          conversationId={conversation.id}
+          {...(contactName !== undefined ? { contactName } : {})}
+          humanAgent={reply.mode === "human_agent"}
+        />
       ) : (
         <div className="flex flex-col gap-2 text-sm text-muted-foreground">
-          <p>{blocked}</p>
+          <p>{reply.blocked}</p>
           {conversation.replyBlocker !== undefined && (
             <Link
               href="/instagram/messages/settings"

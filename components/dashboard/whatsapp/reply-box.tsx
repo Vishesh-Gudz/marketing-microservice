@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { MAX_REPLY_CHARS, newClientMessageId } from "@/lib/whatsapp/inbox";
 import { sendErrorNotice } from "@/lib/whatsapp/messages";
 import { ConnectionNotice } from "../connections/connection-notice";
+import { SavedReplyPicker } from "../messaging/saved-reply-picker";
 
 /**
  * A free-form text reply (v1/whatsapp:sendText), for editors and admins while the customer's
@@ -17,7 +18,14 @@ import { ConnectionNotice } from "../connections/connection-notice";
  * sent or edited, so pressing Send again after an error can never send it twice. A refusal is
  * shown in fixed words; the sent message then appears in the thread with its status.
  */
-export function ReplyBox({ conversationId }: { conversationId: string }) {
+export function ReplyBox({
+  conversationId,
+  contactName,
+}: {
+  conversationId: string;
+  /** For saved replies (ADR 0021): fills in `{{customer_name}}`. */
+  contactName?: string;
+}) {
   const sendText = useMutation(api.v1.whatsapp.sendText);
   const [text, setText] = useState("");
   const [draftId, setDraftId] = useState(newClientMessageId);
@@ -50,6 +58,15 @@ export function ReplyBox({ conversationId }: { conversationId: string }) {
   return (
     <form className="flex flex-col gap-2" onSubmit={(event) => void submit(event)}>
       {notice && <ConnectionNotice notice={notice} />}
+      <SavedReplyPicker
+        channel="whatsapp"
+        {...(contactName !== undefined ? { contactName } : {})}
+        disabled={pending}
+        onPick={(reply) => {
+          setText(reply.text);
+          setDraftId(newClientMessageId());
+        }}
+      />
       <Label htmlFor={fieldId}>Message</Label>
       <textarea
         id={fieldId}

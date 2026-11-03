@@ -61,6 +61,10 @@ export default function PrivacyPage() {
             history as Meta provides it.
           </li>
           <li>
+            <strong>Content your team writes for reuse:</strong> saved replies, message templates
+            and Instagram ice breakers.
+          </li>
+          <li>
             <strong>Access tokens</strong> the platforms issue when you connect. They are stored
             encrypted and used only to act on your behalf.
           </li>

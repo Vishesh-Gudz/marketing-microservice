@@ -341,3 +341,22 @@ describe("template picker", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("saved replies (ADR 0021)", () => {
+  it("inserts a WhatsApp saved reply with the customer's first name, ready to edit", () => {
+    queryResults.set("v1/savedReplies:list", [
+      {
+        id: "r1",
+        title: "Thanks",
+        text: "Thank you, {{customer_name}}!",
+        channels: ["whatsapp"],
+        updatedAt: "2026-10-24T10:00:00.000Z",
+      },
+    ]);
+    show({ contactName: "Ana Souza" });
+    fireEvent.click(screen.getByRole("button", { name: "Saved replies" }));
+    fireEvent.click(screen.getByRole("button", { name: /Thanks/ }));
+    expect(messageBox()).toHaveValue("Thank you, Ana!");
+    expect(sendButton()).toBeEnabled();
+  });
+});

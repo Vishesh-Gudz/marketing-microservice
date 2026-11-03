@@ -92,10 +92,17 @@ export type FakeRoute =
   | "insights"
   | "account_insights"
   | "subscribed_apps"
-  | "send_message";
+  | "send_message"
+  | "messenger_profile";
 
-/** A text reply the fake accepted (ADR 0017 IM4). */
-export type FakeSentMessage = { account: string; recipient: string; text: string; mid: string };
+/** A text reply the fake accepted (ADR 0017 IM4), with its whole JSON body (ADR 0021). */
+export type FakeSentMessage = {
+  account: string;
+  recipient: string;
+  text: string;
+  mid: string;
+  body: Record<string, unknown>;
+};
 
 const DEFAULT_USERS: Record<string, FakeInstagramUser> = {
   business: {
@@ -168,6 +175,8 @@ export function createFakeInstagram(
   const failures = new Map<FakeRoute, FakeFailure[]>();
   const requests: FakeRequest[] = [];
   const sent: FakeSentMessage[] = [];
+  /** ADR 0021: the ice breakers set per account ([doc] messenger_profile). */
+  const iceBreakers = new Map<string, unknown>();
   let sequence = 0;
   let midSequence = 0;
   /** Sends that never answer: they end only when the caller's timeout aborts them. */
@@ -319,8 +328,41 @@ export function createFakeInstagram(
       const text = payload.message?.text;
       if (typeof recipient !== "string" || typeof text !== "string") return graphError(400, 100);
       const mid = `mid.fake.${++midSequence}`;
-      sent.push({ account: first, recipient, text, mid });
+      sent.push({ account: first, recipient, text, mid, body: payload as Record<string, unknown> });
       return json(200, { recipient_id: recipient, message_id: mid });
+    }
+
+    // ADR 0021: ice breakers ([doc] POST / DELETE /<IG_ID>/messenger_profile, JSON body,
+    // `{"result": "success"}`). Refused for another account and without the permission.
+    if (first !== undefined && second === "messenger_profile") {
+      const failure = takeFailure("messenger_profile");
+      if (failure) return failure;
+      if (first !== user.userId) return graphError(400, 100, 33);
+      const granted = (user.permissions ?? "").split(",");
+      if (!granted.includes("instagram_business_manage_messages")) return graphError(403, 10);
+      let body: Record<string, unknown>;
+      try {
+        body = JSON.parse(typeof init.body === "string" ? init.body : "") as Record<
+          string,
+          unknown
+        >;
+      } catch {
+        return graphError(400, 100);
+      }
+      if (method === "POST") {
+        if (body.platform !== "instagram" || !Array.isArray(body.ice_breakers)) {
+          return graphError(400, 100);
+        }
+        iceBreakers.set(first, body.ice_breakers);
+        return json(200, { result: "success" });
+      }
+      if (method === "DELETE") {
+        const fields = body.fields;
+        if (!Array.isArray(fields) || !fields.includes("ice_breakers")) return graphError(400, 100);
+        iceBreakers.delete(first);
+        return json(200, { result: "success" });
+      }
+      return graphError(400, 100);
     }
 
     if (first === "me" && second === undefined) {
@@ -497,6 +539,8 @@ export function createFakeInstagram(
     },
     /** Text replies accepted, in order (IM4). */
     sent,
+    /** ADR 0021: the ice breakers each account has, as Meta would hold them. */
+    iceBreakers,
     /** The next `times` sends never answer (they end only by the caller's timeout). */
     hangNextSend(times = 1) {
       hangingSends += times;

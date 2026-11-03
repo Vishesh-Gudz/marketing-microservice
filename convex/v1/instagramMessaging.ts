@@ -6,6 +6,7 @@ import type { DatabaseReader } from "../_generated/server";
 import { disableMessaging, enableCheck, type EnableRefusal } from "../instagram/messaging/accounts";
 import { instagramMessagingEnabled } from "../instagram/messaging/config";
 import { subscribeIfNeeded } from "../instagram/messaging/lifecycle";
+import { clearIceBreakersFor, setIceBreakersFor } from "../instagram/messaging/iceBreakers";
 import { queueText, replyBlockerOf, type SenderRefusal } from "../instagram/messaging/outbound";
 import { clampPagination, mapPage, paginatedDto, toIso } from "../lib/dto";
 import { apiError } from "../lib/errors";
@@ -244,7 +245,8 @@ export const getAvailability = orgQuery({
 });
 
 /**
- * Editors and admins: sends a text reply (1-1000 UTF-8 bytes [doc]) in one of the caller's
+ * Editors and admins: sends a text reply (1-1000 UTF-8 bytes [doc]), optionally with up to 13
+ * quick-reply buttons (`quickReplies`, 1-20 characters each; ADR 0021), in one of the caller's
  * conversations, from the conversation's own messaging account (`accountId` must be it; another
  * org's conversation is NOT_FOUND). Refused (CONFLICT, `reason`) when the customer's 24-hour
  * window is closed (`window_closed`: Instagram allows no reply until they write again) or the
@@ -253,6 +255,8 @@ export const getAvailability = orgQuery({
  * `failed` (with `errorCode` / `failureReason`) or `unknown` (may have been sent; never resent
  * automatically). Repeating a call with the same `clientMessageId` returns the same message and
  * sends nothing more. Closed on cloud deployments until INSTAGRAM_MESSAGING_ENABLED is set.
+ * With INSTAGRAM_HUMAN_AGENT_ENABLED (ADR 0021), a reply after the 24-hour window and within 7
+ * days of the customer's last message is sent with Meta's Human Agent tag (`humanAgent: true`).
  */
 export const sendText = orgMutation({
   args: {
@@ -260,11 +264,39 @@ export const sendText = orgMutation({
     conversationId: v.string(),
     text: v.string(),
     clientMessageId: v.string(),
+    quickReplies: v.optional(v.array(v.string())),
   },
   returns: instagramMessageDto,
   handler: async (ctx, args) => {
     requireMessagingAvailable();
     const conversation = await getOwned(ctx, "instagramConversations", args.conversationId);
     return toInstagramMessageDto(await queueText(ctx, ctx.tenant, conversation, args));
+  },
+});
+
+/**
+ * Admin: sets the ice breakers (1-4 questions of up to 80 characters; ADR 0021) of an Instagram
+ * account whose messaging is on, at Instagram, replacing any. Refused (CONFLICT, `reason`) like
+ * replies when the account cannot send; PROVIDER_ERROR when Instagram does not accept it.
+ * Audited.
+ */
+export const setIceBreakers = orgAdminAction({
+  args: { accountId: v.string(), questions: v.array(v.string()) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    requireMessagingAvailable();
+    await setIceBreakersFor(ctx, ctx.tenant, args);
+    return null;
+  },
+});
+
+/** Admin: removes the account's ice breakers at Instagram. Audited. */
+export const clearIceBreakers = orgAdminAction({
+  args: { accountId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    requireMessagingAvailable();
+    await clearIceBreakersFor(ctx, ctx.tenant, args);
+    return null;
   },
 });
