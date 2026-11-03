@@ -16,7 +16,7 @@ export const LEGAL = {
   registeredAddress:
     "Unit No-1022, Tower-B4, Tech Park, Sector-49, Gurugram (Gurgaon), Haryana, 122018, India",
   /** Where privacy questions and deletion requests go. */
-  contactEmail: "software@gudz.in",
+  contactEmail: "hello@gudz.in",
   /** When this version of both pages takes effect (YYYY-MM-DD). */
   effectiveDate: "2026-11-03",
 } as const;
