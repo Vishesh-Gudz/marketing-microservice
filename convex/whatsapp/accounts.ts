@@ -10,6 +10,8 @@ import { encryptedValidator, upsertDirectConnection } from "../connections/crede
 import { markConnectionNeedsReauth } from "../connections/lifecycle";
 import { AUDIT_ACTIONS, writeAudit } from "../lib/audit";
 import {
+  COEXISTENCE_IMPORT_WINDOW_MS,
+  MAX_IMPORT_ATTEMPTS,
   MAX_REGISTRATION_ATTEMPTS,
   REGISTRATION_COOLDOWN_MS,
   REGISTRATION_RATE_LIMIT_CODE,
@@ -90,9 +92,16 @@ export const recordConnection = internalMutation({
      * that never read a PIN).
      */
     expectedCredentialVersion: v.optional(v.union(v.null(), v.number())),
-    /** The number to route to this org with the account, in the same transaction. */
+    /**
+     * The number to route to this org with the account, in the same transaction. `coexistence`:
+     * Meta confirmed it is on the WhatsApp Business app (ADR 0019): no registration, imports due.
+     */
     number: v.optional(
-      v.object({ phoneNumberId: v.string(), displayPhoneNumber: v.optional(v.string()) }),
+      v.object({
+        phoneNumberId: v.string(),
+        displayPhoneNumber: v.optional(v.string()),
+        coexistence: v.optional(v.boolean()),
+      }),
     ),
   },
   returns: v.union(
@@ -233,7 +242,7 @@ export const recordConnection = internalMutation({
           ? { displayPhoneNumber: args.number.displayPhoneNumber }
           : {}),
         actorSubject: args.actorSubject,
-        link: { accountId },
+        link: { accountId, ...(args.number.coexistence === true ? { coexistence: true } : {}) },
       });
       // Checked above in this transaction; failing here rolls back every write of this call.
       if (!routed.ok) throw new Error(`Number routing failed after its check: ${routed.reason}`);
@@ -253,9 +262,11 @@ export const recordConnection = internalMutation({
 // Setup progress (webhook subscription and Cloud API registration at Meta)
 // ---------------------------------------------------------------------------
 
+export type SetupStep = "subscribe" | "register" | "import";
+
 export type SetupProgress = {
   status: "connected" | "action_required" | "reauthorization_required" | "disconnected";
-  nextStep?: "subscribe" | "register";
+  nextStep?: SetupStep;
   /** Set when the status itself has a reason (no active number); else the latest failure. */
   reason?: string;
 };
@@ -265,13 +276,16 @@ export type SetupProgress = {
  * connected once subscribed and every active number is registered; otherwise the next step.
  * A connection that is not active (its token expired or Meta refused it) needs a new signup
  * first: nothing can be retried with its token. An account without an active number has
- * nothing to set up (`no_active_number`; a new signup adds one); it is never subscribed.
+ * nothing to set up (`no_active_number`; a new signup adds one); it is never subscribed. A
+ * coexistence number (ADR 0019) is registered at signup; its contacts and history imports come
+ * last (`numbersImported`, aligned with `numbersRegistered`; absent: nothing to import).
  */
 export function setupProgress(account: {
   active: boolean;
   connectionActive: boolean;
   subscribed: boolean;
   numbersRegistered: boolean[];
+  numbersImported?: boolean[];
 }): SetupProgress {
   if (!account.active) return { status: "disconnected" };
   if (!account.connectionActive) return { status: "reauthorization_required" };
@@ -279,9 +293,30 @@ export function setupProgress(account: {
     return { status: "action_required", reason: "no_active_number" };
   }
   if (!account.subscribed) return { status: "action_required", nextStep: "subscribe" };
-  return account.numbersRegistered.every(Boolean)
+  if (!account.numbersRegistered.every(Boolean)) {
+    return { status: "action_required", nextStep: "register" };
+  }
+  return (account.numbersImported ?? []).every(Boolean)
     ? { status: "connected" }
-    : { status: "action_required", nextStep: "register" };
+    : { status: "action_required", nextStep: "import" };
+}
+
+/** Whether a number's coexistence imports are done (true for every other number). */
+export function importsDone(number: Pick<Doc<"whatsappPhoneNumbers">, "coexistence">): boolean {
+  const state = number.coexistence;
+  return (
+    state === undefined ||
+    (state.contactsImportedAt !== undefined && state.historyImportedAt !== undefined)
+  );
+}
+
+/** When a coexistence number's import window ends (ADR 0019), or undefined for other numbers. */
+export function importDeadlineOf(
+  number: Pick<Doc<"whatsappPhoneNumbers">, "coexistence">,
+): number | undefined {
+  return number.coexistence === undefined
+    ? undefined
+    : number.coexistence.onboardedAt + COEXISTENCE_IMPORT_WINDOW_MS;
 }
 
 const numberStateValidator = v.object({
@@ -290,6 +325,8 @@ const numberStateValidator = v.object({
   registered: v.boolean(),
   /** Another call holds this number's registration claim right now (claimRegistration). */
   registrationInProgress: v.boolean(),
+  /** Coexistence (ADR 0019): its contacts or history import is still to be requested. */
+  importPending: v.boolean(),
 });
 
 /**
@@ -356,6 +393,7 @@ export const loadSetupState = internalQuery({
         phoneNumberId: n.phoneNumberId,
         registered: n.platformRegisteredAt !== undefined,
         registrationInProgress: (n.registrationClaimedUntil ?? 0) > now,
+        importPending: !importsDone(n),
       })),
     };
   },
@@ -515,7 +553,7 @@ export const recordReauthRequired = internalMutation({
   args: {
     orgId: v.id("organizations"),
     accountId: v.id("whatsappBusinessAccounts"),
-    step: v.union(v.literal("subscribe"), v.literal("register")),
+    step: v.union(v.literal("subscribe"), v.literal("register"), v.literal("import")),
     actorSubject: v.string(),
   },
   returns: v.boolean(),
@@ -573,6 +611,142 @@ export const recordRegisterResult = internalMutation({
             updatedAt: now,
           }
         : { setupError: { step: "register", reason: failure, at: now }, updatedAt: now },
+    );
+    return true;
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Coexistence imports (ADR 0019): contacts, then chat history, each requested once
+// ---------------------------------------------------------------------------
+
+/** How long an import claim holds: both calls with their own timeouts, twice over. */
+export const IMPORT_CLAIM_MS = 4 * SIGNUP_TIMEOUT_MS;
+
+/**
+ * Claims one coexistence number's next import attempt; the ONLY way to get permission for an
+ * import call. In one transaction (concurrent claims are serialized; at most one wins): refused
+ * once both imports are done, while another call holds a live claim, after Meta's 24-hour window
+ * (`import_expired`: the business has to disconnect in the app and sign up again) and after
+ * MAX_IMPORT_ATTEMPTS. A won claim counts the attempt and says which imports are still missing;
+ * recordImportResult releases it.
+ */
+export const claimImport = internalMutation({
+  args: {
+    orgId: v.id("organizations"),
+    accountId: v.id("whatsappBusinessAccounts"),
+    numberId: v.id("whatsappPhoneNumbers"),
+  },
+  returns: v.union(
+    v.object({ ok: v.literal(true), contacts: v.boolean(), history: v.boolean() }),
+    v.object({
+      ok: v.literal(false),
+      reason: v.union(
+        v.literal("gone"),
+        v.literal("imported"),
+        v.literal("import_in_progress"),
+        v.literal("import_expired"),
+        v.literal("import_attempts_exhausted"),
+      ),
+    }),
+  ),
+  handler: async (ctx, { orgId, accountId, numberId }) => {
+    const account = await activeAccountOf(ctx.db, orgId, accountId);
+    const number = await ctx.db.get(numberId);
+    const state = number?.coexistence;
+    if (
+      account === null ||
+      number === null ||
+      number.orgId !== orgId ||
+      number.accountId !== account._id ||
+      number.status !== "active" ||
+      state === undefined
+    ) {
+      return { ok: false as const, reason: "gone" as const };
+    }
+    if (importsDone(number)) return { ok: false as const, reason: "imported" as const };
+    const now = Date.now();
+    if ((state.importClaimedUntil ?? 0) > now) {
+      return { ok: false as const, reason: "import_in_progress" as const };
+    }
+    const limit =
+      now >= state.onboardedAt + COEXISTENCE_IMPORT_WINDOW_MS
+        ? ("import_expired" as const)
+        : (state.importAttempts ?? 0) >= MAX_IMPORT_ATTEMPTS
+          ? ("import_attempts_exhausted" as const)
+          : null;
+    if (limit !== null) {
+      await ctx.db.patch(account._id, {
+        setupError: { step: "import", reason: limit, at: now },
+        updatedAt: now,
+      });
+      return { ok: false as const, reason: limit };
+    }
+    await ctx.db.patch(number._id, {
+      coexistence: {
+        ...state,
+        importAttempts: (state.importAttempts ?? 0) + 1,
+        importClaimedUntil: now + IMPORT_CLAIM_MS,
+      },
+      updatedAt: now,
+    });
+    return {
+      ok: true as const,
+      contacts: state.contactsImportedAt === undefined,
+      history: state.historyImportedAt === undefined,
+    };
+  },
+});
+
+/**
+ * Records one claimed import call: Meta's request id on success, a sanitized reason otherwise.
+ * `release` ends the claim (the last call of the attempt, or a failure: the history import is
+ * only requested after the contacts import succeeded).
+ */
+export const recordImportResult = internalMutation({
+  args: {
+    orgId: v.id("organizations"),
+    accountId: v.id("whatsappBusinessAccounts"),
+    numberId: v.id("whatsappPhoneNumbers"),
+    kind: v.union(v.literal("contacts"), v.literal("history")),
+    requestId: v.optional(v.string()),
+    failure: v.optional(v.string()),
+    release: v.boolean(),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const account = await activeAccountOf(ctx.db, args.orgId, args.accountId);
+    const number = await ctx.db.get(args.numberId);
+    const state = number?.coexistence;
+    if (account === null || number === null || number.orgId !== args.orgId) return false;
+    if (number.accountId !== account._id || state === undefined) return false;
+    const now = Date.now();
+    const succeeded = args.failure === undefined && args.requestId !== undefined;
+    const { importClaimedUntil, ...rest } = state;
+    const next = {
+      ...rest,
+      ...(args.release || importClaimedUntil === undefined ? {} : { importClaimedUntil }),
+      ...(succeeded && args.kind === "contacts"
+        ? { contactsImportedAt: now, contactsRequestId: args.requestId }
+        : {}),
+      ...(succeeded && args.kind === "history"
+        ? { historyImportedAt: now, historyRequestId: args.requestId }
+        : {}),
+    };
+    await ctx.db.patch(number._id, { coexistence: next, updatedAt: now });
+    await ctx.db.patch(
+      account._id,
+      succeeded
+        ? {
+            ...(account.setupError?.step === "import" && importsDone({ coexistence: next })
+              ? { setupError: undefined }
+              : {}),
+            updatedAt: now,
+          }
+        : {
+            setupError: { step: "import", reason: args.failure ?? "unexpected_response", at: now },
+            updatedAt: now,
+          },
     );
     return true;
   },

@@ -1,4 +1,9 @@
-import { MAX_CONTACT_NAME_CHARS, MAX_EVENTS_PER_DELIVERY, MAX_TEXT_BODY_CHARS } from "./config";
+import {
+  MAX_CONTACT_NAME_CHARS,
+  MAX_EVENTS_PER_DELIVERY,
+  MAX_IMPORT_EVENTS_PER_DELIVERY,
+  MAX_TEXT_BODY_CHARS,
+} from "./config";
 
 /**
  * Strict parser for WhatsApp Cloud API webhook deliveries (pure; no Convex runtime).
@@ -13,9 +18,16 @@ import { MAX_CONTACT_NAME_CHARS, MAX_EVENTS_PER_DELIVERY, MAX_TEXT_BODY_CHARS } 
  *   organization identifier, is ignored: the tenant comes only from the server-side
  *   `phone_number_id` mapping (convex/whatsapp/ingest.ts).
  * - Only `field: "messages"` changes are read, plus the WABA id of an `account_update`
- *   `PARTNER_REMOVED` change (ADR 0014 B4b). Other changes, including malformed
- *   `account_update` ones, are counted and ignored whatever their `value` holds (their shapes
- *   are not validated, so a change to one of them can never reject the messages beside it).
+ *   `PARTNER_REMOVED` or `ACCOUNT_OFFBOARDED` change (ADR 0014 B4b, ADR 0019). Other changes,
+ *   including malformed `account_update` ones, are counted and ignored whatever their `value`
+ *   holds (their shapes are not validated, so a change to one of them can never reject the
+ *   messages beside it).
+ * - Coexistence (ADR 0019, Meta "Onboarding WhatsApp Business app users", 2026-11-03):
+ *   `smb_message_echoes` (messages the business sent from the WhatsApp Business app), `history`
+ *   (the imported chat history) and `smb_app_state_sync` (contacts saved in the app) are read
+ *   too. A change of one of them with an unexpected envelope is ignored like another field (their
+ *   shapes are PROVISIONAL until a real coexistence signup), never rejecting the delivery; a
+ *   declined history import (error 2593109) carries nothing to store.
  */
 
 export const STATUS_VALUES = ["sent", "delivered", "read", "failed"] as const;
@@ -65,7 +77,44 @@ export type StatusEvent = {
   errorCode?: number;
 };
 
-export type WebhookEvent = InboundMessageEvent | StatusEvent;
+/** Coexistence: a message the business sent from the WhatsApp Business app. */
+export type EchoEvent = {
+  kind: "echo";
+  wamid: string;
+  /** The customer's WhatsApp id (`to`). */
+  to: string;
+  timestampMs: number;
+  messageType: InboundMessageType;
+  text?: string;
+};
+
+/** Coexistence: one message of the imported chat history. */
+export type HistoryEvent = {
+  kind: "history";
+  wamid: string;
+  /** The customer's WhatsApp id (the thread's `id`). */
+  contactWaId: string;
+  /** Sent by the business; otherwise by the customer. */
+  fromBusiness: boolean;
+  timestampMs: number;
+  messageType: InboundMessageType;
+  text?: string;
+  /** The business's messages: how far it got (`history_context.status`). */
+  deliveryStatus?: DeliveryStatus;
+};
+
+/** Coexistence: a contact saved in the WhatsApp Business app was added or removed. */
+export type ContactEvent = {
+  kind: "contact";
+  waId: string;
+  action: "add" | "remove";
+  /** The saved name (`full_name`, else `first_name`); absent on removal. */
+  name?: string;
+  timestampMs: number;
+};
+
+export type WebhookEvent =
+  InboundMessageEvent | StatusEvent | EchoEvent | HistoryEvent | ContactEvent;
 
 export type WebhookChange = {
   /** `entry[].id`: the WhatsApp Business Account the change belongs to. */
@@ -159,23 +208,30 @@ function inboundType(type: string): InboundMessageType {
     : "unsupported";
 }
 
+/**
+ * A message item's type and text (text messages only), or null when either is unusable. Shared
+ * by inbound messages, echoes and imported history.
+ */
+function contentOf(item: Json): { messageType: InboundMessageType; text?: string } | null {
+  if (typeof item.type !== "string" || !MESSAGE_TYPE.test(item.type)) return null;
+  const messageType = inboundType(item.type);
+  if (messageType !== "text") return { messageType };
+  const body = isObject(item.text) ? item.text.body : undefined;
+  if (typeof body !== "string" || body.length === 0 || body.length > MAX_TEXT_BODY_CHARS) {
+    return null;
+  }
+  return { messageType, text: body };
+}
+
 function parseMessage(item: unknown, names: Map<string, string>): InboundMessageEvent | null {
   if (!isObject(item)) return null;
   const id = wamid(item.id);
   const from = numericId(item.from);
   const at = timestampMs(item.timestamp);
   if (id === null || from === null || at === null) return null;
-  if (typeof item.type !== "string" || !MESSAGE_TYPE.test(item.type)) return null;
-  const messageType = inboundType(item.type);
-
-  let text: string | undefined;
-  if (messageType === "text") {
-    const body = isObject(item.text) ? item.text.body : undefined;
-    if (typeof body !== "string" || body.length === 0 || body.length > MAX_TEXT_BODY_CHARS) {
-      return null;
-    }
-    text = body;
-  }
+  const content = contentOf(item);
+  if (content === null) return null;
+  const { messageType, text } = content;
   const contactName = names.get(from);
   return {
     kind: "message",
@@ -213,14 +269,167 @@ function parseStatus(item: unknown): StatusEvent | null {
   };
 }
 
+function parseEcho(item: unknown): EchoEvent | null {
+  if (!isObject(item)) return null;
+  const id = wamid(item.id);
+  const to = numericId(item.to);
+  const at = timestampMs(item.timestamp);
+  if (id === null || to === null || at === null) return null;
+  const content = contentOf(item);
+  if (content === null) return null;
+  return { kind: "echo", wamid: id, to, timestampMs: at, ...content };
+}
+
+/** `history_context.status` of the business's message, as a delivery status (PROVISIONAL). */
+function historyStatus(value: unknown): DeliveryStatus | undefined {
+  const status = isObject(value) && typeof value.status === "string" ? value.status : "";
+  switch (status.toLowerCase()) {
+    case "read":
+    case "played":
+      return "read";
+    case "delivered":
+      return "delivered";
+    case "error":
+    case "failed":
+      return "failed";
+    default:
+      return "sent";
+  }
+}
+
+/** The messages of one `history` item's threads, each thread being one customer. */
+function parseHistory(item: unknown): { events: HistoryEvent[]; skipped: number } | null {
+  if (!isObject(item)) return null;
+  const threads = optionalArray(item.threads);
+  if (threads === null) return null;
+  const events: HistoryEvent[] = [];
+  let skipped = 0;
+  for (const thread of threads ?? []) {
+    const contactWaId = isObject(thread) ? numericId(thread.id) : null;
+    const messages = isObject(thread) ? optionalArray(thread.messages) : null;
+    if (contactWaId === null || messages === null) {
+      skipped++;
+      continue;
+    }
+    for (const message of messages ?? []) {
+      const event = isObject(message) ? historyMessage(message, contactWaId) : null;
+      if (event === null) skipped++;
+      else events.push(event);
+    }
+  }
+  return { events, skipped };
+}
+
+function historyMessage(item: Json, contactWaId: string): HistoryEvent | null {
+  const id = wamid(item.id);
+  const from = numericId(item.from);
+  const at = timestampMs(item.timestamp);
+  if (id === null || from === null || at === null) return null;
+  const content = contentOf(item);
+  if (content === null) return null;
+  // Meta sends `to` only on the business's own messages; `from` is the customer otherwise.
+  const fromBusiness = item.to !== undefined || from !== contactWaId;
+  return {
+    kind: "history",
+    wamid: id,
+    contactWaId,
+    fromBusiness,
+    timestampMs: at,
+    ...content,
+    ...(fromBusiness ? { deliveryStatus: historyStatus(item.history_context) } : {}),
+  };
+}
+
+/** A contact's number as a WhatsApp id: its digits ("+1 555-000-1111" -> "15550001111"). */
+function contactWaId(value: unknown): string | null {
+  if (typeof value !== "string" || !/^[+\d\s().-]{1,40}$/.test(value)) return null;
+  const digits = value.replace(/\D/g, "");
+  return /^\d{6,15}$/.test(digits) ? digits : null;
+}
+
+function parseContact(item: unknown): ContactEvent | null {
+  if (!isObject(item) || item.type !== "contact") return null;
+  const contact = item.contact;
+  if (!isObject(contact) || (item.action !== "add" && item.action !== "remove")) return null;
+  const waId = contactWaId(contact.phone_number);
+  const at = isObject(item.metadata) ? timestampMs(item.metadata.timestamp) : null;
+  if (waId === null || at === null) return null;
+  const raw = typeof contact.full_name === "string" ? contact.full_name : contact.first_name;
+  const name = typeof raw === "string" ? raw.trim().slice(0, MAX_CONTACT_NAME_CHARS) : "";
+  return {
+    kind: "contact",
+    waId,
+    action: item.action,
+    ...(item.action === "add" && name !== "" ? { name } : {}),
+    timestampMs: at,
+  };
+}
+
+/** The business number of a coexistence change, or null when its envelope is not as expected. */
+function importEnvelope(value: unknown): { value: Json; phoneNumberId: string } | null {
+  if (!isObject(value) || value.messaging_product !== "whatsapp") return null;
+  const phoneNumberId = isObject(value.metadata) ? numericId(value.metadata.phone_number_id) : null;
+  return phoneNumberId === null ? null : { value, phoneNumberId };
+}
+
+/** The coexistence fields this parser reads (ADR 0019). */
+const IMPORT_FIELDS = new Set(["smb_message_echoes", "history", "smb_app_state_sync"]);
+
+/** `account_update` events that may mean our access to a WABA (or its number) ended. */
+const REMOVAL_EVENTS = new Set(["PARTNER_REMOVED", "ACCOUNT_OFFBOARDED"]);
+
 /**
- * The customer WABA of an `account_update` `PARTNER_REMOVED` change, or null. Meta's documented
- * example carries it in `waba_info.waba_id`; `entry[].id` there is not the WABA and is never
- * read. The coexistence variant without `waba_info` is not read (coexistence is not supported).
+ * The customer WABA of an `account_update` `PARTNER_REMOVED` change, or of a coexistence
+ * `ACCOUNT_OFFBOARDED` one (ADR 0019), or null. Meta's documented examples carry it in
+ * `waba_info.waba_id`; `entry[].id` there is not the WABA and is never read. A variant without
+ * `waba_info` is not read.
  */
 function partnerRemovedWaba(value: unknown): string | null {
-  if (!isObject(value) || value.event !== "PARTNER_REMOVED") return null;
+  if (!isObject(value) || typeof value.event !== "string" || !REMOVAL_EVENTS.has(value.event)) {
+    return null;
+  }
   return isObject(value.waba_info) ? numericId(value.waba_info.waba_id) : null;
+}
+
+/**
+ * The events of one coexistence change (its envelope already checked), or null when its item
+ * list is not as expected. Items that fail validation are counted as skipped.
+ */
+function readImportChange(
+  field: string,
+  value: Json,
+): { events: WebhookEvent[]; skipped: number } | null {
+  const events: WebhookEvent[] = [];
+  let skipped = 0;
+  const each = <T extends WebhookEvent>(list: unknown, parse: (item: unknown) => T | null) => {
+    const items = optionalArray(list);
+    if (items === null) return false;
+    for (const item of items ?? []) {
+      const event = parse(item);
+      if (event === null) skipped++;
+      else events.push(event);
+    }
+    return true;
+  };
+  if (field === "smb_message_echoes") {
+    return each(value.message_echoes, parseEcho) ? { events, skipped } : null;
+  }
+  if (field === "smb_app_state_sync") {
+    return each(value.state_sync, parseContact) ? { events, skipped } : null;
+  }
+  const items = optionalArray(value.history);
+  if (items === null) return null;
+  for (const item of items ?? []) {
+    // A declined import (`errors`, code 2593109) carries no threads: nothing to store.
+    const read = parseHistory(item);
+    if (read === null) {
+      skipped++;
+      continue;
+    }
+    events.push(...read.events);
+    skipped += read.skipped;
+  }
+  return { events, skipped };
 }
 
 /** Parses an already JSON-decoded, signature-verified delivery. Never throws. */
@@ -236,6 +445,7 @@ export function parseWebhookPayload(body: unknown): ParseResult {
   let skipped = 0;
   let ignoredFields = 0;
   let total = 0;
+  let imported = 0;
 
   for (const entry of body.entry) {
     if (!isObject(entry)) return { ok: false, reason: "invalid_entry" };
@@ -251,6 +461,29 @@ export function parseWebhookPayload(body: unknown): ParseResult {
         const wabaId = partnerRemovedWaba(change.value);
         if (wabaId !== null) partnerRemovals.add(wabaId);
         else ignoredFields++;
+        continue;
+      }
+      if (IMPORT_FIELDS.has(change.field)) {
+        const envelope = importEnvelope(change.value);
+        if (envelope === null) {
+          ignoredFields++;
+          continue;
+        }
+        const read = readImportChange(change.field, envelope.value);
+        if (read === null) {
+          ignoredFields++;
+          continue;
+        }
+        skipped += read.skipped;
+        // Echoes are live messages; imports may come in large chunks.
+        if (change.field === "smb_message_echoes") total += read.events.length + read.skipped;
+        else imported += read.events.length + read.skipped;
+        if (total > MAX_EVENTS_PER_DELIVERY || imported > MAX_IMPORT_EVENTS_PER_DELIVERY) {
+          return { ok: false, reason: "too_many_events" };
+        }
+        if (read.events.length > 0) {
+          changes.push({ wabaId, phoneNumberId: envelope.phoneNumberId, events: read.events });
+        }
         continue;
       }
       if (change.field !== "messages") {

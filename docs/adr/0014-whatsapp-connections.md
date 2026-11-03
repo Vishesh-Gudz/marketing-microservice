@@ -122,7 +122,8 @@ registration):
     (`WHATSAPP_GRAPH_API_VERSION`); Embedded Signup v4 through the login configuration (no
     `extras.version`); v5 is not adopted. A separate WhatsApp Graph client
     (`convex/whatsapp/graph.ts`) reuses only `appsecret_proof` and the Graph origin from the
-    Meta provider. Coexistence numbers are not in the first release (D6); the existing WhatsApp
+    Meta provider. Coexistence numbers are not in the first release (D6; superseded by
+    [ADR 0019](0019-whatsapp-coexistence.md)); the existing WhatsApp
     Meta app (D8); connecting is admin-only (D11).
 13. **No simulated signup in mock mode.** Automated tests stub `fetch` with a fake Graph that
     serves the documented calls (`convex/whatsapp/fakeGraph.fixtures.ts`); it is not evidence of

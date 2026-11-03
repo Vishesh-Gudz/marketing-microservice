@@ -64,11 +64,22 @@ describe("Facebook SDK helpers", () => {
   });
 
   it("logs in exactly as Meta documents for Embedded Signup", () => {
-    expect(embeddedSignupLoginOptions(availableConfig(CONFIG)!)).toEqual({
+    const expected = {
       config_id: CONFIG.configId,
       response_type: "code",
       override_default_response_type: true,
       extras: { setup: {} },
+    };
+    expect(embeddedSignupLoginOptions(availableConfig(CONFIG)!)).toEqual(expected);
+    expect(embeddedSignupLoginOptions(availableConfig(CONFIG)!, "new_number")).toEqual(expected);
+  });
+
+  it("adds Meta's feature type for a WhatsApp Business app number (ADR 0019)", () => {
+    expect(embeddedSignupLoginOptions(availableConfig(CONFIG)!, "business_app")).toEqual({
+      config_id: CONFIG.configId,
+      response_type: "code",
+      override_default_response_type: true,
+      extras: { setup: {}, featureType: "whatsapp_business_app_onboarding" },
     });
   });
 });

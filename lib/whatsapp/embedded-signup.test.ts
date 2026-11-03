@@ -56,11 +56,11 @@ describe("parseSignupMessage", () => {
         META,
         message("FINISH", { waba_id: WABA, phone_number_id: PHONE, business_id: "3" }),
       ),
-    ).toEqual({ kind: "finish", wabaId: WABA, phoneNumberId: PHONE });
+    ).toEqual({ kind: "finish", wabaId: WABA, phoneNumberId: PHONE, onboarding: "cloud_api" });
     // Small numeric ids are accepted exactly; unusable ids make the FINISH malformed.
     expect(
       parseSignupMessage(META, message("FINISH", { waba_id: 123, phone_number_id: 456 })),
-    ).toEqual({ kind: "finish", wabaId: "123", phoneNumberId: "456" });
+    ).toEqual({ kind: "finish", wabaId: "123", phoneNumberId: "456", onboarding: "cloud_api" });
     for (const data of [
       { waba_id: WABA },
       { phone_number_id: PHONE },
@@ -77,10 +77,33 @@ describe("parseSignupMessage", () => {
     });
   });
 
+  it("reads Meta's WhatsApp Business app finish as a coexistence signup (ADR 0019)", () => {
+    expect(
+      parseSignupMessage(
+        META,
+        message("FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", {
+          waba_id: WABA,
+          phone_number_id: PHONE,
+        }),
+      ),
+    ).toEqual({ kind: "finish", wabaId: WABA, phoneNumberId: PHONE, onboarding: "coexistence" });
+    // Meta's coexistence page documents only waba_id: the server then reads the WABA's number.
+    expect(
+      parseSignupMessage(
+        META,
+        message("FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", { waba_id: WABA }),
+      ),
+    ).toEqual({ kind: "finish", wabaId: WABA, onboarding: "coexistence" });
+    for (const data of [{}, { waba_id: "abc" }, { waba_id: WABA, phone_number_id: "x1" }]) {
+      expect(
+        parseSignupMessage(META, message("FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", data)),
+      ).toEqual({ kind: "malformed" });
+    }
+  });
+
   it("maps the other FINISH variants to unsupported", () => {
     const variants = {
       FINISH_ONLY_WABA: "only_waba",
-      FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING: "business_app",
       FINISH_OBO_MIGRATION: "obo_migration",
       FINISH_GRANT_ONLY_API_ACCESS: "grant_only",
       FINISH_SOMETHING_NEW: "other",
@@ -149,11 +172,17 @@ describe("codeOfLoginResponse", () => {
 describe("nextAttempt", () => {
   const finish = (wabaId = WABA, phoneNumberId = PHONE): SignupEvent => ({
     type: "message",
-    message: { kind: "finish", wabaId, phoneNumberId },
+    message: { kind: "finish", wabaId, phoneNumberId, onboarding: "cloud_api" },
   });
   const run = (...events: SignupEvent[]) =>
     events.reduce<SignupAttempt>((attempt, event) => nextAttempt(attempt, event), IDLE);
-  const ready = { phase: "ready", code: CODE, wabaId: WABA, phoneNumberId: PHONE };
+  const ready = {
+    phase: "ready",
+    code: CODE,
+    wabaId: WABA,
+    phoneNumberId: PHONE,
+    onboarding: "cloud_api",
+  };
 
   it("pairs the code and the ids of one signup, in either order", () => {
     expect(run({ type: "start" }, { type: "login", code: CODE }, finish())).toEqual(ready);
@@ -199,7 +228,7 @@ describe("nextAttempt", () => {
     const finishFirst = run({ type: "start" }, finish(), { type: "timeout" }, { type: "timeout" });
     expect(finishFirst).toEqual({
       phase: "waiting",
-      finish: { wabaId: WABA, phoneNumberId: PHONE },
+      finish: { wabaId: WABA, phoneNumberId: PHONE, onboarding: "cloud_api" },
     });
     expect(nextAttempt(finishFirst, { type: "login", code: CODE })).toEqual(ready);
     expect(run({ type: "start" }, { type: "timeout" })).toEqual({ phase: "waiting" });

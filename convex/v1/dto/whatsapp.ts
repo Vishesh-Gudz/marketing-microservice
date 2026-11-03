@@ -2,12 +2,14 @@ import { v, type Infer } from "convex/values";
 import type { Doc } from "../../_generated/dataModel";
 import { toIso } from "../../lib/dto";
 import { messageDirectionValidator } from "../../messaging/validators";
-import type { SetupProgress } from "../../whatsapp/accounts";
+import { importDeadlineOf, importsDone, type SetupProgress } from "../../whatsapp/accounts";
 import type { ParsedTemplate } from "../../whatsapp/templates";
 import {
   businessAccountStatusValidator,
+  messageOriginValidator,
   messageStatusValidator,
   messageTypeValidator,
+  onboardingTypeValidator,
   phoneNumberStatusValidator,
 } from "../../whatsapp/validators";
 import { serviceWindowExpiresAt } from "../../messaging/window";
@@ -35,6 +37,17 @@ export const whatsappConversationDto = v.object({
 });
 export type WhatsappConversationDto = Infer<typeof whatsappConversationDto>;
 
+/**
+ * The name shown for the customer: the one the business saved in the WhatsApp Business app
+ * (coexistence contacts import, ADR 0019), else the customer's WhatsApp profile name.
+ */
+export function contactNameOf(conversation: Doc<"whatsappConversations">): {
+  contactName?: string;
+} {
+  const name = conversation.savedName ?? conversation.contactName;
+  return name !== undefined ? { contactName: name } : {};
+}
+
 export function toWhatsappConversationDto(
   conversation: Doc<"whatsappConversations">,
   number: Doc<"whatsappPhoneNumbers">,
@@ -47,7 +60,7 @@ export function toWhatsappConversationDto(
       ? { displayPhoneNumber: number.displayPhoneNumber }
       : {}),
     contactWaId: conversation.contactWaId,
-    ...(conversation.contactName !== undefined ? { contactName: conversation.contactName } : {}),
+    ...contactNameOf(conversation),
     lastMessageAt: toIso(conversation.lastMessageAt),
     ...(conversation.lastInboundAt !== undefined
       ? { lastInboundAt: toIso(conversation.lastInboundAt) }
@@ -73,6 +86,11 @@ export const whatsappMessageDto = v.object({
   failureReason: v.optional(v.string()),
   /** Outbound templates: which approved template was sent (`text` is it filled in). */
   template: v.optional(v.object({ name: v.string(), language: v.string() })),
+  /**
+   * Coexistence (ADR 0019): `business_app` when the business sent it from the WhatsApp Business
+   * app, `history` when it was imported with the chat history. Absent otherwise.
+   */
+  origin: v.optional(messageOriginValidator),
   /** When the message happened. */
   at: v.string(),
   sentAt: v.optional(v.string()),
@@ -99,6 +117,7 @@ export function toWhatsappMessageDto(message: Doc<"whatsappMessages">): Whatsapp
     ...(message.template !== undefined
       ? { template: { name: message.template.name, language: message.template.language } }
       : {}),
+    ...(message.origin !== undefined ? { origin: message.origin } : {}),
     at: toIso(message.platformAt),
     ...optionalIso("sentAt", message.sentAt),
     ...optionalIso("deliveredAt", message.deliveredAt),
@@ -183,7 +202,12 @@ const setupStatusValidator = v.union(
   v.literal("reauthorization_required"),
   v.literal("disconnected"),
 );
-const setupStepValidator = v.union(v.literal("subscribe"), v.literal("register"));
+const setupStepValidator = v.union(
+  v.literal("subscribe"),
+  v.literal("register"),
+  /** Coexistence (ADR 0019): the contacts and chat history imports. */
+  v.literal("import"),
+);
 
 /** Outcome of completeSignup / retrySetup. */
 export const whatsappSetupResultDto = v.object({
@@ -206,6 +230,12 @@ export const whatsappAccountNumberDto = v.object({
   registered: v.boolean(),
   /** After Meta's registration rate limit: no attempt before this time (compare with now). */
   registrationRetryAfter: v.optional(v.string()),
+  /** Coexistence (ADR 0019): the number stays in use in the WhatsApp Business app. */
+  businessApp: v.boolean(),
+  /** Coexistence: whether the contacts and chat history imports were both requested. */
+  imported: v.optional(v.boolean()),
+  /** Coexistence, imports not done: Meta's deadline for them (compare with now). */
+  importDeadline: v.optional(v.string()),
 });
 
 const cleanupStatusValidator = v.union(
@@ -250,6 +280,8 @@ export const whatsappAccountDto = v.object({
   connectionId: v.string(),
   /** Meta WhatsApp Business Account id. */
   wabaId: v.string(),
+  /** `coexistence`: connected from the WhatsApp Business app (ADR 0019). */
+  onboardingType: onboardingTypeValidator,
   status: businessAccountStatusValidator,
   setupStatus: setupStatusValidator,
   nextStep: v.optional(setupStepValidator),
@@ -284,6 +316,7 @@ export function toWhatsappAccountDto(
     id: account._id,
     connectionId: account.connectionId,
     wabaId: account.wabaId,
+    onboardingType: account.onboardingType,
     status: account.status,
     setupStatus: progress.status,
     ...(progress.nextStep !== undefined ? { nextStep: progress.nextStep } : {}),
@@ -313,6 +346,9 @@ export function toWhatsappAccountDto(
       status: number.status,
       registered: number.platformRegisteredAt !== undefined,
       ...optionalIso("registrationRetryAfter", number.registrationBlockedUntil),
+      businessApp: number.coexistence !== undefined,
+      ...(number.coexistence !== undefined ? { imported: importsDone(number) } : {}),
+      ...optionalIso("importDeadline", importsDone(number) ? undefined : importDeadlineOf(number)),
     })),
   };
 }

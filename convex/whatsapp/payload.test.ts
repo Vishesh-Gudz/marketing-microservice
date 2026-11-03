@@ -6,12 +6,20 @@ import {
   PHONE_A,
   WABA_A,
   WABA_B,
+  contactsEntry,
   delivery,
+  echoEntry,
   entry,
+  historyEntry,
   message,
   partnerRemovedEntry,
 } from "./fakeWebhook.fixtures";
-import { parseWebhookPayload } from "./payload";
+import { parseWebhookPayload, type WebhookEvent } from "./payload";
+
+/** An event's id: its wamid (a contact event has none: its wa_id). */
+function idOf(event: WebhookEvent): string {
+  return event.kind === "contact" ? event.waId : event.wamid;
+}
 
 function ok(body: unknown) {
   const result = parseWebhookPayload(body);
@@ -206,7 +214,7 @@ describe("parseWebhookPayload: events", () => {
     ];
     const parsed = ok(body);
     expect(parsed.skipped).toBe(10);
-    expect(parsed.changes[0]!.events.map((e) => e.wamid)).toEqual(["wamid.ok"]);
+    expect(parsed.changes[0]!.events.map(idOf)).toEqual(["wamid.ok"]);
   });
 
   it("normalizes statuses and keeps only the numeric error code of a failure", () => {
@@ -275,7 +283,7 @@ describe("parseWebhookPayload: events", () => {
       const parsed = ok(body);
       expect(parsed.ignoredFields).toBe(1);
       expect(parsed.skipped).toBe(0);
-      expect(parsed.changes.flatMap((c) => c.events.map((e) => e.wamid))).toEqual(["wamid.kept"]);
+      expect(parsed.changes.flatMap((c) => c.events.map(idOf))).toEqual(["wamid.kept"]);
     },
   );
 });
@@ -351,7 +359,7 @@ describe("parseWebhookPayload: partner removal (account_update, ADR 0014 B4b)", 
       const parsed = ok(body);
       expect(parsed.partnerRemovals).toEqual([]);
       expect(parsed.ignoredFields).toBe(1);
-      expect(parsed.changes.flatMap((c) => c.events.map((e) => e.wamid))).toEqual(["wamid.kept"]);
+      expect(parsed.changes.flatMap((c) => c.events.map(idOf))).toEqual(["wamid.kept"]);
     },
   );
 
@@ -362,6 +370,135 @@ describe("parseWebhookPayload: partner removal (account_update, ADR 0014 B4b)", 
     );
     const parsed = ok(body);
     expect(parsed.partnerRemovals).toEqual([WABA_A]);
-    expect(parsed.changes.flatMap((c) => c.events.map((e) => e.wamid))).toEqual(["wamid.kept"]);
+    expect(parsed.changes.flatMap((c) => c.events.map(idOf))).toEqual(["wamid.kept"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Coexistence fields (ADR 0019; Meta "Onboarding WhatsApp Business app users", 2026-11-03)
+// ---------------------------------------------------------------------------
+
+describe("parseWebhookPayload: coexistence", () => {
+  it("reads echoes, history (both sides) and contacts", () => {
+    const parsed = ok(
+      delivery(
+        echoEntry([{ id: "wamid.echo", timestamp: 100, text: "from the phone" }]),
+        historyEntry([
+          {
+            contact: CUSTOMER_2,
+            messages: [
+              { id: "wamid.h1", timestamp: 50 },
+              { id: "wamid.h2", timestamp: 60, fromBusiness: true, status: "DELIVERED" },
+            ],
+          },
+        ]),
+        contactsEntry([
+          { phone: "+1 (555) 000-1111", name: "  Asha Rao  ", timestamp: 70 },
+          { phone: "+15550002222", action: "remove", timestamp: 80 },
+        ]),
+      ),
+    );
+    expect(parsed.skipped).toBe(0);
+    expect(parsed.changes.flatMap((c) => c.events)).toEqual([
+      {
+        kind: "echo",
+        wamid: "wamid.echo",
+        to: CUSTOMER_1,
+        timestampMs: 100_000,
+        messageType: "text",
+        text: "from the phone",
+      },
+      {
+        kind: "history",
+        wamid: "wamid.h1",
+        contactWaId: CUSTOMER_2,
+        fromBusiness: false,
+        timestampMs: 50_000,
+        messageType: "text",
+        text: "old message",
+      },
+      {
+        kind: "history",
+        wamid: "wamid.h2",
+        contactWaId: CUSTOMER_2,
+        fromBusiness: true,
+        timestampMs: 60_000,
+        messageType: "text",
+        text: "old message",
+        deliveryStatus: "delivered",
+      },
+      { kind: "contact", waId: CUSTOMER_1, action: "add", name: "Asha Rao", timestampMs: 70_000 },
+      { kind: "contact", waId: CUSTOMER_2, action: "remove", timestampMs: 80_000 },
+    ]);
+  });
+
+  it("stores nothing for a declined history import (error 2593109)", () => {
+    const body = delivery({
+      id: WABA_A,
+      changes: [
+        {
+          field: "history",
+          value: {
+            messaging_product: "whatsapp",
+            metadata: { display_phone_number: "1555", phone_number_id: PHONE_A },
+            history: [
+              {
+                errors: [
+                  {
+                    code: 2593109,
+                    title: "History sync is turned off by the business",
+                    error_data: { details: "fake" },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const parsed = ok(body);
+    expect(parsed.changes).toEqual([]);
+    expect(parsed.skipped).toBe(0);
+  });
+
+  it.each([
+    ["no value", undefined],
+    ["another product", { messaging_product: "other", metadata: { phone_number_id: PHONE_A } }],
+    ["no phone number id", { messaging_product: "whatsapp", metadata: {} }],
+    [
+      "echoes that are not a list",
+      { messaging_product: "whatsapp", metadata: { phone_number_id: PHONE_A }, message_echoes: 1 },
+    ],
+  ])(
+    "ignores (never rejects) a coexistence change with %s, and reads the messages beside it",
+    (_label, value) => {
+      const parsed = ok(
+        delivery(
+          { id: WABA_A, changes: [{ field: "smb_message_echoes", value }] },
+          entry({ messages: [{ id: "wamid.kept", text: "hi" }] }),
+        ),
+      );
+      expect(parsed.ignoredFields).toBe(1);
+      expect(parsed.changes.flatMap((c) => c.events.map(idOf))).toEqual(["wamid.kept"]);
+    },
+  );
+
+  it("skips unusable coexistence items one by one", () => {
+    const parsed = ok(
+      delivery(
+        contactsEntry([
+          { phone: "not a number", name: "X" },
+          { phone: "+12", name: "too short" },
+          { phone: "+15550001111", name: "Kept" },
+        ]),
+      ),
+    );
+    expect(parsed.skipped).toBe(2);
+    expect(parsed.changes.flatMap((c) => c.events.map(idOf))).toEqual([CUSTOMER_1]);
+  });
+
+  it("reads ACCOUNT_OFFBOARDED like PARTNER_REMOVED", () => {
+    const parsed = ok(delivery(partnerRemovedEntry(WABA_B, { event: "ACCOUNT_OFFBOARDED" })));
+    expect(parsed.partnerRemovals).toEqual([WABA_B]);
   });
 });

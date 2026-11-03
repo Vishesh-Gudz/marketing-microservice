@@ -100,6 +100,15 @@ export const SIGNUP_ERROR_MESSAGES: Readonly<Record<string, Omit<Notice, "tone">
     message:
       "This WhatsApp account is still being disconnected. Try again once the disconnect has finished.",
   },
+  not_business_app_number: {
+    title: "Not a WhatsApp Business app number",
+    message:
+      "Meta does not report this number as used in the WhatsApp Business app. Use Connect a new number for it, or start again with your WhatsApp Business app number.",
+  },
+  phone_number_missing: {
+    title: "Number not reported",
+    message: "Meta did not report which number was connected. Start again.",
+  },
 };
 
 function detail(error: unknown, key: "reason" | "stage"): string | undefined {
@@ -153,8 +162,6 @@ export function stepInWords(step: string): string {
 
 const UNSUPPORTED_MESSAGES: Readonly<Record<UnsupportedFinish, string>> = {
   only_waba: "No phone number was chosen. Start again and add or select a phone number.",
-  business_app:
-    "Numbers already used in the WhatsApp Business app can't be connected yet. Start again with another number.",
   obo_migration: "Moving a number from another provider isn't supported yet.",
   grant_only: "This kind of signup isn't supported yet. Start again and connect a phone number.",
   other: "This kind of signup isn't supported yet. Start again and connect a phone number.",
@@ -227,6 +234,10 @@ export const SETUP_STATUS_LABELS: Readonly<Record<SetupStatus, string>> = {
   disconnected: "Disconnected",
 };
 
+/** Where the business disconnects a coexistence number in the app (Meta's documented path). */
+export const BUSINESS_APP_DISCONNECT =
+  "In the WhatsApp Business app, open Settings, Account, Business Platform and disconnect the number";
+
 /** One setup reason (a sanitized server code) in words; unknown codes get a generic text. */
 export function setupReasonText(
   reason: string | undefined,
@@ -247,6 +258,13 @@ export function setupReasonText(
     case "network":
     case "timeout":
       return "Meta could not be reached. Retry setup.";
+    case "import_expired":
+      return `Meta's 24 hours for importing contacts and chat history have passed. ${BUSINESS_APP_DISCONNECT}, then connect it here again.`;
+    case "import_attempts_exhausted":
+      return "Importing contacts and chat history failed too many times. Contact support.";
+  }
+  if (nextStep === "import") {
+    return "Contacts and chat history from the WhatsApp Business app are not imported yet. Retry setup within 24 hours of connecting.";
   }
   if (nextStep === "subscribe") {
     return "Meta has not finished turning on messages for this account. Retry setup.";

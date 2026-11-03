@@ -29,7 +29,55 @@ export const statusEventValidator = v.object({
   errorCode: v.optional(v.number()),
 });
 
-export const webhookEventValidator = v.union(messageEventValidator, statusEventValidator);
+/**
+ * Coexistence (ADR 0019): a message the business sent from the WhatsApp Business app
+ * (`smb_message_echoes`; convex/whatsapp/payload.ts `EchoEvent`).
+ */
+export const echoEventValidator = v.object({
+  kind: v.literal("echo"),
+  wamid: v.string(),
+  /** The customer's WhatsApp id. */
+  to: v.string(),
+  timestampMs: v.number(),
+  messageType: inboundMessageTypeValidator,
+  text: v.optional(v.string()),
+});
+
+/** Coexistence: one message of the imported chat history (`history`; payload.ts `HistoryEvent`). */
+export const historyEventValidator = v.object({
+  kind: v.literal("history"),
+  wamid: v.string(),
+  /** The customer's WhatsApp id (the history thread's id). */
+  contactWaId: v.string(),
+  /** Sent by the business (true) or by the customer. */
+  fromBusiness: v.boolean(),
+  timestampMs: v.number(),
+  messageType: inboundMessageTypeValidator,
+  text: v.optional(v.string()),
+  /** The business's messages only: how far it got, as Meta reports it. */
+  deliveryStatus: v.optional(deliveryStatusValidator),
+});
+
+/**
+ * Coexistence: a contact saved in the WhatsApp Business app was added or removed
+ * (`smb_app_state_sync`; payload.ts `ContactEvent`). Only the name is kept.
+ */
+export const contactEventValidator = v.object({
+  kind: v.literal("contact"),
+  /** The contact's WhatsApp id (their phone number's digits). */
+  waId: v.string(),
+  action: v.union(v.literal("add"), v.literal("remove")),
+  name: v.optional(v.string()),
+  timestampMs: v.number(),
+});
+
+export const webhookEventValidator = v.union(
+  messageEventValidator,
+  statusEventValidator,
+  echoEventValidator,
+  historyEventValidator,
+  contactEventValidator,
+);
 export type WebhookEventInput = Infer<typeof webhookEventValidator>;
 
 export const webhookChangeValidator = v.object({
@@ -53,10 +101,32 @@ export const businessAccountStatusValidator = v.union(
 );
 
 /**
- * How the WABA's numbers were onboarded: a number new to the Cloud API, or one already used in
- * the WhatsApp Business app (coexistence; not supported by the first release).
+ * How the WABA's numbers were onboarded: a number new to the Cloud API, or one the business keeps
+ * using in the WhatsApp Business app (coexistence, ADR 0019).
  */
 export const onboardingTypeValidator = v.union(v.literal("cloud_api"), v.literal("coexistence"));
+export type OnboardingType = Infer<typeof onboardingTypeValidator>;
+
+/**
+ * A coexistence number's imports (ADR 0019): when it was onboarded (the 24-hour import window
+ * starts then), and when Meta accepted each import request, with its `request_id` (kept for
+ * support). A claim holds the imports while one call runs; attempts are capped.
+ */
+export const coexistenceStateValidator = v.object({
+  onboardedAt: v.number(),
+  contactsImportedAt: v.optional(v.number()),
+  contactsRequestId: v.optional(v.string()),
+  historyImportedAt: v.optional(v.number()),
+  historyRequestId: v.optional(v.string()),
+  importAttempts: v.optional(v.number()),
+  importClaimedUntil: v.optional(v.number()),
+});
+
+/**
+ * Where a stored message came from, when not this app: sent from the WhatsApp Business app
+ * (an echo), or imported with the chat history. Absent: received here or sent from here.
+ */
+export const messageOriginValidator = v.union(v.literal("business_app"), v.literal("history"));
 
 /**
  * Message lifecycle. Inbound messages are `received`. Outbound: `pending` (stored, not yet

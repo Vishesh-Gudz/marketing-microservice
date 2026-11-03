@@ -6,7 +6,7 @@ import type { DatabaseReader } from "../_generated/server";
 import { clampPagination, mapPage, paginatedDto } from "../lib/dto";
 import { apiError } from "../lib/errors";
 import { getOwned, orgAction, orgAdminAction, orgMutation, orgQuery } from "../lib/tenancy";
-import { setupProgress } from "../whatsapp/accounts";
+import { importsDone, setupProgress } from "../whatsapp/accounts";
 import { runCleanup } from "../whatsapp/offboarding";
 import { listTemplatesFor, queueText, sendTemplateFor } from "../whatsapp/outbound";
 import {
@@ -16,6 +16,7 @@ import {
   whatsappConnectionsEnabled,
 } from "../whatsapp/config";
 import { completeSignup as runSignup, retrySetup as runRetry } from "../whatsapp/signup";
+import { onboardingTypeValidator } from "../whatsapp/validators";
 import {
   toWhatsappAccountDto,
   toWhatsappConversationDto,
@@ -72,10 +73,18 @@ export const getSignupConfig = orgQuery({
  * (exchanged server-side, never stored or logged); `wabaId` and `phoneNumberId` come from Meta's
  * WA_EMBEDDED_SIGNUP message and are verified with Meta before anything is stored. Then the
  * app is subscribed to the WABA and the number registered; a failed step leaves the account
- * `action_required` (retrySetup resumes it).
+ * `action_required` (retrySetup resumes it). `onboarding: "coexistence"` (ADR 0019): Meta
+ * reported FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING; Meta must confirm the number is on the
+ * WhatsApp Business app, it is not registered, and its contacts and chat history are imported.
+ * `phoneNumberId` may then be left out when the WABA has exactly one number.
  */
 export const completeSignup = orgAdminAction({
-  args: { code: v.string(), wabaId: v.string(), phoneNumberId: v.string() },
+  args: {
+    code: v.string(),
+    wabaId: v.string(),
+    phoneNumberId: v.optional(v.string()),
+    onboarding: v.optional(onboardingTypeValidator),
+  },
   returns: whatsappSetupResultDto,
   handler: async (ctx, args): Promise<WhatsappSetupResultDto> => {
     return await runSignup(ctx, ctx.tenant, args);
@@ -146,6 +155,7 @@ export const listAccounts = orgQuery({
           connection.status === "active",
         subscribed: account.subscribedAt !== undefined,
         numbersRegistered: active.map((n) => n.platformRegisteredAt !== undefined),
+        numbersImported: active.map(importsDone),
       });
       result.push(toWhatsappAccountDto(account, numbers, progress));
     }

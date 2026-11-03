@@ -104,7 +104,9 @@ const registerResult = v.union(
  * number another org holds active. `link` ties the number to a connected WABA (Embedded
  * Signup); without it (operator), a new row is recorded as `operator` and an existing row keeps
  * its source and account. Callers that link check `numberAvailabilityOf` first, in the same
- * transaction.
+ * transaction. A coexistence link (ADR 0019) marks the number as served without a Cloud API
+ * registration and starts its import window; a Cloud API link drops an earlier coexistence state
+ * (with its registration time: such a number has never been registered by us).
  */
 export async function registerNumber(
   db: DatabaseWriter,
@@ -114,7 +116,7 @@ export async function registerNumber(
     phoneNumberId: string;
     displayPhoneNumber?: string;
     actorSubject: string;
-    link?: { accountId: Id<"whatsappBusinessAccounts"> };
+    link?: { accountId: Id<"whatsappBusinessAccounts">; coexistence?: boolean };
   },
 ) {
   if (!isNumericId(input.wabaId) || !isNumericId(input.phoneNumberId)) {
@@ -139,7 +141,25 @@ export async function registerNumber(
   // already active keeps its activation, so its own late deliveries are not dropped.
   const activating = own === null || own.status !== "active";
   const linkFields = input.link
-    ? { source: "embedded_signup" as const, accountId: input.link.accountId }
+    ? {
+        source: "embedded_signup" as const,
+        accountId: input.link.accountId,
+        ...(input.link.coexistence === true
+          ? {
+              platformRegisteredAt: own?.platformRegisteredAt ?? now,
+              // A reconnect of a number still routed here with its imports done keeps them:
+              // Meta accepts each import once. Otherwise a new import window starts.
+              coexistence:
+                own?.status === "active" &&
+                own.coexistence?.contactsImportedAt !== undefined &&
+                own.coexistence.historyImportedAt !== undefined
+                  ? own.coexistence
+                  : { onboardedAt: now },
+            }
+          : own?.coexistence !== undefined
+            ? { platformRegisteredAt: undefined, coexistence: undefined }
+            : {}),
+      }
     : {};
   const fields = {
     wabaId: input.wabaId,

@@ -8,11 +8,12 @@ import {
 } from "../connections/credentialStore";
 import { AUDIT_ACTIONS, SYSTEM_WHATSAPP_WEBHOOK_SUBJECT, writeAudit } from "../lib/audit";
 import {
+  CLOUD_API_PLATFORM,
   MAX_PARTNER_REMOVAL_CHECKS,
   WABA_ACCESS_REFUSED_CODES,
   WABA_NOT_ACCESSIBLE,
 } from "./config";
-import { readWaba, type GraphFailure, type GraphOutcome } from "./graph";
+import { readNumberPlatform, readWaba, type GraphFailure, type GraphOutcome } from "./graph";
 import { disconnectNumberRow } from "./phoneNumbers";
 import { parseCredential, tokenRefused } from "./signup";
 
@@ -39,6 +40,13 @@ import { parseCredential, tokenRefused } from "./signup";
  *   meanwhile is never undone by an older check.
  * - Only the matched org's account, its connection and its own numbers are written; operator-
  *   managed numbers and other orgs' rows never are. No Meta write call is ever made here.
+ *
+ * Coexistence (ADR 0019): the business disconnects its number in the WhatsApp Business app (or
+ * Meta does after 14 days without the phone, 30 without a companion device), and Meta sends
+ * PARTNER_REMOVED (with `disconnection_info`) or ACCOUNT_OFFBOARDED. The WABA may stay readable
+ * then, so for a coexistence account whose WABA is still readable, each active number is read
+ * too: one that Meta no longer serves from the Cloud API (`platform_type` present and not
+ * CLOUD_API, PROVISIONAL) ends the account the same way. A number read that fails is retried.
  */
 
 export type Verdict = "access_remains" | "access_lost" | "retry";
@@ -50,6 +58,8 @@ const candidateValidator = v.object({
   /** False once Meta refused the token or it expired (needs_reauth): access is lost already. */
   connectionActive: v.boolean(),
   credentialVersion: v.number(),
+  /** Coexistence accounts (ADR 0019): their active numbers, checked one by one. */
+  coexistenceNumbers: v.array(v.string()),
 });
 
 /**
@@ -69,12 +79,24 @@ export const partnerRemovalCandidate = internalQuery({
     const account = active[0]!;
     const connection = await ctx.db.get(account.connectionId);
     if (connection === null || connection.orgId !== account.orgId) return null;
+    const numbers =
+      account.onboardingType === "coexistence"
+        ? await ctx.db
+            .query("whatsappPhoneNumbers")
+            .withIndex("by_org_account", (q) =>
+              q.eq("orgId", account.orgId).eq("accountId", account._id),
+            )
+            .take(MAX_PARTNER_REMOVAL_CHECKS)
+        : [];
     return {
       orgId: account.orgId,
       accountId: account._id,
       connectionId: connection._id,
       connectionActive: connection.status === "active",
       credentialVersion: connection.credentialVersion,
+      coexistenceNumbers: numbers
+        .filter((number) => number.status === "active" && number.coexistence !== undefined)
+        .map((number) => number.phoneNumberId),
     };
   },
 });
@@ -95,6 +117,17 @@ export function verdictOf(result: GraphOutcome): Verdict {
   return "retry";
 }
 
+/**
+ * Coexistence: Meta's answer to reading a number with the org's token (ADR 0019). A number
+ * Meta reports on another platform than the Cloud API has left it; no `platform_type` tells
+ * nothing.
+ */
+export function numberVerdictOf(result: Awaited<ReturnType<typeof readNumberPlatform>>): Verdict {
+  if (!result.ok) return verdictOf(result);
+  const type = result.platform.platformType;
+  return type !== undefined && type !== CLOUD_API_PLATFORM ? "access_lost" : "access_remains";
+}
+
 type Candidate = Infer<typeof candidateValidator>;
 
 /** Reads the WABA with the candidate's stored token. Never throws. */
@@ -110,10 +143,15 @@ async function checkAccess(
     return await withConnectionCredential(ctx, candidate.connectionId, async (credential, at) => {
       const parsed = parseCredential(credential);
       // A stored credential without a usable token can reach nothing.
-      const verdict =
-        parsed === null
-          ? ("access_lost" as const)
-          : verdictOf(await readWaba(wabaId, { accessToken: parsed.accessToken, appSecret }));
+      if (parsed === null) {
+        return { verdict: "access_lost" as const, credentialVersion: at.credentialVersion };
+      }
+      const auth = { accessToken: parsed.accessToken, appSecret };
+      let verdict = verdictOf(await readWaba(wabaId, auth));
+      for (const phoneNumberId of candidate.coexistenceNumbers) {
+        if (verdict !== "access_remains") break;
+        verdict = numberVerdictOf(await readNumberPlatform(phoneNumberId, auth));
+      }
       return { verdict, credentialVersion: at.credentialVersion };
     });
   } catch (error) {

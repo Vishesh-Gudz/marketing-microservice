@@ -6,9 +6,9 @@ import {
   timingSafeEqualString,
   verifyWebhookSignature,
 } from "../messaging/signature";
-import { MAX_WEBHOOK_BODY_BYTES, WHATSAPP_ENV } from "./config";
+import { INGEST_BATCH_SIZE, MAX_WEBHOOK_BODY_BYTES, WHATSAPP_ENV } from "./config";
 import { handlePartnerRemovals } from "./partnerRemoval";
-import { parseWebhookPayload } from "./payload";
+import { parseWebhookPayload, type WebhookChange } from "./payload";
 
 /**
  * WhatsApp Cloud API webhook endpoint (`/whatsapp/webhook`, convex/http.ts).
@@ -19,7 +19,9 @@ import { parseWebhookPayload } from "./payload";
  *      app secret configured (else 503, so Meta retries once it is) -> well-formed
  *      Content-Length if present (400) -> declared and actual body size (413) ->
  *      HMAC-SHA256 over the raw bytes (401) -> strict UTF-8 + JSON + envelope parse (400) ->
- *      one ingest mutation (500 on failure: Meta retries; ingestion is idempotent) ->
+ *      ingest mutations of at most INGEST_BATCH_SIZE events each, in order (one for a usual
+ *      delivery; coexistence imports may need more; 500 on failure: Meta retries the delivery
+ *      and ingestion is idempotent) ->
  *      partner removals, each confirmed with Meta before anything changes (ADR 0014 B4b,
  *      convex/whatsapp/partnerRemoval.ts; 500 when a check must wait for Meta's retry) -> 200.
  *
@@ -56,6 +58,31 @@ export async function handleWebhookVerification(request: Request): Promise<Respo
 
 const utf8 = new TextDecoder("utf-8", { fatal: true });
 
+/** The changes in slices of at most `size` events, in order (a change may be split). */
+export function ingestBatches(
+  changes: WebhookChange[],
+  size: number = INGEST_BATCH_SIZE,
+): WebhookChange[][] {
+  const batches: WebhookChange[][] = [];
+  let batch: WebhookChange[] = [];
+  let count = 0;
+  for (const change of changes) {
+    for (let i = 0; i < change.events.length;) {
+      const take = Math.min(size - count, change.events.length - i);
+      batch.push({ ...change, events: change.events.slice(i, i + take) });
+      count += take;
+      i += take;
+      if (count === size) {
+        batches.push(batch);
+        batch = [];
+        count = 0;
+      }
+    }
+  }
+  if (batch.length > 0) batches.push(batch);
+  return batches;
+}
+
 export async function handleWebhookDelivery(ctx: ActionCtx, request: Request): Promise<Response> {
   const appSecret = configuredSecret(process.env[WHATSAPP_ENV.appSecret]);
   if (appSecret === null) return plain(503, "Unavailable");
@@ -84,9 +111,9 @@ export async function handleWebhookDelivery(ctx: ActionCtx, request: Request): P
 
   if (parsed.delivery.changes.length > 0) {
     try {
-      await ctx.runMutation(internal.whatsapp.ingest.recordDelivery, {
-        changes: parsed.delivery.changes,
-      });
+      for (const changes of ingestBatches(parsed.delivery.changes)) {
+        await ctx.runMutation(internal.whatsapp.ingest.recordDelivery, { changes });
+      }
     } catch {
       // Not logged (the error could echo event fields). Meta retries non-200 deliveries and
       // ingestion is idempotent, so a transient failure loses nothing.

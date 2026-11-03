@@ -55,6 +55,12 @@ export default function PrivacyPage() {
             team sends.
           </li>
           <li>
+            <strong>From the WhatsApp Business app</strong>, when you connect a number you keep
+            using in that app: the names and numbers of the contacts saved in the app, the messages
+            you send from the app, and, if you choose to share it when connecting, your earlier chat
+            history as Meta provides it.
+          </li>
+          <li>
             <strong>Access tokens</strong> the platforms issue when you connect. They are stored
             encrypted and used only to act on your behalf.
           </li>
@@ -98,6 +104,10 @@ export default function PrivacyPage() {
             <strong>When you disconnect a platform</strong>, its access token is deleted at once.
             YouTube channel data is deleted with it. Advertising data, Instagram analytics and
             WhatsApp conversations stay in your organization until you ask us to delete them.
+          </li>
+          <li>
+            <strong>Contacts imported from the WhatsApp Business app</strong> are deleted here when
+            you remove them in the app; the rest stays with your WhatsApp conversations.
           </li>
           <li>
             <strong>Instagram direct messages</strong> are deleted 30 days after messaging stops for

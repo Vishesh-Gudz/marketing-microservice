@@ -7,8 +7,10 @@
  *   in `response.authResponse.code` (valid for 30 seconds).
  * - The WABA and phone number ids arrive separately, as a `message` event whose `data` is a
  *   JSON string with `type: "WA_EMBEDDED_SIGNUP"` and an `event`: FINISH (with
- *   `phone_number_id`, `waba_id`), other FINISH_* variants, CANCEL (with `current_step`, or
- *   with `error_message` / `error_code` / `session_id` for an error) or ERROR.
+ *   `phone_number_id`, `waba_id`), FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING (coexistence, ADR
+ *   0019: `waba_id`, and `phone_number_id` when Meta sends it), other FINISH_* variants, CANCEL
+ *   (with `current_step`, or with `error_message` / `error_code` / `session_id` for an
+ *   error) or ERROR.
  *
  * Nothing here is trusted by the server: it verifies the code, the WABA and the number with
  * Meta itself (convex/whatsapp/signup.ts). The browser side only refuses anything that does
@@ -54,18 +56,25 @@ export function isFacebookOrigin(origin: string): boolean {
 }
 
 /** Finish variants Meta documents that this release does not support (ADR 0014, D6). */
-export type UnsupportedFinish =
-  "only_waba" | "business_app" | "obo_migration" | "grant_only" | "other";
+export type UnsupportedFinish = "only_waba" | "obo_migration" | "grant_only" | "other";
 
 const UNSUPPORTED_FINISH: Readonly<Record<string, UnsupportedFinish>> = {
   FINISH_ONLY_WABA: "only_waba",
-  FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING: "business_app",
   FINISH_OBO_MIGRATION: "obo_migration",
   FINISH_GRANT_ONLY_API_ACCESS: "grant_only",
 };
 
+/** Meta's finish event for a number kept in the WhatsApp Business app (ADR 0019). */
+export const BUSINESS_APP_FINISH = "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING";
+
+/** How the number was onboarded, as the finish event says (the server checks it with Meta). */
+export type Onboarding = "cloud_api" | "coexistence";
+
+/** The assets of a finished signup. Coexistence may come without the number id. */
+export type SignupFinish = { wabaId: string; phoneNumberId?: string; onboarding: Onboarding };
+
 export type SignupMessage =
-  | { kind: "finish"; wabaId: string; phoneNumberId: string }
+  | ({ kind: "finish" } & SignupFinish)
   | { kind: "unsupported"; variant: UnsupportedFinish }
   | { kind: "cancel"; step?: string }
   | { kind: "error"; errorCode?: string; sessionId?: string }
@@ -120,8 +129,24 @@ export function parseSignupMessage(origin: string, raw: unknown): SignupMessage 
     const wabaId = idOf(data.waba_id);
     const phoneNumberId = idOf(data.phone_number_id);
     return wabaId !== undefined && phoneNumberId !== undefined
-      ? { kind: "finish", wabaId, phoneNumberId }
+      ? { kind: "finish", wabaId, phoneNumberId, onboarding: "cloud_api" }
       : { kind: "malformed" };
+  }
+  if (message.event === BUSINESS_APP_FINISH) {
+    const wabaId = idOf(data.waba_id);
+    const phoneNumberId = idOf(data.phone_number_id);
+    if (
+      wabaId === undefined ||
+      (data.phone_number_id !== undefined && phoneNumberId === undefined)
+    ) {
+      return { kind: "malformed" };
+    }
+    return {
+      kind: "finish",
+      wabaId,
+      ...(phoneNumberId !== undefined ? { phoneNumberId } : {}),
+      onboarding: "coexistence",
+    };
   }
   if (message.event.startsWith("FINISH_")) {
     return { kind: "unsupported", variant: UNSUPPORTED_FINISH[message.event] ?? "other" };
@@ -162,9 +187,9 @@ export type SignupAttempt =
   | {
       phase: "waiting";
       code?: string;
-      finish?: { wabaId: string; phoneNumberId: string };
+      finish?: SignupFinish;
     }
-  | { phase: "ready"; code: string; wabaId: string; phoneNumberId: string }
+  | ({ phase: "ready"; code: string } & SignupFinish)
   | { phase: "ended"; end: SignupEnd };
 
 export type SignupEvent =
@@ -179,10 +204,7 @@ export type SignupEvent =
 
 export const IDLE: SignupAttempt = { phase: "idle" };
 
-function paired(
-  code: string | undefined,
-  finish: { wabaId: string; phoneNumberId: string } | undefined,
-): SignupAttempt {
+function paired(code: string | undefined, finish: SignupFinish | undefined): SignupAttempt {
   if (code !== undefined && finish !== undefined) return { phase: "ready", code, ...finish };
   return {
     phase: "waiting",
@@ -213,7 +235,10 @@ export function nextAttempt(attempt: SignupAttempt, event: SignupEvent): SignupA
         case "finish":
           return paired(attempt.code, {
             wabaId: message.wabaId,
-            phoneNumberId: message.phoneNumberId,
+            ...(message.phoneNumberId !== undefined
+              ? { phoneNumberId: message.phoneNumberId }
+              : {}),
+            onboarding: message.onboarding,
           });
         case "unsupported":
           return { phase: "ended", end: { reason: "unsupported", variant: message.variant } };

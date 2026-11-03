@@ -88,6 +88,7 @@ function account(overrides: Partial<WhatsAppAccount> = {}): WhatsAppAccount {
     id: "acc1",
     connectionId: "conn1",
     wabaId: WABA,
+    onboardingType: "cloud_api",
     status: "active",
     setupStatus: "connected",
     connectedAt: "2026-10-24T10:00:00.000Z",
@@ -98,6 +99,7 @@ function account(overrides: Partial<WhatsAppAccount> = {}): WhatsAppAccount {
         displayPhoneNumber: "+1 555-000-0001",
         status: "active",
         registered: true,
+        businessApp: false,
       },
     ],
     ...overrides,
@@ -124,7 +126,7 @@ async function answer(response: unknown) {
 }
 
 function connectButton() {
-  return screen.getByRole("button", { name: /Connect WhatsApp|Waiting|Connecting|Preparing/ });
+  return screen.getByRole("button", { name: /Connect a new number|Waiting|Connecting|Preparing/ });
 }
 
 function render(org: Org = ORG) {
@@ -190,7 +192,7 @@ describe("WhatsApp settings page", () => {
     render();
     expect(screen.getByLabelText("WhatsApp is not available yet")).toBeInTheDocument();
     expect(screen.queryByTestId("facebook-sdk")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Connect WhatsApp" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect a new number" })).not.toBeInTheDocument();
   });
 
   it("waits for the signup config, then for the SDK", () => {
@@ -218,7 +220,7 @@ describe("WhatsApp settings page", () => {
       xfbml: true,
       version: "v26.0",
     });
-    expect(connectButton()).toHaveTextContent("Connect WhatsApp");
+    expect(connectButton()).toHaveTextContent("Connect a new number");
     expect(connectButton()).toBeEnabled();
   });
 
@@ -226,7 +228,7 @@ describe("WhatsApp settings page", () => {
     sdkScript.mode = "error";
     const first = render();
     expect(screen.getByLabelText("Meta sign-in could not load")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Connect WhatsApp" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect a new number" })).not.toBeInTheDocument();
     first.unmount();
     sdkScript.mode = "missing"; // the script ran but FB is not there
     render();
@@ -271,7 +273,7 @@ describe("Embedded Signup", () => {
     for (const spy of [logged, logged2]) {
       expect(JSON.stringify(spy.mock.calls)).not.toContain(CODE);
     }
-    expect(connectButton()).toHaveTextContent("Connect WhatsApp");
+    expect(connectButton()).toHaveTextContent("Connect a new number");
   });
 
   it("pairs the code and the ids in either order", async () => {
@@ -385,11 +387,6 @@ describe("Embedded Signup", () => {
       "No phone number was chosen",
     );
 
-    fireEvent.click(connectButton());
-    post("FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", { waba_id: WABA });
-    expect(screen.getByLabelText("Signup not supported")).toHaveTextContent(
-      "WhatsApp Business app",
-    );
     expect(complete).not.toHaveBeenCalled();
   });
 
@@ -438,6 +435,131 @@ describe("Embedded Signup", () => {
   });
 });
 
+describe("WhatsApp Business app signup (coexistence, ADR 0019)", () => {
+  function businessAppButton() {
+    return screen.getByRole("button", { name: "Connect my WhatsApp Business app" });
+  }
+
+  it("offers both signups side by side, explained", () => {
+    render();
+    expect(connectButton()).toHaveTextContent("Connect a new number");
+    expect(businessAppButton()).toBeEnabled();
+    expect(screen.getByText(/such as a new or virtual number/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Keep using the WhatsApp Business app on your phone/),
+    ).toHaveTextContent("2.24.17");
+  });
+
+  it("opens Meta's signup with the WhatsApp Business app feature type and completes it as coexistence", async () => {
+    const complete = mockAction(COMPLETE).mockResolvedValue({
+      accountId: "acc1",
+      status: "connected",
+    });
+    render();
+    fireEvent.click(businessAppButton());
+    expect(fb.login).toHaveBeenCalledTimes(1);
+    expect(fb.login.mock.calls[0]![1]).toEqual({
+      config_id: CONFIG.configId,
+      response_type: "code",
+      override_default_response_type: true,
+      extras: { setup: {}, featureType: "whatsapp_business_app_onboarding" },
+    });
+    // Both buttons wait while Meta's window is open.
+    expect(businessAppButton()).toBeDisabled();
+    post("FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", { waba_id: WABA });
+    await answer({ authResponse: { code: CODE } });
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(complete).toHaveBeenCalledWith({ code: CODE, wabaId: WABA, onboarding: "coexistence" });
+    expect(await screen.findByLabelText("WhatsApp connected")).toBeInTheDocument();
+  });
+
+  it("passes Meta's number id when the finish carries one, and Cloud API finishes stay as before", async () => {
+    const complete = mockAction(COMPLETE).mockResolvedValue({
+      accountId: "acc1",
+      status: "connected",
+    });
+    render();
+    fireEvent.click(businessAppButton());
+    post("FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", { waba_id: WABA, phone_number_id: PHONE });
+    await answer({ authResponse: { code: CODE } });
+    expect(complete).toHaveBeenLastCalledWith({
+      code: CODE,
+      wabaId: WABA,
+      phoneNumberId: PHONE,
+      onboarding: "coexistence",
+    });
+    await screen.findByLabelText("WhatsApp connected");
+
+    // In the Business app signup, the admin may still pick a new number in Meta's window.
+    fireEvent.click(businessAppButton());
+    finish();
+    await answer({ authResponse: { code: CODE } });
+    expect(complete).toHaveBeenLastCalledWith({ code: CODE, wabaId: WABA, phoneNumberId: PHONE });
+  });
+
+  it("shows a coexistence account with its imports, and how to release the number in the app", () => {
+    queryResults.set("v1/whatsapp:listAccounts", [
+      account({
+        onboardingType: "coexistence",
+        setupStatus: "action_required",
+        nextStep: "import",
+        numbers: [
+          {
+            id: "num1",
+            phoneNumberId: PHONE,
+            displayPhoneNumber: "+91 98683 00000",
+            status: "active",
+            registered: true,
+            businessApp: true,
+            imported: false,
+            importDeadline: "2026-11-04T10:00:00.000Z",
+          },
+        ],
+      }),
+    ]);
+    render();
+    const card = screen.getByRole("listitem", { name: /WhatsApp Business account/ });
+    expect(within(card).getByText("WhatsApp Business app")).toBeInTheDocument();
+    expect(card).toHaveTextContent("contacts and chat history not imported yet");
+    expect(card).toHaveTextContent("Retry setup within 24 hours");
+    expect(within(card).getByRole("button", { name: "Retry setup" })).toBeEnabled();
+    fireEvent.click(within(card).getByRole("button", { name: "Disconnect" }));
+    expect(screen.getByRole("group", { name: /Disconnect .*\?/ })).toHaveTextContent(
+      "Settings, Account, Business Platform",
+    );
+  });
+
+  it("reconnects a coexistence account through the WhatsApp Business app signup", () => {
+    queryResults.set("v1/whatsapp:listAccounts", [
+      account({
+        onboardingType: "coexistence",
+        setupStatus: "reauthorization_required",
+        setupReason: "token_invalid",
+      }),
+    ]);
+    render();
+    fireEvent.click(screen.getByRole("button", { name: "Connect again" }));
+    expect(fb.login.mock.calls[0]![1]).toMatchObject({
+      extras: { featureType: "whatsapp_business_app_onboarding" },
+    });
+  });
+
+  it("explains a number Meta does not report on the WhatsApp Business app", async () => {
+    mockAction(COMPLETE).mockRejectedValueOnce(
+      apiError("INVALID_ARGUMENT", "server detail never shown", {
+        reason: "not_business_app_number",
+      }),
+    );
+    render();
+    fireEvent.click(businessAppButton());
+    post("FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", { waba_id: WABA });
+    await answer({ authResponse: { code: CODE } });
+    expect(await screen.findByLabelText("Not a WhatsApp Business app number")).toHaveTextContent(
+      "Connect a new number",
+    );
+  });
+});
+
 describe("Connected accounts", () => {
   it("lists each account with its name, status and numbers", () => {
     queryResults.set("v1/connections:list", [
@@ -455,6 +577,7 @@ describe("Connected accounts", () => {
             displayPhoneNumber: "+1 555-000-0001",
             status: "active",
             registered: false,
+            businessApp: false,
             registrationRetryAfter: "2026-10-27T10:00:00.000Z",
           },
         ],
@@ -602,6 +725,7 @@ describe("Disconnect", () => {
             displayPhoneNumber: "+1 555-000-0001",
             status: "disconnected",
             registered: true,
+            businessApp: false,
           },
         ],
       }),

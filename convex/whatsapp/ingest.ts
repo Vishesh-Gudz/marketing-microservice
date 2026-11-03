@@ -13,7 +13,9 @@ import { webhookChangeValidator, type WebhookEventInput } from "./validators";
  * 1. Each change is routed ONLY through the registered phone_number_id (+ matching WABA id).
  *    Unknown, ambiguous or mismatched numbers are counted and dropped; the delivery is still
  *    acknowledged so Meta does not retry it forever. Events from before the number's current
- *    activation (a previous ownership's late retries) are dropped the same way.
+ *    activation (a previous ownership's late retries) are dropped the same way, except imported
+ *    history and contacts. Coexistence events (echoes, history, contacts; ADR 0019) for a number
+ *    that is not a coexistence number are counted as unrouted.
  * 2. Each event is stored once per org under its dedupe key. Retried or duplicated deliveries
  *    (and duplicates inside one delivery) find the key and are not stored or scheduled again.
  * 3. Processing (conversations, messages, statuses) is scheduled asynchronously in bounded
@@ -21,9 +23,28 @@ import { webhookChangeValidator, type WebhookEventInput } from "./validators";
  */
 
 export function dedupeKeyOf(event: WebhookEventInput): string {
-  return event.kind === "message"
-    ? `message:${event.wamid}`
-    : statusDedupeKey(event.wamid, event.status);
+  switch (event.kind) {
+    case "status":
+      return statusDedupeKey(event.wamid, event.status);
+    case "contact":
+      return `contact:${event.waId}:${event.action}:${event.timestampMs}`;
+    default:
+      // One key per wamid: a message seen live and again in the imported history is stored once.
+      return `message:${event.wamid}`;
+  }
+}
+
+/** Coexistence events (ADR 0019): accepted only for a coexistence number. */
+function isCoexistenceEvent(event: WebhookEventInput): boolean {
+  return event.kind === "echo" || event.kind === "history" || event.kind === "contact";
+}
+
+/**
+ * Imports (history, contacts) describe the past by design and arrive only after this ownership
+ * requested them, so the activation cutoff does not apply to them.
+ */
+function isImport(event: WebhookEventInput): boolean {
+  return event.kind === "history" || event.kind === "contact";
 }
 
 /** The dedupe key of one status report (also how outbound.ts finds statuses that came early). */
@@ -60,7 +81,11 @@ export const recordDelivery = internalMutation({
         continue;
       }
       for (const event of change.events) {
-        if (isBeforeActivation(number, event.timestampMs)) {
+        if (isCoexistenceEvent(event) && number.coexistence === undefined) {
+          unrouted++;
+          continue;
+        }
+        if (!isImport(event) && isBeforeActivation(number, event.timestampMs)) {
           beforeActivation++;
           continue;
         }
@@ -79,7 +104,7 @@ export const recordDelivery = internalMutation({
             numberId: number._id,
             dedupeKey,
             kind: event.kind,
-            wamid: event.wamid,
+            wamid: event.kind === "contact" ? event.waId : event.wamid,
             event,
             status: "pending",
             receivedAt: now,

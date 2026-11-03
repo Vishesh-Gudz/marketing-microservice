@@ -20,8 +20,10 @@ import {
   inspectToken,
   isSuccess,
   listWabaNumbers,
+  readNumberPlatform,
   readWaba,
   registerPhoneNumber,
+  requestAppDataSync,
   subscribeApp,
   unsubscribeApp,
   type GraphFailure,
@@ -29,6 +31,7 @@ import {
 } from "./graph";
 import { setupProgress, type SetupProgress } from "./accounts";
 import { isNumericId } from "./payload";
+import type { OnboardingType } from "./validators";
 
 /**
  * WhatsApp Embedded Signup, server side (ADR 0014, B2).
@@ -52,6 +55,14 @@ import { isNumericId } from "./payload";
  *    webhooks, register the number for Cloud API. A failure here leaves the account
  *    `action_required` with a sanitized reason; `retrySetup` resumes only the missing steps.
  *    A refused token moves the connection to needs_reauth (`reauthorization_required`).
+ *
+ * Coexistence (ADR 0019): when the browser reports Meta's FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING
+ * (`onboarding: "coexistence"`), the number keeps working in the WhatsApp Business app. Meta must
+ * confirm it with `is_on_biz_app` before anything is stored; it is never registered (Meta: it
+ * already is; a registration would take it from the app), and after the subscription its
+ * contacts and then its chat history are requested once each (`claimImport`), within Meta's
+ * 24-hour window. Without `phoneNumberId` the WABA must have exactly one number. The stored
+ * credential has the same shape as for any number; its PIN is never sent for such a number.
  *
  * The org and the actor always come from the caller's verified JWT (the `tenant`).
  */
@@ -267,7 +278,7 @@ async function runSetupSteps(
   });
   if (state === null || state.status !== "active" || !state.connectionActive) return;
   if (state.numbers.length === 0) return;
-  const reauth = async (step: "subscribe" | "register") =>
+  const reauth = async (step: "subscribe" | "register" | "import") =>
     await ctx.runMutation(internal.whatsapp.accounts.recordReauthRequired, {
       orgId,
       accountId,
@@ -315,6 +326,44 @@ async function runSetupSteps(
       return;
     }
   }
+  // Coexistence numbers (ADR 0019): contacts first, then history (Meta's order), each once.
+  for (const number of state.numbers) {
+    if (!number.importPending) continue;
+    const claim = await ctx.runMutation(internal.whatsapp.accounts.claimImport, {
+      orgId,
+      accountId,
+      numberId: number.numberId,
+    });
+    if (!claim.ok) continue;
+    const imports = [
+      ...(claim.contacts ? (["contacts"] as const) : []),
+      ...(claim.history ? (["history"] as const) : []),
+    ];
+    for (const [i, kind] of imports.entries()) {
+      const result = await requestAppDataSync(
+        number.phoneNumberId,
+        kind === "contacts" ? "smb_app_state_sync" : "history",
+        auth,
+      );
+      const failure = result.ok ? undefined : failureReason(result.failure);
+      await ctx.runMutation(internal.whatsapp.accounts.recordImportResult, {
+        orgId,
+        accountId,
+        numberId: number.numberId,
+        kind,
+        ...(result.ok ? { requestId: result.requestId } : {}),
+        ...(failure !== undefined ? { failure } : {}),
+        release: failure !== undefined || i === imports.length - 1,
+      });
+      if (!result.ok) {
+        if (tokenRefused(result.failure)) {
+          await reauth("import");
+          return;
+        }
+        break;
+      }
+    }
+  }
 }
 
 async function setupResult(
@@ -332,6 +381,7 @@ async function setupResult(
     connectionActive: state.connectionActive,
     subscribed: state.subscribed,
     numbersRegistered: state.numbers.map((n) => n.registered),
+    numbersImported: state.numbers.map((n) => !n.importPending),
   });
   const failed =
     progress.status === "action_required" || progress.status === "reauthorization_required";
@@ -350,11 +400,22 @@ async function setupResult(
 export async function completeSignup(
   ctx: ActionCtx,
   tenant: Tenant,
-  input: { code: string; wabaId: string; phoneNumberId: string },
+  input: {
+    code: string;
+    wabaId: string;
+    /** Required for a Cloud API signup; a coexistence signup may leave it to the WABA. */
+    phoneNumberId?: string;
+    /** From the browser's FINISH variant; coexistence is confirmed with Meta before use. */
+    onboarding?: OnboardingType;
+  },
 ): Promise<SetupResult> {
+  const coexistence = input.onboarding === "coexistence";
   // Cheap checks first; nothing is sent to Meta for malformed input.
   if (!CODE_PATTERN.test(input.code)) throw refused("invalid_code", "The signup code is invalid.");
-  if (!isNumericId(input.wabaId) || !isNumericId(input.phoneNumberId)) {
+  if (
+    !isNumericId(input.wabaId) ||
+    (input.phoneNumberId === undefined ? !coexistence : !isNumericId(input.phoneNumberId))
+  ) {
     throw refused("invalid_id", "The WhatsApp account or number id is invalid.");
   }
   const app = requireOpen();
@@ -392,12 +453,32 @@ export async function completeSignup(
   }
   const listed = await listWabaNumbers(input.wabaId, auth);
   if (!listed.ok) throw providerError("phone_numbers", listed.failure);
-  const number = listed.numbers.find((n) => n.id === input.phoneNumberId);
+  if (input.phoneNumberId === undefined && listed.numbers.length !== 1) {
+    throw refused("phone_number_missing", "Meta did not report which number was connected.");
+  }
+  const number =
+    input.phoneNumberId === undefined
+      ? listed.numbers[0]
+      : listed.numbers.find((n) => n.id === input.phoneNumberId);
   if (number === undefined) {
     throw refused(
       "phone_number_not_in_waba",
       "This number does not belong to the WhatsApp account.",
     );
+  }
+  const phoneNumberId = number.id;
+
+  // Coexistence: Meta must confirm the number is on the WhatsApp Business app. Otherwise nothing
+  // is stored: registering such a number would take it from the app.
+  if (coexistence) {
+    const platform = await readNumberPlatform(phoneNumberId, auth);
+    if (!platform.ok) throw providerError("phone_number", platform.failure);
+    if (!platform.platform.onBusinessApp) {
+      throw refused(
+        "not_business_app_number",
+        "Meta does not report this number as used in the WhatsApp Business app.",
+      );
+    }
   }
 
   // 4. Store: refuse another org's number, or this org's operator-managed number, before any
@@ -405,7 +486,7 @@ export async function completeSignup(
   // again and routes the number in the same transaction as the connection and account.
   const availability = await ctx.runQuery(internal.whatsapp.accounts.numberAvailability, {
     orgId: tenant.orgId,
-    phoneNumberId: input.phoneNumberId,
+    phoneNumberId,
   });
   if (availability !== "available") throw numberConflict(availability);
   const { pin, expectedCredentialVersion } = await pinFor(ctx, tenant.orgId, input.wabaId);
@@ -418,7 +499,7 @@ export async function completeSignup(
     issuer: tenant.issuer,
     actorSubject: tenant.subject,
     wabaId: input.wabaId,
-    onboardingType: "cloud_api",
+    onboardingType: coexistence ? "coexistence" : "cloud_api",
     ...(typeof wabaBody.name === "string" && wabaBody.name.trim() !== ""
       ? { displayName: wabaBody.name.trim().slice(0, 256) }
       : {}),
@@ -427,10 +508,11 @@ export async function completeSignup(
     encrypted,
     expectedCredentialVersion,
     number: {
-      phoneNumberId: input.phoneNumberId,
+      phoneNumberId,
       ...(number.displayPhoneNumber !== undefined
         ? { displayPhoneNumber: number.displayPhoneNumber }
         : {}),
+      ...(coexistence ? { coexistence: true } : {}),
     },
   });
   if (!recorded.ok) {
@@ -464,7 +546,8 @@ export async function completeSignup(
     });
   }
 
-  // 5-6. Subscribe, then register (each recorded; failures leave action_required).
+  // 5-6. Subscribe, then register or (coexistence) import; each recorded, failures leave
+  // action_required.
   await runSetupSteps(ctx, tenant.orgId, recorded.accountId, tenant.subject, { ...auth, pin });
   return await setupResult(ctx, tenant.orgId, recorded.accountId);
 }

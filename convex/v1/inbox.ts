@@ -95,7 +95,8 @@ async function threadView(
       channel: "whatsapp",
       conversationId: conversation._id,
       accountLabel: account.label,
-      contactLabel: conversation.contactName ?? `+${conversation.contactWaId}`,
+      contactLabel:
+        conversation.savedName ?? conversation.contactName ?? `+${conversation.contactWaId}`,
       ...times(conversation),
       replyState: replyState(account.blocked, conversation.lastInboundAt, now),
     };

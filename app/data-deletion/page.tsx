@@ -47,6 +47,10 @@ export default function DataDeletionPage() {
             Settings &amp; privacy, then Apps and websites.
           </li>
           <li>
+            A number you also use in the WhatsApp Business app: in the app, open Settings, Account,
+            then Business Platform, and disconnect it.
+          </li>
+          <li>
             Google (YouTube, Google Ads): in your Google Account, open Security, then Third-party
             apps with account access, and remove {LEGAL.serviceName}.
           </li>

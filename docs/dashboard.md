@@ -434,10 +434,10 @@ a WhatsApp Business number through Meta's Embedded Signup and follow its setup; 
 the connected accounts. It uses the public `v1/whatsapp` functions only; the **server** verifies
 every Meta asset and decides who may act ([whatsapp.md](whatsapp.md#connecting-a-number-embedded-signup-adr-0014)).
 
-| Part                                                     | Admin | Editor, viewer                                                     |
-| -------------------------------------------------------- | ----- | ------------------------------------------------------------------ |
-| Connected accounts, setup status, numbers                | yes   | yes                                                                |
-| Connect WhatsApp, Retry setup, Connect again, Disconnect | yes   | no ("Only organization admins …"; `getSignupConfig` is not called) |
+| Part                                                                                           | Admin | Editor, viewer                                                     |
+| ---------------------------------------------------------------------------------------------- | ----- | ------------------------------------------------------------------ |
+| Connected accounts, setup status, numbers                                                      | yes   | yes                                                                |
+| Connect a new number, Connect my WhatsApp Business app, Retry setup, Connect again, Disconnect | yes   | no ("Only organization admins …"; `getSignupConfig` is not called) |
 
 1. **Availability.** The page asks `getSignupConfig`. When the server says WhatsApp is not
    available (the deployment's `WHATSAPP_CONNECTIONS_ENABLED` gate is closed, or the Meta app is
@@ -449,8 +449,11 @@ every Meta asset and decides who may act ([whatsapp.md](whatsapp.md#connecting-a
    **Connect WhatsApp** stays disabled ("Preparing Meta sign-in…") until the SDK is ready:
    `FB.login` has to run directly in the click, or pop-up blockers stop it. A blocked SDK shows
    "Meta sign-in could not load".
-3. **Signup.** The click calls `FB.login` with `config_id`, `response_type: "code"`,
-   `override_default_response_type: true` and `extras: { setup: {} }`. While the Meta window is
+3. **Signup.** Two buttons: **Connect a new number** calls `FB.login` with `config_id`,
+   `response_type: "code"`, `override_default_response_type: true` and `extras: { setup: {} }`;
+   **Connect my WhatsApp Business app** adds `featureType: "whatsapp_business_app_onboarding"`
+   (coexistence, [ADR 0019](adr/0019-whatsapp-coexistence.md)), and Meta's
+   `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING` is sent with `onboarding: "coexistence"`. While the Meta window is
    open the page listens for Meta's `WA_EMBEDDED_SIGNUP` messages, but only from an exact https
    origin on `facebook.com` or a subdomain (Meta's sample only checks the end of the origin, which
    also accepts e.g. `evilfacebook.com`). The code (from the `FB.login` callback) and the ids
@@ -463,14 +466,17 @@ every Meta asset and decides who may act ([whatsapp.md](whatsapp.md#connecting-a
    at a time.
 4. **Outcomes, in fixed words** (`lib/whatsapp/messages.ts`): cancelled (with the step reached),
    window closed or pop-up blocked, Meta error (with Meta's error code and session id for support,
-   never Meta's error text), unsupported variants (no number chosen, a number already in the
-   WhatsApp Business app, migration or API-access-only signups), every server refusal (another
+   never Meta's error text), unsupported variants (no number chosen, migration or
+   API-access-only signups), every server refusal (another
    organization's account or number, an operator-managed number, a concurrent signup, an expired
    code, …), and the setup result: connected, setup not finished (with the next step), or connect
    again. The latest outcome is shown at the top and receives focus.
 5. **Accounts.** `listAccounts` (live): each account with its name (from the connection), status
    badge, WABA id, numbers (registered or not, and when registration may be retried after Meta's
-   rate limit) and the reason in words. Admins get **Retry setup** for an unfinished setup (one call
+   rate limit; for a WhatsApp Business app account a "WhatsApp Business app" badge and whether
+   its contacts and chat history were imported, with Meta's 24-hour deadline) and the reason in
+   words. The disconnect confirmation of such an account also says where to release the number
+   in the app; its messages show "sent from the WhatsApp Business app" or "imported". Admins get **Retry setup** for an unfinished setup (one call
    at a time), **Connect again** for one that needs reauthorization (a new signup) and **Disconnect**
    for an active one: a confirmation (Cancel has focus; Escape cancels) lists what happens, then
    `disconnectAccount` runs once. The result says whether Meta's cleanup finished, is still being

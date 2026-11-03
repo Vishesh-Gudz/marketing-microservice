@@ -51,6 +51,12 @@ function ReplyWindow({ conversation }: { conversation: WhatsAppConversation }) {
   );
 }
 
+/** Coexistence (ADR 0019): where a message came from, when not this app. */
+const ORIGIN_LABELS: Readonly<Record<NonNullable<WhatsAppMessage["origin"]>, string>> = {
+  business_app: "sent from the WhatsApp Business app",
+  history: "imported",
+};
+
 function MessageBubble({ message, contact }: { message: WhatsAppMessage; contact: string }) {
   const { timezone } = useOrg();
   const outbound = message.direction === "outbound";
@@ -62,6 +68,7 @@ function MessageBubble({ message, contact }: { message: WhatsAppMessage; contact
       <span className="text-xs text-muted-foreground">
         {outbound ? "You" : contact} ·{" "}
         <time dateTime={message.at}>{formatInstant(message.at, timezone)}</time>
+        {message.origin && ` · ${ORIGIN_LABELS[message.origin]}`}
       </span>
       <div
         className={cn(

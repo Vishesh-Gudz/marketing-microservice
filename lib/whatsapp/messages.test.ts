@@ -39,6 +39,8 @@ const SERVER_REASONS = [
   "account_disconnected",
   "reconnect_required",
   "disconnect_in_progress",
+  "not_business_app_number",
+  "phone_number_missing",
 ];
 const SERVER_TEXT = "server-side detail that must not be shown";
 
@@ -47,6 +49,7 @@ function account(overrides: Partial<WhatsAppAccount> = {}): WhatsAppAccount {
     id: "acc1",
     connectionId: "conn1",
     wabaId: "100000000000001",
+    onboardingType: "cloud_api",
     status: "active",
     setupStatus: "connected",
     connectedAt: "2026-10-24T10:00:00.000Z",
@@ -105,8 +108,8 @@ describe("signupEndNotice", () => {
     expect(signupEndNotice({ reason: "unsupported", variant: "only_waba" }).message).toContain(
       "No phone number was chosen",
     );
-    expect(signupEndNotice({ reason: "unsupported", variant: "business_app" }).message).toContain(
-      "WhatsApp Business app",
+    expect(signupEndNotice({ reason: "unsupported", variant: "obo_migration" }).message).toContain(
+      "another provider",
     );
     expect(signupEndNotice({ reason: "incomplete" }).title).toBe("Signup did not finish");
   });

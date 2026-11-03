@@ -23,6 +23,13 @@ import { FAKE_WA_APP_SECRET, stubWhatsAppEnv } from "./fakeWebhook.fixtures";
  *   otherwise). Accepted bodies are kept in `sent`. Delivery is not simulated: tests post
  *   status webhooks themselves.
  * - GET /{waba}/message_templates (cursor paging) -> the templates added with `addTemplate`.
+ * - Coexistence (ADR 0019; Meta "Onboarding WhatsApp Business app users", 2026-11-03):
+ *   GET /{phone}?fields=is_on_biz_app,platform_type -> what `setNumberPlatform` set (default:
+ *   not on the app, CLOUD_API); POST /{phone}/smb_app_data with `sync_type`
+ *   `smb_app_state_sync` or `history` -> { messaging_product, request_id }, each once per
+ *   number (a repeat is refused with a generic code 100: Meta documents no code for it). A
+ *   number on the app can send without a registration. Imported data is not simulated: tests
+ *   post the webhooks themselves.
  *
  * It is NOT evidence of real Meta behavior: error codes are generic (code 100) unless a test
  * injects a documented one, and nothing here is a recording. All ids and secrets are fake.
@@ -84,7 +91,9 @@ export type FakeRoute =
   | "unsubscribe"
   | "register"
   | "send"
-  | "templates";
+  | "templates"
+  | "number_platform"
+  | "app_data";
 
 /** An HTTP answer (any status, JSON body), a thrown fetch, a call that never answers, or HTML. */
 export type FakeFailure = { status: number; body?: unknown } | "network" | "hang" | "invalid_json";
@@ -116,6 +125,13 @@ export type FakeWhatsAppGraph = {
   addTemplate(wabaId: string, template: FakeTemplate): void;
   /** Messages Meta accepted, in order. */
   sent: FakeSentMessage[];
+  /** Coexistence: what GET /{phone}?fields=is_on_biz_app,platform_type answers for a number. */
+  setNumberPlatform(
+    phoneId: string,
+    platform: { onBusinessApp: boolean; platformType?: string },
+  ): void;
+  /** Coexistence imports Meta accepted, in order. */
+  appDataRequests: { phoneNumberId: string; syncType: string; requestId: string }[];
   calls(route?: FakeRoute): number;
 };
 
@@ -140,10 +156,18 @@ function json(status: number, body: unknown): Response {
   });
 }
 
-function routeOf(method: string, path: string): FakeRoute | "unknown" {
+function routeOf(
+  method: string,
+  path: string,
+  params: Record<string, string>,
+): FakeRoute | "unknown" {
   if (method === "GET" && path === "oauth/access_token") return "exchange";
   if (method === "GET" && path === "debug_token") return "debug_token";
+  if (method === "GET" && /^\d+$/.test(path) && params.fields === "is_on_biz_app,platform_type") {
+    return "number_platform";
+  }
   if (method === "GET" && /^\d+$/.test(path)) return "waba";
+  if (method === "POST" && /^\d+\/smb_app_data$/.test(path)) return "app_data";
   if (method === "GET" && /^\d+\/phone_numbers$/.test(path)) return "phone_numbers";
   if (method === "POST" && /^\d+\/subscribed_apps$/.test(path)) return "subscribe";
   if (method === "DELETE" && /^\d+\/subscribed_apps$/.test(path)) return "unsubscribe";
@@ -218,6 +242,8 @@ export function createFakeWhatsAppGraph(): FakeWhatsAppGraph {
   const registered = new Map<string, string>();
   const templates = new Map<string, FakeTemplate[]>();
   const sent: FakeSentMessage[] = [];
+  const platforms = new Map<string, { onBusinessApp: boolean; platformType?: string }>();
+  const appDataRequests: { phoneNumberId: string; syncType: string; requestId: string }[] = [];
   const log: GraphCall[] = [];
   let codeSeq = 0;
 
@@ -234,6 +260,14 @@ export function createFakeWhatsAppGraph(): FakeWhatsAppGraph {
 
   function sharedWaba(signup: FakeSignup, wabaId: string): FakeWaba | undefined {
     return signup.sharedWabas.includes(wabaId) ? wabas.get(wabaId) : undefined;
+  }
+
+  /** Whether the token's shared WABAs hold this number. */
+  function ownsNumber(signup: FakeSignup | null, phoneId: string): boolean {
+    return (
+      signup !== null &&
+      signup.sharedWabas.some((id) => wabas.get(id)?.numbers.some((n) => n.id === phoneId))
+    );
   }
 
   async function route(call: GraphCall): Promise<Response> {
@@ -335,7 +369,9 @@ export function createFakeWhatsAppGraph(): FakeWhatsAppGraph {
                 .map((id) => wabas.get(id))
                 .find((w) => w?.numbers.some((n) => n.id === phoneId));
         if (waba === undefined) return json(400, graphError(100, 400, 33).body);
-        if (!registered.has(phoneId)) return json(400, graphError(133010).body);
+        if (!registered.has(phoneId) && platforms.get(phoneId)?.onBusinessApp !== true) {
+          return json(400, graphError(133010).body);
+        }
         const body = (call.body ?? {}) as Record<string, unknown>;
         if (
           body.messaging_product !== "whatsapp" ||
@@ -393,6 +429,38 @@ export function createFakeWhatsAppGraph(): FakeWhatsAppGraph {
           },
         });
       }
+      case "number_platform": {
+        const signup = await bearer(call);
+        if (!ownsNumber(signup, call.path)) return json(400, graphError(100, 400, 33).body);
+        const platform = platforms.get(call.path) ?? {
+          onBusinessApp: false,
+          platformType: "CLOUD_API",
+        };
+        return json(200, {
+          id: call.path,
+          is_on_biz_app: platform.onBusinessApp,
+          ...(platform.platformType !== undefined ? { platform_type: platform.platformType } : {}),
+        });
+      }
+      case "app_data": {
+        const signup = await bearer(call);
+        const phoneId = call.path.split("/")[0]!;
+        if (!ownsNumber(signup, phoneId)) return json(400, graphError(100, 400, 33).body);
+        const body = (call.body ?? {}) as { messaging_product?: unknown; sync_type?: unknown };
+        if (
+          body.messaging_product !== "whatsapp" ||
+          (body.sync_type !== "smb_app_state_sync" && body.sync_type !== "history")
+        ) {
+          return json(400, graphError(100).body);
+        }
+        const syncType = body.sync_type;
+        if (appDataRequests.some((r) => r.phoneNumberId === phoneId && r.syncType === syncType)) {
+          return json(400, graphError(100).body);
+        }
+        const requestId = `fake-request-${appDataRequests.length + 1}`;
+        appDataRequests.push({ phoneNumberId: phoneId, syncType, requestId });
+        return json(200, { messaging_product: "whatsapp", request_id: requestId });
+      }
       default:
         return json(404, graphError(2500, 404).body);
     }
@@ -409,7 +477,7 @@ export function createFakeWhatsAppGraph(): FakeWhatsAppGraph {
     const path = versionMatch?.[2] ?? url.pathname;
     const text = request.method === "POST" ? await request.clone().text() : "";
     const call: GraphCall = {
-      route: routeOf(request.method, path),
+      route: routeOf(request.method, path, params),
       method: request.method,
       version: versionMatch?.[1] ?? "none",
       path,
@@ -465,6 +533,10 @@ export function createFakeWhatsAppGraph(): FakeWhatsAppGraph {
       templates.set(wabaId, [...(templates.get(wabaId) ?? []), template]);
     },
     sent,
+    setNumberPlatform(phoneId, platform) {
+      platforms.set(phoneId, platform);
+    },
+    appDataRequests,
     calls: (route) =>
       route === undefined ? log.length : log.filter((c) => c.route === route).length,
   };

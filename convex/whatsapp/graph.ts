@@ -22,6 +22,10 @@ import { SIGNUP_TIMEOUT_MS, WHATSAPP_GRAPH_API_VERSION } from "./config";
  * "Send messages" (POST /{phone}/messages) and "Template management"
  * (GET /{waba}/message_templates). A message's recipient and content travel only in the JSON
  * body, never in a URL.
+ *
+ * Coexistence (ADR 0019; Meta "Onboarding WhatsApp Business app users", 2026-11-03): GET
+ * /{phone}?fields=is_on_biz_app,platform_type, and POST /{phone}/smb_app_data with
+ * `sync_type` `smb_app_state_sync` (contacts) or `history` (each accepted once per onboarding).
  */
 
 export type GraphFailure = {
@@ -215,6 +219,68 @@ export async function registerPhoneNumber(
     messaging_product: "whatsapp",
     pin,
   });
+}
+
+/** Meta's `request_id` of an import request (opaque; kept for support). */
+const REQUEST_ID = /^[\x21-\x7e]{1,256}$/;
+const PLATFORM_TYPE = /^[A-Z_]{1,32}$/;
+
+export type NumberPlatform = { onBusinessApp: boolean; platformType?: string };
+
+/**
+ * Coexistence (ADR 0019): whether the number is also used in the WhatsApp Business app
+ * (`is_on_biz_app`), and the platform serving it (`platform_type`, "CLOUD_API" once onboarded).
+ * Meta documents both as the check after a coexistence signup.
+ */
+export async function readNumberPlatform(
+  phoneNumberId: string,
+  auth: { accessToken: string; appSecret: string },
+): Promise<{ ok: true; platform: NumberPlatform } | { ok: false; failure: GraphFailure }> {
+  const result = await withToken(
+    "GET",
+    nodePath(phoneNumberId),
+    { fields: "is_on_biz_app,platform_type" },
+    auth,
+  );
+  if (!result.ok) return result;
+  const body = result.body as { is_on_biz_app?: unknown; platform_type?: unknown } | null;
+  if (body === null || typeof body !== "object") {
+    return { ok: false, failure: { kind: "invalid_json", status: 200 } };
+  }
+  return {
+    ok: true,
+    platform: {
+      onBusinessApp: body.is_on_biz_app === true,
+      ...(typeof body.platform_type === "string" && PLATFORM_TYPE.test(body.platform_type)
+        ? { platformType: body.platform_type }
+        : {}),
+    },
+  };
+}
+
+/** The two coexistence imports, in Meta's order: contacts first, then the chat history. */
+export type AppDataSync = "smb_app_state_sync" | "history";
+
+/**
+ * Coexistence (ADR 0019): asks Meta to send the business's WhatsApp Business app contacts or chat
+ * history as webhooks (POST /{phone}/smb_app_data). `ok` means Meta accepted the request; the
+ * data, or the business's refusal to share its history, arrives later by webhook. Meta accepts
+ * each import once per onboarding, so a call whose outcome is unknown is not repeated on its own.
+ */
+export async function requestAppDataSync(
+  phoneNumberId: string,
+  syncType: AppDataSync,
+  auth: { accessToken: string; appSecret: string },
+): Promise<{ ok: true; requestId: string } | { ok: false; failure: GraphFailure }> {
+  const result = await withToken("POST", nodePath(phoneNumberId, "smb_app_data"), {}, auth, {
+    messaging_product: "whatsapp",
+    sync_type: syncType,
+  });
+  if (!result.ok) return result;
+  const requestId = (result.body as { request_id?: unknown } | null)?.request_id;
+  return typeof requestId === "string" && REQUEST_ID.test(requestId)
+    ? { ok: true, requestId }
+    : { ok: false, failure: { kind: "invalid_json", status: 200 } };
 }
 
 /** A text value for a template placeholder; `parameter_name` for NAMED templates only. */

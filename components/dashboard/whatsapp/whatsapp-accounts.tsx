@@ -16,7 +16,7 @@ import {
   setupResultNotice,
   signupErrorNotice,
 } from "@/lib/whatsapp/messages";
-import type { SetupStatus, WhatsAppAccount } from "@/lib/whatsapp/types";
+import type { SetupStatus, WhatsAppAccount, WhatsAppNumber } from "@/lib/whatsapp/types";
 import { formatInstant } from "../freshness-note";
 import type { EmbeddedSignup } from "./connect-whatsapp";
 import { DisconnectWhatsApp } from "./disconnect-whatsapp";
@@ -70,6 +70,18 @@ function RetrySetupButton({
   );
 }
 
+/** A number's state in words (registration, or a coexistence number's imports). */
+function numberStateText(number: WhatsAppNumber, timezone: string): string {
+  if (number.status !== "active") return "Disconnected";
+  if (number.businessApp) {
+    if (number.imported) return "In the WhatsApp Business app · contacts and chat history imported";
+    return number.importDeadline !== undefined
+      ? `In the WhatsApp Business app · contacts and chat history not imported yet (until ${formatInstant(number.importDeadline, timezone)})`
+      : "In the WhatsApp Business app";
+  }
+  return number.registered ? "Registered for messaging" : "Not registered for messaging yet";
+}
+
 function AccountCard({
   account,
   name,
@@ -88,6 +100,7 @@ function AccountCard({
   const explanation = accountSetupText(account) ?? accountCleanupText(account);
   const canRetry = account.setupStatus === "action_required" && account.nextStep !== undefined;
   const canDisconnect = account.status === "active";
+  const businessApp = account.onboardingType === "coexistence";
   return (
     <li aria-labelledby={headingId} className="flex flex-col gap-3 rounded-lg border p-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -97,6 +110,7 @@ function AccountCard({
         <Badge variant={BADGE_VARIANT[account.setupStatus]}>
           {SETUP_STATUS_LABELS[account.setupStatus]}
         </Badge>
+        {businessApp && <Badge variant="outline">WhatsApp Business app</Badge>}
       </div>
       <p className="text-sm text-muted-foreground">
         WhatsApp Business account {account.wabaId} · connected{" "}
@@ -111,11 +125,7 @@ function AccountCard({
                 {number.displayPhoneNumber ?? `Number ${number.phoneNumberId}`}
               </span>
               <span className="text-muted-foreground">
-                {number.status === "active"
-                  ? number.registered
-                    ? "Registered for messaging"
-                    : "Not registered for messaging yet"
-                  : "Disconnected"}
+                {numberStateText(number, timezone)}
                 {number.registrationRetryAfter !== undefined &&
                   ` · registration can be retried after ${formatInstant(number.registrationRetryAfter, timezone)}`}
               </span>
@@ -131,13 +141,18 @@ function AccountCard({
               type="button"
               size="sm"
               disabled={signup.status !== "ready"}
-              onClick={signup.start}
+              onClick={() => signup.start(businessApp ? "business_app" : "new_number")}
             >
               Connect again
             </Button>
           )}
           {canDisconnect && (
-            <DisconnectWhatsApp accountId={account.id} name={name} onNotice={onNotice} />
+            <DisconnectWhatsApp
+              accountId={account.id}
+              name={name}
+              businessApp={businessApp}
+              onNotice={onNotice}
+            />
           )}
         </div>
       )}

@@ -134,6 +134,27 @@ export const MAX_WEBHOOK_BODY_BYTES = 3 * 1024 * 1024;
 /** Upper bound on message + status events in one delivery (Meta batches up to 1000 updates). */
 export const MAX_EVENTS_PER_DELIVERY = 1000;
 
+/**
+ * Upper bound on the coexistence import events of one delivery (ADR 0019: `history` chunks and
+ * `smb_app_state_sync` contacts). Meta does not document a chunk size; the 3 MB body limit
+ * bounds it far below this. The webhook stores them in INGEST_BATCH_SIZE slices.
+ */
+export const MAX_IMPORT_EVENTS_PER_DELIVERY = 20_000;
+
+/** Events stored per ingest mutation; a larger delivery is stored by several in order. */
+export const INGEST_BATCH_SIZE = 500;
+
+/**
+ * Coexistence (ADR 0019, Meta "Onboarding WhatsApp Business app users"): after signup, the
+ * contacts import and then the chat history import must be requested within 24 hours, each once;
+ * after that the business has to disconnect in the app and sign up again.
+ */
+export const COEXISTENCE_IMPORT_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** Our cap on import attempts per number (each attempt requests what is still missing). */
+export const MAX_IMPORT_ATTEMPTS = 3;
+/** Meta's `platform_type` of a number served by the Cloud API. */
+export const CLOUD_API_PLATFORM = "CLOUD_API";
+
 /** Events handed to one processing mutation; larger deliveries are split into several jobs. */
 export const PROCESS_BATCH_SIZE = 100;
 

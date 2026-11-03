@@ -172,7 +172,12 @@ describe("public API contract", () => {
     // The exception names a real argument (top level, a plain string), never a return field.
     const fn = v1Fns.find((r) => r.name === "v1/whatsapp:completeSignup")!.fn;
     const args = JSON.parse(fn.exportArgs());
-    expect(Object.keys(args.value).sort()).toEqual(["code", "phoneNumberId", "wabaId"]);
+    expect(Object.keys(args.value).sort()).toEqual([
+      "code",
+      "onboarding",
+      "phoneNumberId",
+      "wabaId",
+    ]);
     expect(args.value.code).toEqual({ fieldType: { type: "string" }, optional: false });
     expect(fieldNames(args).filter((n) => n === "code")).toHaveLength(1);
     expect(fieldNames(JSON.parse(fn.exportReturns()))).not.toContain("code");

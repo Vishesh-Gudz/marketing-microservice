@@ -9,12 +9,21 @@ import type { SignupConfig } from "./types";
 
 export const FACEBOOK_SDK_URL = "https://connect.facebook.net/en_US/sdk.js";
 
+/** Meta's feature type for numbers already used in the WhatsApp Business app (ADR 0019). */
+export const BUSINESS_APP_FEATURE_TYPE = "whatsapp_business_app_onboarding";
+
 export type FacebookLoginOptions = {
   config_id: string;
   response_type: "code";
   override_default_response_type: true;
-  extras: { setup: Record<string, never> };
+  extras: { setup: Record<string, never>; featureType?: typeof BUSINESS_APP_FEATURE_TYPE };
 };
+
+/**
+ * Which signup the admin chose: a number new to WhatsApp (`new_number`, ADR 0014), or one the
+ * business keeps using in the WhatsApp Business app (`business_app`, coexistence, ADR 0019).
+ */
+export type SignupMode = "new_number" | "business_app";
 
 export type FacebookSdk = {
   init(options: {
@@ -60,12 +69,23 @@ export function initFacebookSdk(sdk: FacebookSdk, config: AvailableConfig): void
   initialized.set(sdk, config.appId);
 }
 
-/** FB.login options for Embedded Signup (v4 is selected by the login configuration). */
-export function embeddedSignupLoginOptions(config: AvailableConfig): FacebookLoginOptions {
+/**
+ * FB.login options for Embedded Signup (v4 is selected by the login configuration). The
+ * WhatsApp Business app signup adds Meta's documented `featureType`; Meta's window then offers
+ * to connect the existing WhatsApp Business app account (Meta "Onboarding WhatsApp Business app
+ * users"; with v4 PROVISIONAL until a real signup).
+ */
+export function embeddedSignupLoginOptions(
+  config: AvailableConfig,
+  mode: SignupMode = "new_number",
+): FacebookLoginOptions {
   return {
     config_id: config.configId,
     response_type: "code",
     override_default_response_type: true,
-    extras: { setup: {} },
+    extras:
+      mode === "business_app"
+        ? { setup: {}, featureType: BUSINESS_APP_FEATURE_TYPE }
+        : { setup: {} },
   };
 }

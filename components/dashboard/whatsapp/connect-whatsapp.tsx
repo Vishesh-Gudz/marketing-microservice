@@ -21,6 +21,7 @@ import {
   facebookSdk,
   FACEBOOK_SDK_URL,
   initFacebookSdk,
+  type SignupMode,
 } from "@/lib/whatsapp/facebook-sdk";
 import {
   SDK_FAILED_NOTICE,
@@ -45,8 +46,11 @@ export type SignupStatus =
 
 export type EmbeddedSignup = {
   status: SignupStatus;
-  /** Opens Meta's signup. Call it directly from a click (pop-up blockers): no-op unless ready. */
-  start: () => void;
+  /**
+   * Opens Meta's signup for a new number or (`business_app`) a number kept in the WhatsApp
+   * Business app. Call it directly from a click (pop-up blockers): no-op unless ready.
+   */
+  start: (mode?: SignupMode) => void;
   /** Meta's SDK script (next/script), rendered only when signup is available. */
   script: ReactNode;
 };
@@ -106,10 +110,15 @@ export function useEmbeddedSignup(
     }
     if (attempt.phase !== "ready" || submitted.current.has(attempt)) return;
     submitted.current.add(attempt);
-    const { code, wabaId, phoneNumberId } = attempt;
+    const { code, wabaId, phoneNumberId, onboarding } = attempt;
     dispatch({ type: "submitted" });
     setCompleting(true);
-    completeSignup({ code, wabaId, phoneNumberId }).then(
+    completeSignup({
+      code,
+      wabaId,
+      ...(phoneNumberId !== undefined ? { phoneNumberId } : {}),
+      ...(onboarding === "coexistence" ? { onboarding } : {}),
+    }).then(
       (result) => {
         setCompleting(false);
         onNotice(setupResultNotice(result));
@@ -131,17 +140,22 @@ export function useEmbeddedSignup(
   else if (sdk === "loading") status = "preparing";
   else status = "ready";
 
-  const start = useCallback(() => {
-    const loaded = facebookSdk();
-    if (busy.current || status !== "ready" || available === null || loaded === undefined) return;
-    busy.current = true;
-    onNotice(null);
-    dispatch({ type: "start" });
-    loaded.login(
-      (response) => dispatch({ type: "login", code: codeOfLoginResponse(response) }),
-      embeddedSignupLoginOptions(available),
-    );
-  }, [status, available, onNotice]);
+  const start = useCallback(
+    (mode: SignupMode = "new_number") => {
+      const loaded = facebookSdk();
+      if (busy.current || status !== "ready" || available === null || loaded === undefined) {
+        return;
+      }
+      busy.current = true;
+      onNotice(null);
+      dispatch({ type: "start" });
+      loaded.login(
+        (response) => dispatch({ type: "login", code: codeOfLoginResponse(response) }),
+        embeddedSignupLoginOptions(available, mode),
+      );
+    },
+    [status, available, onNotice],
+  );
 
   const script =
     available === null ? null : (
@@ -176,7 +190,11 @@ const BUTTON_LABEL: Partial<Record<SignupStatus, string>> = {
   completing: "Connecting…",
 };
 
-/** The "Connect WhatsApp" control (admins). */
+/**
+ * The connect controls (admins): a number new to WhatsApp (a new or virtual number), or the
+ * number the business already uses in the WhatsApp Business app (coexistence, ADR 0019), which
+ * keeps working on the phone.
+ */
 export function ConnectWhatsApp({ signup }: { signup: EmbeddedSignup }) {
   const { status } = signup;
   if (status === "disabled") return null;
@@ -196,9 +214,35 @@ export function ConnectWhatsApp({ signup }: { signup: EmbeddedSignup }) {
       {status === "sdk_failed" ? (
         <ConnectionNotice notice={SDK_FAILED_NOTICE} />
       ) : (
-        <Button type="button" disabled={status !== "ready"} onClick={signup.start}>
-          {BUTTON_LABEL[status] ?? "Connect WhatsApp"}
-        </Button>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col items-start gap-1">
+            <Button
+              type="button"
+              disabled={status !== "ready"}
+              onClick={() => signup.start("new_number")}
+            >
+              {BUTTON_LABEL[status] ?? "Connect a new number"}
+            </Button>
+            <p className="text-sm text-muted-foreground">
+              A number that is not on WhatsApp yet, such as a new or virtual number.
+            </p>
+          </div>
+          <div className="flex flex-col items-start gap-1">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={status !== "ready"}
+              onClick={() => signup.start("business_app")}
+            >
+              Connect my WhatsApp Business app
+            </Button>
+            <p className="text-sm text-muted-foreground">
+              Keep using the WhatsApp Business app on your phone; its chats also appear here. The
+              app must be version 2.24.17 or newer. Personal WhatsApp numbers must switch to the
+              WhatsApp Business app first.
+            </p>
+          </div>
+        </div>
       )}
       <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
         {PROGRESS[status] ?? ""}

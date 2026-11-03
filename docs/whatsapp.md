@@ -33,8 +33,9 @@ URL: `<CONVEX_SITE_URL>/whatsapp/webhook`.
 
 Processing is asynchronous: the POST stores events and schedules their processing.
 
-Only `messages` changes are read, plus `account_update` `PARTNER_REMOVED` (see "Partner removal"
-below). Changes for other subscribed fields (template, quality, other account updates, …), and
+Only `messages` changes are read, plus `account_update` `PARTNER_REMOVED` and `ACCOUNT_OFFBOARDED`
+(see "Partner removal" below) and, for coexistence numbers, `smb_message_echoes`, `history` and
+`smb_app_state_sync` (see "Coexistence" below). Changes for other subscribed fields (template, quality, other account updates, …), and
 malformed `account_update` changes, are acknowledged and ignored whatever their `value` holds,
 so they never reject the messages delivered beside them; a malformed `messages` change still
 rejects the whole delivery (400). The Content-Length check is tested in-process only: whether
@@ -93,13 +94,14 @@ application**: the check only keeps it apart from authenticated users and system
 
 ## Data
 
-| Table                      | Holds                                                                                                                                                    |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `whatsappBusinessAccounts` | A WABA an org connected through Embedded Signup (connection, onboarding type, status, setup progress). One org per active WABA (global ownership index). |
-| `whatsappPhoneNumbers`     | phone_number_id → org routing (WABA id, status, activation time, source, connected WABA, Meta registration). Global lookup index.                        |
-| `whatsappWebhookEvents`    | One row per received event (dedupe key; body cleared once applied; recovery state). Global recovery index. Deleted 30 days after receipt unless pending. |
-| `whatsappConversations`    | One thread per (business number, customer wa_id); last inbound time; contact name from the newest message that carried one.                              |
-| `whatsappMessages`         | Inbound and outbound messages; delivery status, timestamps. Outbound: sender, `clientMessageId` (org-first index), template, failure reason.             |
+| Table                      | Holds                                                                                                                                                                                                                                |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `whatsappBusinessAccounts` | A WABA an org connected through Embedded Signup (connection, onboarding type, status, setup progress). One org per active WABA (global ownership index).                                                                             |
+| `whatsappPhoneNumbers`     | phone_number_id → org routing (WABA id, status, activation time, source, connected WABA, Meta registration). Global lookup index.                                                                                                    |
+| `whatsappWebhookEvents`    | One row per received event (dedupe key; body cleared once applied; recovery state). Global recovery index. Deleted 30 days after receipt unless pending.                                                                             |
+| `whatsappConversations`    | One thread per (business number, customer wa_id); last inbound time; contact name from the newest message that carried one.                                                                                                          |
+| `whatsappMessages`         | Inbound and outbound messages; delivery status, timestamps. Outbound: sender, `clientMessageId` (org-first index), template, failure reason. `origin`: `business_app` (sent from the WhatsApp Business app) or `history` (imported). |
+| `whatsappContacts`         | Coexistence: names the business saved in the WhatsApp Business app, per business number and wa_id; copied to the conversation's `savedName`. Deleted when removed in the app.                                                        |
 
 Phone numbers are routed only by internal functions: an operator runs them (see Setup), or the
 Embedded Signup action does, for a number it verified with Meta. No public function accepts an
@@ -170,8 +172,9 @@ Inbound routing is unaffected.
 Limits (B2):
 
 - Numbers that already have a two-step verification PIN are not supported: their registration
-  fails and the reason is recorded. Coexistence numbers (already in the WhatsApp Business app)
-  are not supported.
+  fails and the reason is recorded. Numbers already in the WhatsApp Business app connect through
+  coexistence instead (ADR 0019, "Coexistence" below); a number on personal WhatsApp cannot be
+  connected until it moves to the WhatsApp Business app (Meta refuses it in its window).
 - A number this org has from the operator path (active or disconnected, including rows without
   `source`) is refused (`phone_number_operator_managed`) before any write here or at Meta: its
   two-step PIN at Meta is not ours, so registering it would overwrite that PIN or fail on it.
@@ -218,14 +221,56 @@ None of this is configured or tested yet; each step is an operator task with its
    Webhook fields). Meta requires it for Embedded Signup; without it a customer's partner
    removal is never seen ("Partner removal" below). Account-level webhooks always go to the
    app's default callback URL (no override).
+7. For coexistence (ADR 0019), also `smb_message_echoes`, `history` and `smb_app_state_sync`.
+   Without them, messages sent from the WhatsApp Business app, the imported history and the
+   saved contact names never arrive.
 
 Page behaviour worth knowing for a first real test: the browser shows Meta's error code and
 session id (never Meta's error text) when the signup fails in the Meta window; "Signup did not
 finish" means the code arrived but Meta's `FINISH` message did not follow within 10 seconds,
 or the window closed after `FINISH` without a code (the page waits for the window to close
 after `FINISH`, since Meta counts its final screen as finished); the signup variants Meta
-reports for a WABA without a number, a WhatsApp Business app number (coexistence), a migration or
-API-access-only signup are refused in the browser with an explanation.
+reports for a WABA without a number, a migration or API-access-only signup are refused in the
+browser with an explanation. `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING` is a coexistence signup
+(next section).
+
+## Coexistence (WhatsApp Business app numbers, ADR 0019)
+
+Tested in-process only (fake Graph, signed fake webhooks); every Meta shape here is PROVISIONAL
+until a real coexistence signup ([ADR 0019](adr/0019-whatsapp-coexistence.md), "Real-account
+validation required").
+
+- **Signup.** "Connect my WhatsApp Business app" opens Embedded Signup with
+  `extras.featureType: "whatsapp_business_app_onboarding"`. Meta's
+  `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING` (`waba_id`, `phone_number_id` when present) reaches
+  `completeSignup` with `onboarding: "coexistence"`. After the usual checks (code, token, WABA,
+  number; without a number id the WABA must have exactly one: `phone_number_missing`), Meta must
+  report the number with `is_on_biz_app: true` (`GET /{phone}?fields=is_on_biz_app,platform_type`),
+  or nothing is stored (`not_business_app_number`). The number is never registered.
+- **Imports.** After the webhook subscription: `POST /{phone}/smb_app_data` with
+  `smb_app_state_sync` (contacts), then `history`, each accepted once by Meta, within 24 hours of
+  the signup, at most 3 attempts (`claimImport`; `retrySetup` resumes what is missing). Setup
+  stays `action_required` with `nextStep: "import"` until both were accepted; after 24 hours the
+  reason is `import_expired` and the business has to disconnect in the app and sign up again.
+  Whether the business shares its history is its choice in the app; a declined import
+  (`history` with error 2593109) stores nothing.
+- **Webhooks.** Accepted only for a coexistence number (otherwise counted as unrouted).
+  `smb_message_echoes`: the business's messages from the app, stored as outbound `sent`
+  (`origin: "business_app"`); later statuses move them on. `history`: messages of both sides,
+  stored with `origin: "history"` (the business's with the status Meta reports), exempt from the
+  activation cutoff. `smb_app_state_sync`: saved contacts (`whatsappContacts`), shown as the
+  conversation's name; a removal deletes them. None of them opens or extends the 24-hour reply
+  window. A message seen live and in the history is stored once (same dedupe key and wamid).
+  Imports may hold up to 20,000 events per delivery, stored 500 per mutation.
+- **Sending** works as for any number (`platformRegisteredAt` is set at signup).
+- **Disconnecting** is unchanged here; the business also releases the number in the app
+  (Settings, Account, Business Platform; Meta's Deregister API does not work for these numbers).
+  `PARTNER_REMOVED` / `ACCOUNT_OFFBOARDED` for a coexistence account whose WABA is still readable
+  read each number: `platform_type` other than `CLOUD_API` disconnects the account as a partner
+  removal.
+- **Limits (Meta):** WhatsApp Business app 2.24.17 or newer; 20 messages per second; companion
+  devices are unlinked at signup; groups, calls, broadcast lists, disappearing and view-once
+  messages are not available through the API.
 
 ## Disconnecting an account
 
@@ -297,8 +342,9 @@ Embedded Signup customers; what reading the WABA answers after a removal (the fo
 above are assumed), and whether access ends at once (if the read still succeeds just after a
 removal, the event is ignored and the account stays connected until its token is next refused);
 whether Meta removes our webhook subscription itself; and whether re-adding the partner works at
-once. Not handled: `PARTNER_APP_UNINSTALLED`, `ACCOUNT_OFFBOARDED`, `ACCOUNT_DELETED` and the
-other `account_update` events.
+once. `ACCOUNT_OFFBOARDED` (coexistence, ADR 0019) is handled like `PARTNER_REMOVED`, with the
+number check described under "Coexistence". Not handled: `PARTNER_APP_UNINSTALLED`,
+`ACCOUNT_DELETED`, `ACCOUNT_RECONNECTED` and the other `account_update` events.
 
 ## Sending messages (ADR 0015)
 

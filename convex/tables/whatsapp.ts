@@ -3,6 +3,8 @@ import { v } from "convex/values";
 import { messageDirectionValidator, webhookEventStatusValidator } from "../messaging/validators";
 import {
   businessAccountStatusValidator,
+  coexistenceStateValidator,
+  messageOriginValidator,
   messageStatusValidator,
   messageTypeValidator,
   onboardingTypeValidator,
@@ -37,7 +39,7 @@ export const whatsappTables = {
     /** Latest failed setup step (sanitized reason code only); cleared when it succeeds. */
     setupError: v.optional(
       v.object({
-        step: v.union(v.literal("subscribe"), v.literal("register")),
+        step: v.union(v.literal("subscribe"), v.literal("register"), v.literal("import")),
         reason: v.string(),
         at: v.number(),
       }),
@@ -122,6 +124,12 @@ export const whatsappTables = {
     registrationBlockedUntil: v.optional(v.number()),
     /** A registration call holds this number until then (one call at a time; expires alone). */
     registrationClaimedUntil: v.optional(v.number()),
+    /**
+     * Coexistence numbers only (ADR 0019): the number stays in the WhatsApp Business app, needs
+     * no Cloud API registration (`platformRegisteredAt` is set at signup) and has its contacts
+     * and chat history imported once.
+     */
+    coexistence: v.optional(coexistenceStateValidator),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -145,9 +153,19 @@ export const whatsappTables = {
   whatsappWebhookEvents: defineTable({
     orgId: orgIdField,
     numberId: v.id("whatsappPhoneNumbers"),
-    /** "message:<wamid>" or "status:<wamid>:<status>". */
+    /**
+     * "message:<wamid>" (inbound messages, echoes and imported history), "status:<wamid>:<status>"
+     * or "contact:<wa_id>:<action>:<timestamp>" (imported contacts).
+     */
     dedupeKey: v.string(),
-    kind: v.union(v.literal("message"), v.literal("status")),
+    kind: v.union(
+      v.literal("message"),
+      v.literal("status"),
+      v.literal("echo"),
+      v.literal("history"),
+      v.literal("contact"),
+    ),
+    /** The event's wamid; for a contact event, the contact's wa_id. */
     wamid: v.string(),
     event: v.optional(webhookEventValidator),
     status: webhookEventStatusValidator,
@@ -176,6 +194,11 @@ export const whatsappTables = {
     /** Customer's WhatsApp id. */
     contactWaId: v.string(),
     contactName: v.optional(v.string()),
+    /**
+     * Coexistence (ADR 0019): the name the business saved for the contact in the WhatsApp
+     * Business app (contacts import); shown instead of `contactName` when present.
+     */
+    savedName: v.optional(v.string()),
     /** Platform time of the message that supplied `contactName`; older ones never replace it. */
     contactNameAt: v.optional(v.number()),
     /** Latest inbound customer message (platform time): opens the 24-hour service window. */
@@ -221,10 +244,31 @@ export const whatsappTables = {
      * customer reads (header, body and footer, filled in).
      */
     template: v.optional(outboundTemplateValidator),
+    /**
+     * Coexistence (ADR 0019): sent from the WhatsApp Business app (`business_app`, outbound) or
+     * imported with the chat history (`history`). Absent for messages received or sent here.
+     */
+    origin: v.optional(messageOriginValidator),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_org_wamid", ["orgId", "wamid"])
     .index("by_org_conversation_platform", ["orgId", "conversationId", "platformAt"])
     .index("by_org_client_message", ["orgId", "clientMessageId"]),
+
+  /**
+   * Coexistence (ADR 0019): the names the business saved in the WhatsApp Business app, per
+   * business number and contact, from the contacts import and its later updates. Used only to
+   * name conversations (`whatsappConversations.savedName`); a contact removed in the app is
+   * deleted here. `changedAt` is the platform time of the latest change applied.
+   */
+  whatsappContacts: defineTable({
+    orgId: orgIdField,
+    numberId: v.id("whatsappPhoneNumbers"),
+    waId: v.string(),
+    name: v.string(),
+    changedAt: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_org_number_contact", ["orgId", "numberId", "waId"]),
 };

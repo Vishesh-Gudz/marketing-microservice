@@ -176,6 +176,44 @@ describe("WhatsApp conversation", () => {
     expect(screen.queryByRole("button", { name: "Show older messages" })).toBeNull();
   });
 
+  it("marks messages sent from the WhatsApp Business app and imported history (ADR 0019)", () => {
+    queryResults.set(GET, conversation());
+    queryResults.set(
+      MESSAGES,
+      page([
+        message({
+          id: "m3",
+          direction: "outbound",
+          text: "On my way",
+          status: "delivered",
+          origin: "business_app",
+          at: "2026-10-24T11:20:00.000Z",
+        }),
+        message({
+          id: "m2",
+          direction: "outbound",
+          text: "Yes, we do",
+          status: "read",
+          origin: "history",
+          at: "2026-10-22T09:01:00.000Z",
+        }),
+        message({
+          id: "m1",
+          text: "Do you deliver?",
+          origin: "history",
+          at: "2026-10-22T09:00:00.000Z",
+        }),
+      ]),
+    );
+    renderWithOrg(<WhatsAppConversationView conversationId="conv1" />);
+    const items = within(screen.getByRole("list", { name: "Messages" })).getAllByRole("listitem");
+    expect(items.map((item) => item.textContent)).toEqual([
+      `Ana · ${formatInstant("2026-10-22T09:00:00.000Z", ORG.timezone)} · importedDo you deliver?`,
+      `You · ${formatInstant("2026-10-22T09:01:00.000Z", ORG.timezone)} · importedYes, we doRead`,
+      `You · ${formatInstant("2026-10-24T11:20:00.000Z", ORG.timezone)} · sent from the WhatsApp Business appOn my wayDelivered`,
+    ]);
+  });
+
   it("loads older messages on request", () => {
     queryResults.set(GET, conversation());
     queryResults.set(MESSAGES, page([message({})], false));

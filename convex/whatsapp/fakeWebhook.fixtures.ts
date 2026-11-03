@@ -161,6 +161,108 @@ export function partnerRemovedEntry(
   };
 }
 
+/** The `value` envelope Meta documents for the coexistence fields (ADR 0019). */
+function coexistenceValue(phoneNumberId: string, items: Record<string, unknown>) {
+  return {
+    messaging_product: "whatsapp",
+    metadata: { display_phone_number: "15550009999", phone_number_id: phoneNumberId },
+    ...items,
+  };
+}
+
+/** One change of a coexistence field for a business number. */
+export function coexistenceEntry(
+  field: "smb_message_echoes" | "history" | "smb_app_state_sync",
+  items: Record<string, unknown>,
+  options: { wabaId?: string; phoneNumberId?: string } = {},
+): Record<string, unknown> {
+  return {
+    id: options.wabaId ?? WABA_A,
+    changes: [{ field, value: coexistenceValue(options.phoneNumberId ?? PHONE_A, items) }],
+  };
+}
+
+/** Messages the business sent from the WhatsApp Business app (`smb_message_echoes`). */
+export function echoEntry(
+  echoes: { id: string; to?: string; timestamp?: number; text?: string }[],
+  options: { wabaId?: string; phoneNumberId?: string } = {},
+): Record<string, unknown> {
+  return coexistenceEntry(
+    "smb_message_echoes",
+    {
+      message_echoes: echoes.map((echo) => ({
+        from: "15550009999",
+        to: echo.to ?? CUSTOMER_1,
+        id: echo.id,
+        timestamp: String(echo.timestamp ?? nowSeconds()),
+        type: "text",
+        text: { body: echo.text ?? "sent from the app" },
+      })),
+    },
+    options,
+  );
+}
+
+/** One imported history thread: the customer's messages and the business's (with `to`). */
+export type HistoryMessageInput = {
+  id: string;
+  fromBusiness?: boolean;
+  timestamp: number;
+  text?: string;
+  status?: string;
+};
+
+export function historyEntry(
+  threads: { contact: string; messages: HistoryMessageInput[] }[],
+  options: { wabaId?: string; phoneNumberId?: string } = {},
+): Record<string, unknown> {
+  return coexistenceEntry(
+    "history",
+    {
+      history: [
+        {
+          metadata: { phase: 0, chunk_order: 1, progress: 100 },
+          threads: threads.map((thread) => ({
+            id: thread.contact,
+            messages: thread.messages.map((m) => ({
+              from: m.fromBusiness ? "15550009999" : thread.contact,
+              ...(m.fromBusiness ? { to: thread.contact } : {}),
+              id: m.id,
+              timestamp: String(m.timestamp),
+              type: "text",
+              text: { body: m.text ?? "old message" },
+              history_context: { status: m.status ?? (m.fromBusiness ? "READ" : "DELIVERED") },
+            })),
+          })),
+        },
+      ],
+    },
+    options,
+  );
+}
+
+/** Contacts saved in (or removed from) the WhatsApp Business app (`smb_app_state_sync`). */
+export function contactsEntry(
+  contacts: { phone: string; name?: string; action?: "add" | "remove"; timestamp?: number }[],
+  options: { wabaId?: string; phoneNumberId?: string } = {},
+): Record<string, unknown> {
+  return coexistenceEntry(
+    "smb_app_state_sync",
+    {
+      state_sync: contacts.map((c) => ({
+        type: "contact",
+        contact: {
+          phone_number: c.phone,
+          ...(c.name !== undefined ? { full_name: c.name, first_name: c.name.split(" ")[0] } : {}),
+        },
+        action: c.action ?? "add",
+        metadata: { timestamp: String(c.timestamp ?? nowSeconds()) },
+      })),
+    },
+    options,
+  );
+}
+
 export function delivery(...entries: Record<string, unknown>[]): Record<string, unknown> {
   return { object: "whatsapp_business_account", entry: entries };
 }

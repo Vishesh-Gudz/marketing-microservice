@@ -5,22 +5,29 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/convex/_generated/api";
 import type { Notice } from "@/lib/connections/types";
-import { disconnectResultNotice, signupErrorNotice } from "@/lib/whatsapp/messages";
+import {
+  BUSINESS_APP_DISCONNECT,
+  disconnectResultNotice,
+  signupErrorNotice,
+} from "@/lib/whatsapp/messages";
 
 /**
  * Admin-only: disconnects one WhatsApp Business Account through v1/whatsapp:disconnectAccount
  * after an explicit confirmation (ADR 0014 B4). The server stops routing its numbers and revokes
  * the connection at once, then tells Meta to stop sending its webhooks here and deletes the
  * stored access. Conversations and messages are kept. One call at a time; the result (or a
- * refusal) reaches `onNotice` as fixed text.
+ * refusal) reaches `onNotice` as fixed text. A number kept in the WhatsApp Business app
+ * (`businessApp`, ADR 0019) is released from Meta's Business Platform only in the app itself.
  */
 export function DisconnectWhatsApp({
   accountId,
   name,
+  businessApp = false,
   onNotice,
 }: {
   accountId: string;
   name: string;
+  businessApp?: boolean;
   onNotice: (notice: Notice | null) => void;
 }) {
   const disconnect = useAction(api.v1.whatsapp.disconnectAccount);
@@ -85,6 +92,13 @@ export function DisconnectWhatsApp({
         <li>Messages for its numbers stop reaching this app at once.</li>
         <li>Conversations and messages so far are kept.</li>
         <li>Meta is told to stop sending them here, and the stored access is deleted.</li>
+        {businessApp && (
+          <li>
+            The number keeps working in the WhatsApp Business app. To release it from Meta&apos;s
+            Business Platform too: {BUSINESS_APP_DISCONNECT.charAt(0).toLowerCase()}
+            {BUSINESS_APP_DISCONNECT.slice(1)}.
+          </li>
+        )}
         <li>Afterwards, use Connect WhatsApp to connect it again.</li>
       </ul>
       <div className="flex gap-2">
