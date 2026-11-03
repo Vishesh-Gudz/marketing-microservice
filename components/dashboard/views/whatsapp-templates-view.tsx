@@ -410,12 +410,14 @@ export function WhatsAppTemplatesView() {
         title="WhatsApp templates"
         description="Messages Meta approved in advance: the only ones you can send when a customer has not written in the last 24 hours."
       >
-        <Button asChild variant="outline" size="sm">
-          <Link href="/whatsapp/settings">
-            <Settings aria-hidden="true" />
-            WhatsApp settings
-          </Link>
-        </Button>
+        <div className="flex flex-wrap gap-2 pt-2">
+          <Button asChild variant="outline" size="sm">
+            <Link href="/whatsapp/settings">
+              <Settings aria-hidden="true" />
+              WhatsApp settings
+            </Link>
+          </Button>
+        </div>
       </PageHeader>
       {notice && (
         <div ref={noticeRef} tabIndex={-1} className="outline-none">

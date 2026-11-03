@@ -44,12 +44,14 @@ export function WhatsAppView() {
         title="WhatsApp settings"
         description="Connect your WhatsApp Business number and follow its setup."
       >
-        <Button asChild variant="outline" size="sm">
-          <Link href="/whatsapp/templates">
-            <FileText aria-hidden="true" />
-            Templates
-          </Link>
-        </Button>
+        <div className="flex flex-wrap gap-2 pt-2">
+          <Button asChild variant="outline" size="sm">
+            <Link href="/whatsapp/templates">
+              <FileText aria-hidden="true" />
+              Templates
+            </Link>
+          </Button>
+        </div>
       </PageHeader>
       {notice && (
         <div ref={noticeRef} tabIndex={-1} className="outline-none">
