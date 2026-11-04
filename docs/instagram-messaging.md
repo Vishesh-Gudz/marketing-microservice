@@ -170,10 +170,26 @@ Review: [instagram-app-review.md](instagram-app-review.md).
   `messaging_type: "MESSAGE_TAG"` and `tag: "HUMAN_AGENT"` [doc]; the conversation shows the
   Human Agent window and "Send as human agent".
 
+## Templates (ADR 0022)
+
+Tested in-process only ([ADR 0022](adr/0022-instagram-templates.md)).
+
+- `v1/instagramTemplates:list` (every member), `create` / `update` / `remove` (editors and
+  admins): button messages (text up to 640 characters, 1-3 buttons) and cards (1-10; title and
+  subtitle 80 characters, picture and card link as `https` addresses, 0-3 buttons). Buttons:
+  `url` or `reply`, labels up to 20 characters [assume]. At most 100 per org, names unique.
+- `sendTemplate` (`accountId`, `conversationId`, `templateId`, `clientMessageId`): the text
+  reply's pipeline and refusals; `{{customer_name}}` filled on the server; sent as
+  `message.attachment` `{type: "template"}` (`template_type` `button` or `generic`) [doc];
+  stored as type `template` with the content as sent. Reply buttons carry
+  `TEMPLATE_REPLY_<n>` (cards: `TEMPLATE_REPLY_<card>_<n>`); a tap arrives as the customer's
+  message with `tap: "button"` and needs the app's webhook field `messaging_postbacks`.
+
 ## Public API (v1, ADR 0017)
 
 Viewers: `listAccounts`, `getAvailability`, `listConversations`, `getConversation`,
-`listMessages`. Editors and admins: `sendText`. Admins: `enable`, `retrySetup`, `disable`,
+`listMessages`. Editors and admins: `sendText`, `sendTemplate` (ADR 0022). Admins: `enable`,
+`retrySetup`, `disable`,
 `setIceBreakers`, `clearIceBreakers` (ADR 0021). Refusals
 are fixed codes and reasons; another org's ids are `NOT_FOUND`.
 

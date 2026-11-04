@@ -212,6 +212,12 @@ exports[`schema inventory > declares the approved indexes 1`] = `
       "purgeAfter",
     ],
   },
+  "instagramTemplates": {
+    "by_org_name": [
+      "orgId",
+      "name",
+    ],
+  },
   "instagramWebhookEvents": {
     "by_org_account": [
       "orgId",

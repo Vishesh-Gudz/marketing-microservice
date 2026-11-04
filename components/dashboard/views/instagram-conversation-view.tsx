@@ -26,6 +26,7 @@ import { isReplyWindowOpen, useNow } from "@/lib/whatsapp/inbox";
 import { EmptyState } from "../empty-state";
 import { formatInstant } from "../freshness-note";
 import { ReplyBox } from "../instagram/reply-box";
+import { TemplatePreview } from "../instagram/template-preview";
 import { Breadcrumbs, PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
 
@@ -109,21 +110,29 @@ function MessageBubble({ message, contact }: { message: InstagramMessage; contac
         {senderLabel(message, contact)} ·{" "}
         <time dateTime={message.at}>{formatInstant(message.at, timezone)}</time>
       </span>
-      <div
-        className={cn(
-          "max-w-[80%] rounded-lg px-3 py-2 text-sm",
-          outbound ? "bg-primary text-primary-foreground" : "bg-muted",
-        )}
-      >
-        <p
+      {message.template !== undefined && message.deletedAt === undefined ? (
+        <TemplatePreview
+          content={message.template}
+          label="Template sent"
+          className={cn("max-w-[80%]", outbound && "justify-end")}
+        />
+      ) : (
+        <div
           className={cn(
-            "break-words whitespace-pre-wrap",
-            content.kind === "placeholder" && "italic",
+            "max-w-[80%] rounded-lg px-3 py-2 text-sm",
+            outbound ? "bg-primary text-primary-foreground" : "bg-muted",
           )}
         >
-          {content.text}
-        </p>
-      </div>
+          <p
+            className={cn(
+              "break-words whitespace-pre-wrap",
+              content.kind === "placeholder" && "italic",
+            )}
+          >
+            {content.text}
+          </p>
+        </div>
+      )}
       {message.quickReplies !== undefined && message.quickReplies.length > 0 && (
         <ul
           aria-label="Quick-reply buttons sent"

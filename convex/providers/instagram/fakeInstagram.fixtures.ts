@@ -318,14 +318,19 @@ export function createFakeInstagram(
       if (method !== "POST" || first !== user.userId) return graphError(400, 100, 33);
       const granted = (user.permissions ?? "").split(",");
       if (!granted.includes("instagram_business_manage_messages")) return graphError(403, 10);
-      let payload: { recipient?: { id?: unknown }; message?: { text?: unknown } };
+      let payload: {
+        recipient?: { id?: unknown };
+        message?: { text?: unknown; attachment?: { type?: unknown } };
+      };
       try {
         payload = JSON.parse(typeof init.body === "string" ? init.body : "") as typeof payload;
       } catch {
         return graphError(400, 100);
       }
       const recipient = payload.recipient?.id;
-      const text = payload.message?.text;
+      // A text, or (ADR 0022) a template attachment (its text is then "").
+      const template = payload.message?.attachment?.type === "template";
+      const text = template ? "" : payload.message?.text;
       if (typeof recipient !== "string" || typeof text !== "string") return graphError(400, 100);
       const mid = `mid.fake.${++midSequence}`;
       sent.push({ account: first, recipient, text, mid, body: payload as Record<string, unknown> });

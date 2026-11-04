@@ -90,8 +90,9 @@ lib/analytics/                    pure logic: types, format, filters, deltas, st
 | `/inbox`                                        | Unified inbox (ADR 0018): every channel's conversations, channel filter, reply state     | `inbox:listThreads`                                                                                                       |
 | `/inbox/saved-replies`                          | Saved replies (ADR 0021): the org's reusable answers, ready-made replies, edit, delete   | `savedReplies:list`/`create`/`update`/`remove`                                                                            |
 | `/instagram/messages`                           | Instagram DMs (ADR 0017): conversations, newest activity first, reply window             | `instagramMessaging:listConversations`                                                                                    |
-| `/instagram/messages/conversations/[id]`        | One Instagram conversation: messages and statuses, reply window, reply                   | `instagramMessaging:getConversation`/`listMessages`/`sendText`                                                            |
+| `/instagram/messages/conversations/[id]`        | One Instagram conversation: messages and statuses, reply window, reply, templates        | `instagramMessaging:getConversation`/`listMessages`/`sendText`/`sendTemplate`, `instagramTemplates:list`                  |
 | `/instagram/messages/settings`                  | Instagram DM settings: turn direct messages on or off per linked account                 | `instagramMessaging:listAccounts`/`getAvailability`/`enable`/`retrySetup`/`disable`, `socialAccounts:list`                |
+| `/instagram/messages/templates`                 | Instagram templates (ADR 0022): button messages and cards, ready-made gallery, builder   | `instagramTemplates:list`/`create`/`update`/`remove`                                                                      |
 
 There is no org-wide ads page: the API requires a campaign or ad-group parent for ads (read budget).
 Connection management is on `/connections` for the **ad platforms, Google Ads and Meta Ads**
@@ -402,6 +403,23 @@ replies are on, offers **Send as human agent** after 24 hours with Meta's rule i
 DM settings has an **Ice breakers** section per account (admins set up to 4 questions, starting
 from suggestions, or remove them). Taps show under the customer's message ("Tapped a quick reply",
 "Tapped an ice breaker").
+
+## Instagram templates
+
+`/instagram/messages/templates` ([ADR 0022](adr/0022-instagram-templates.md)), linked from
+Instagram DMs as **Templates**: the org's rich messages for Instagram, kept in this app only (no
+Meta review). A **Button message** is a text of up to 640 characters with 1-3 buttons; **Cards**
+are 1-10 swipeable cards (title, optional text, picture link and card link, up to 3 buttons). A
+button opens a link or sends a reply (its label arrives as the customer's message). Every member
+reads them; editors and admins add one (from scratch, or from 15 **Ready-made templates**:
+welcome menu, frequent questions, store and service cards, product cards, order tracking,
+shipping, returns, bookings, prices, offers, payment link, feedback), edit it and delete it after
+a confirmation. The builder shows a preview (pictures are named by their site, never loaded) and
+what is still to do: the business's own words instead of [brackets], its own links instead of
+`https://your-website.com`. In a conversation, **Templates** lists them, previews the chosen one
+with the customer's first name, and sends it while the reply window is open (or as a human agent
+reply when that is on). A sent template shows as its buttons or cards with its name. Instagram
+shows them in its apps, not on instagram.com.
 
 ## WhatsApp templates
 

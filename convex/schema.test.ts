@@ -118,6 +118,7 @@ describe("schema inventory", () => {
         "instagramDataDeletionRequests",
         "instagramMessages",
         "instagramMessagingAccounts",
+        "instagramTemplates",
         "instagramWebhookEvents",
         "inboxThreads",
         "maintenanceCursors",
@@ -225,6 +226,7 @@ describe("tenant ownership", () => {
       "instagramWebhookEvents",
       "instagramConversations",
       "instagramMessages",
+      "instagramTemplates",
       "inboxThreads",
     ];
     expect([...owned].sort()).toEqual(tenantTables);

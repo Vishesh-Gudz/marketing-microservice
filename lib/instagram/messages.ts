@@ -69,6 +69,7 @@ const TYPE_LABELS: Readonly<Partial<Record<MessageType, string>>> = {
   reel: "Shared reel",
   story_mention: "Mention in their story",
   story_reply: "Reply to your story",
+  template: "Template",
   unsupported: "Unsupported message",
 };
 
@@ -99,12 +100,18 @@ export function senderLabel(
   return message.origin === "instagram" ? "You, in the Instagram app" : "You";
 }
 
-/** Small notes under a bubble: a story reply, a tap (ADR 0021), a Human Agent reply, an edit. */
+/**
+ * Small notes under a bubble: a story reply, a tap (ADR 0021), a template (ADR 0022), a Human
+ * Agent reply, an edit.
+ */
 export function messageNotes(
   message: Pick<InstagramMessage, "type" | "editedAt" | "deletedAt" | "text"> &
-    Partial<Pick<InstagramMessage, "tap" | "humanAgent">>,
+    Partial<Pick<InstagramMessage, "tap" | "humanAgent" | "templateName">>,
 ): string[] {
   const notes: string[] = [];
+  if (message.type === "template" && message.templateName !== undefined) {
+    notes.push(`Template “${message.templateName}”`);
+  }
   if (message.type === "story_reply" && message.text !== undefined) {
     notes.push("Replied to your story");
   }

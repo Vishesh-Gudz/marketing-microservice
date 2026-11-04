@@ -461,3 +461,111 @@ describe("reply tools (ADR 0021)", () => {
     ).toHaveTextContent("YesNo");
   });
 });
+
+describe("templates (ADR 0022)", () => {
+  const TEMPLATES = "v1/instagramTemplates:list";
+  const SEND_TEMPLATE = "v1/instagramMessaging:sendTemplate";
+  const WELCOME = {
+    id: "t1",
+    name: "Welcome",
+    content: {
+      kind: "buttons" as const,
+      text: "Hi {{customer_name}}, how can we help?",
+      buttons: [
+        { type: "reply" as const, title: "Prices" },
+        { type: "url" as const, title: "Shop", url: "https://shop.example.com" },
+      ],
+    },
+    updatedAt: "2026-10-30T10:00:00.000Z",
+  };
+
+  it("previews the chosen template for this customer and sends it with a client id", async () => {
+    queryResults.set(TEMPLATES, [WELCOME]);
+    const send = mockMutation(SEND_TEMPLATE).mockResolvedValue(message({}));
+    show({ contactName: "Ana Souza" }, EDITOR);
+    fireEvent.click(screen.getByRole("button", { name: "Templates" }));
+    expect(lastArgs(TEMPLATES)).toEqual({});
+    fireEvent.click(screen.getByRole("button", { name: /Welcome/ }));
+    const preview = screen.getByRole("figure", { name: "What the customer receives" });
+    expect(preview).toHaveTextContent("Hi Ana, how can we help?");
+    expect(within(preview).getByRole("list", { name: "Buttons" })).toHaveTextContent("PricesShop");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Send template" }));
+    });
+    expect(send).toHaveBeenCalledWith({
+      accountId: "acct1",
+      conversationId: "conv1",
+      templateId: "t1",
+      clientMessageId: expect.stringMatching(CLIENT_ID),
+    });
+    expect(screen.queryByRole("region", { name: "Instagram templates" })).toBeNull();
+  });
+
+  it("explains a refusal and retries with the same client id", async () => {
+    queryResults.set(TEMPLATES, [WELCOME]);
+    const send = mockMutation(SEND_TEMPLATE)
+      .mockRejectedValueOnce(apiError("NOT_FOUND", "server text", { table: "instagramTemplates" }))
+      .mockResolvedValue(message({}));
+    show({}, EDITOR);
+    fireEvent.click(screen.getByRole("button", { name: "Templates" }));
+    fireEvent.click(screen.getByRole("button", { name: /Welcome/ }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Send template" }));
+    });
+    expect(screen.getByText("Template not found")).toBeInTheDocument();
+    expect(screen.queryByText("server text")).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Send template" }));
+    });
+    const [first, second] = send.mock.calls.map((call) => call[0] as { clientMessageId: string });
+    expect(second!.clientMessageId).toBe(first!.clientMessageId);
+  });
+
+  it("links to the Templates page when there are none", () => {
+    queryResults.set(TEMPLATES, []);
+    show({}, EDITOR);
+    fireEvent.click(screen.getByRole("button", { name: "Templates" }));
+    expect(screen.getByRole("link", { name: "Manage templates" })).toHaveAttribute(
+      "href",
+      "/instagram/messages/templates",
+    );
+  });
+
+  it("shows a sent template as its buttons or cards, with its name", () => {
+    queryResults.set(GET, conversation());
+    queryResults.set(
+      MESSAGES,
+      page([
+        message({
+          id: "m2",
+          direction: "outbound",
+          origin: "app",
+          type: "template",
+          text: "Linen shirt",
+          status: "read",
+          templateName: "Picks",
+          template: {
+            kind: "cards",
+            cards: [
+              {
+                title: "Linen shirt",
+                subtitle: "€49",
+                imageUrl: "https://cdn.example.com/shirt.jpg",
+                buttons: [{ type: "reply", title: "I want this" }],
+              },
+            ],
+          },
+        }),
+      ]),
+    );
+    renderWithOrg(<InstagramConversationView conversationId="conv1" />);
+    const thread = screen.getByRole("list", { name: "Messages" });
+    const sent = within(thread).getByRole("figure", { name: "Template sent" });
+    expect(sent).toHaveTextContent("Linen shirt");
+    expect(sent).toHaveTextContent("Picture from cdn.example.com");
+    expect(sent).toHaveTextContent("I want this");
+    expect(within(sent).queryByRole("img")).toBeNull();
+    expect(thread).toHaveTextContent("Template “Picks”");
+    expect(thread).toHaveTextContent("Seen");
+  });
+});

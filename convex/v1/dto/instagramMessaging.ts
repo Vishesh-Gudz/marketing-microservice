@@ -15,6 +15,7 @@ import type { SetupState } from "../../instagram/messaging/lifecycle";
 import { toIso } from "../../lib/dto";
 import { messageDirectionValidator } from "../../messaging/validators";
 import { serviceWindowExpiresAt } from "../../messaging/window";
+import { templateContentValidator } from "../../instagram/messaging/templates";
 
 /**
  * Instagram messaging DTOs (ADR 0017). Never: credentials, webhook event bodies, internal row
@@ -191,6 +192,9 @@ export const instagramMessageDto = v.object({
   humanAgent: v.optional(v.boolean()),
   /** ADR 0021, from the customer: what they tapped to send it. */
   tap: v.optional(tapValidator),
+  /** ADR 0022, type `template`: the template as sent (absent once deleted) and its name. */
+  template: v.optional(templateContentValidator),
+  templateName: v.optional(v.string()),
 });
 export type InstagramMessageDto = Infer<typeof instagramMessageDto>;
 
@@ -214,5 +218,7 @@ export function toInstagramMessageDto(message: Doc<"instagramMessages">): Instag
     ...optional("quickReplies", message.quickReplies),
     ...(message.tag === "human_agent" ? { humanAgent: true } : {}),
     ...optional("tap", message.tap),
+    ...optional("template", message.template),
+    ...optional("templateName", message.templateName),
   };
 }

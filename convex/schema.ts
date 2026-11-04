@@ -5,6 +5,7 @@ import { connectionTables } from "./tables/connections";
 import { inboxTables } from "./tables/inbox";
 import { instagramDataDeletionTables } from "./tables/instagramDataDeletion";
 import { instagramMessagingTables } from "./tables/instagramMessaging";
+import { instagramTemplateTables } from "./tables/instagramTemplates";
 import { maintenanceTables } from "./tables/maintenance";
 import { metricTables } from "./tables/metrics";
 import { socialTables } from "./tables/social";
@@ -33,6 +34,7 @@ export default defineSchema({
   ...whatsappTables,
   ...savedReplyTables,
   ...instagramMessagingTables,
+  ...instagramTemplateTables,
   ...instagramDataDeletionTables,
   ...maintenanceTables,
   ...inboxTables,

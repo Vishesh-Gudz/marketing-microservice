@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { newClientMessageId } from "@/lib/whatsapp/inbox";
 import { ConnectionNotice } from "../connections/connection-notice";
 import { SavedReplyPicker } from "../messaging/saved-reply-picker";
+import { TemplatePicker } from "./template-picker";
 
 /**
  * A text reply in an Instagram conversation (v1/instagramMessaging:sendText), for editors and
@@ -25,6 +26,7 @@ import { SavedReplyPicker } from "../messaging/saved-reply-picker";
  * ADR 0021: a saved reply can be inserted and edited; up to 13 quick-reply buttons (20
  * characters each) can go with the reply. `humanAgent`: the 24-hour window has closed and Meta's
  * Human Agent rule applies (a person replies personally, nothing automated or promotional).
+ * ADR 0022: one of the org's Instagram templates (buttons or cards) can be sent instead.
  */
 export function ReplyBox({
   accountId,
@@ -99,12 +101,21 @@ export function ReplyBox({
           promotional message.
         </p>
       )}
-      <SavedReplyPicker
-        channel="instagram"
-        {...(contactName !== undefined ? { contactName } : {})}
-        disabled={pending}
-        onPick={(reply) => edited({ text: reply.text, quickReplies: reply.quickReplies })}
-      />
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start">
+        <SavedReplyPicker
+          channel="instagram"
+          {...(contactName !== undefined ? { contactName } : {})}
+          disabled={pending}
+          onPick={(reply) => edited({ text: reply.text, quickReplies: reply.quickReplies })}
+        />
+        <TemplatePicker
+          accountId={accountId}
+          conversationId={conversationId}
+          {...(contactName !== undefined ? { contactName } : {})}
+          humanAgent={humanAgent}
+          disabled={pending}
+        />
+      </div>
       <Label htmlFor={fieldId}>Message</Label>
       <textarea
         id={fieldId}

@@ -235,7 +235,12 @@ async function applyDelete(
   if (message === null) return "unmatched";
   if (!(await inThreadWith(db, message, event.customerIgsid))) return "ignored";
   if (message.deletedAt !== undefined) return "ignored";
-  await db.patch(message._id, { text: undefined, deletedAt: event.timestampMs, updatedAt: now });
+  await db.patch(message._id, {
+    text: undefined,
+    template: undefined,
+    deletedAt: event.timestampMs,
+    updatedAt: now,
+  });
   return "processed";
 }
 

@@ -51,6 +51,20 @@ export const SAVED_REPLY_REFUSALS = [
 ] as const;
 export type SavedReplyRefusal = (typeof SAVED_REPLY_REFUSALS)[number];
 
+/** The one placeholder (saved replies and Instagram templates). */
+export const CUSTOMER_NAME = "{{customer_name}}";
+
+/**
+ * Fills `{{customer_name}}` with the customer's first name, or leaves it out with the comma and
+ * space before it when the name is unknown ("Thank you, {{customer_name}}!" -> "Thank you!").
+ * The dashboard's copy (lib/messaging/saved-replies.ts fillSavedReply) is parity-tested.
+ */
+export function fillCustomerName(text: string, contactName: string | undefined): string {
+  const first = contactName?.trim().split(/\s+/)[0];
+  if (first) return text.split(CUSTOMER_NAME).join(first);
+  return text.replace(/,?\s?\{\{customer_name\}\}/g, "");
+}
+
 const utf8 = new TextEncoder();
 
 /** UTF-8 bytes of a text (Instagram's limit is in bytes). */

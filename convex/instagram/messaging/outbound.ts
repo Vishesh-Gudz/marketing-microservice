@@ -33,6 +33,14 @@ import { RequestBudget, sendInstagram } from "../../providers/instagram/transpor
 import { messagingHolder } from "./accounts";
 import { checkQuickReplies } from "../../messaging/savedReplies";
 import {
+  checkTemplateContent,
+  fillTemplate,
+  templateAttachment,
+  templateContentValidator,
+  templateSummary,
+  type TemplateContent,
+} from "./templates";
+import {
   CLIENT_MESSAGE_ID,
   instagramHumanAgentEnabled,
   instagramMessagingEnabled,
@@ -81,6 +89,11 @@ import { earlyEvent, findMessage } from "./processing";
  * 24-hour window and within 7 days of the customer's last message is sent with
  * `messaging_type: "MESSAGE_TAG"` and `tag: "HUMAN_AGENT"` [doc], and stored with
  * `tag: "human_agent"`; claimDelivery checks that window again.
+ *
+ * ADR 0022: `queueTemplate` (v1/instagramMessaging:sendTemplate) sends one of the org's
+ * Instagram templates the same way, with the same checks: the content is stored on the message
+ * as sent (`{{customer_name}}` filled in, type `template`) and goes out as Meta's
+ * `message.attachment` (`type: "template"`, a button or generic template [doc]).
  */
 
 const NO_RESULT = "no_result";
@@ -197,13 +210,13 @@ async function repeatedSend(
   return repeated;
 }
 
-/** Step 1 (see the module comment). Returns the stored message (new, or the repeated one). */
-export async function queueText(
-  ctx: Pick<MutationCtx, "db" | "scheduler">,
-  tenant: { orgId: Id<"organizations">; subject: string },
+type Tenant = { orgId: Id<"organizations">; subject: string };
+
+/** The request checks every reply starts with: the browser's id and the conversation's account. */
+function checkRequest(
   conversation: Doc<"instagramConversations">,
-  args: { accountId: string; text: string; clientMessageId: string; quickReplies?: string[] },
-): Promise<Doc<"instagramMessages">> {
+  args: { accountId: string; clientMessageId: string },
+): void {
   if (!CLIENT_MESSAGE_ID.test(args.clientMessageId)) {
     throw apiError("INVALID_ARGUMENT", "clientMessageId must be 8-64 letters, digits, - or _.", {
       field: "clientMessageId",
@@ -215,26 +228,26 @@ export async function queueText(
       table: "instagramConversations",
     });
   }
-  if (args.text.trim() === "" || utf8Length(args.text) > MAX_OUTBOUND_TEXT_BYTES) {
-    throw apiError(
-      "INVALID_ARGUMENT",
-      `text must be 1-${MAX_OUTBOUND_TEXT_BYTES} bytes of UTF-8 and not blank.`,
-      { field: "text" },
-    );
-  }
-  const quickReplies = checkQuickReplies(args.quickReplies ?? []);
-  if (!quickReplies.ok) {
-    throw apiError(
-      "INVALID_ARGUMENT",
-      "Quick replies are up to 13 different labels of 1-20 characters.",
-      {
-        field:
-          quickReplies.index === undefined ? "quickReplies" : `quickReplies.${quickReplies.index}`,
-        reason: quickReplies.reason,
-      },
-    );
-  }
-  const repeated = await repeatedSend(ctx.db, tenant.orgId, conversation._id, args.clientMessageId);
+}
+
+/** What a queued reply carries: a text (with any quick replies) or a template (ADR 0022). */
+type ReplyContent =
+  | { messageType: "text"; text: string; quickReplies: string[] }
+  | { messageType: "template"; template: TemplateContent; templateName: string };
+
+/**
+ * Stores a checked reply `pending` and schedules its one delivery and the watchdog, after the
+ * repeated-submit, sender and window checks (step 1). Returns the stored message (new, or the
+ * repeated one).
+ */
+async function queueReply(
+  ctx: Pick<MutationCtx, "db" | "scheduler">,
+  tenant: Tenant,
+  conversation: Doc<"instagramConversations">,
+  clientMessageId: string,
+  content: ReplyContent,
+): Promise<Doc<"instagramMessages">> {
+  const repeated = await repeatedSend(ctx.db, tenant.orgId, conversation._id, clientMessageId);
   if (repeated !== null) return repeated;
   const sendable = await senderOf(ctx.db, conversation);
   if (!sendable.ok) {
@@ -252,13 +265,22 @@ export async function queueText(
     messagingAccountId: conversation.messagingAccountId,
     direction: "outbound",
     origin: "app",
-    messageType: "text",
-    text: args.text,
     status: "pending",
     platformAt: now,
-    clientMessageId: args.clientMessageId,
+    clientMessageId,
     sentBySubject: tenant.subject,
-    ...(quickReplies.titles.length > 0 ? { quickReplies: quickReplies.titles } : {}),
+    ...(content.messageType === "text"
+      ? {
+          messageType: "text" as const,
+          text: content.text,
+          ...(content.quickReplies.length > 0 ? { quickReplies: content.quickReplies } : {}),
+        }
+      : {
+          messageType: "template" as const,
+          text: templateSummary(content.template),
+          template: content.template,
+          templateName: content.templateName,
+        }),
     ...(mode === "human_agent" ? { tag: "human_agent" as const } : {}),
     createdAt: now,
     updatedAt: now,
@@ -282,14 +304,103 @@ export async function queueText(
   return (await ctx.db.get(messageId))!;
 }
 
+/** Step 1 for a text reply (see the module comment). */
+export async function queueText(
+  ctx: Pick<MutationCtx, "db" | "scheduler">,
+  tenant: Tenant,
+  conversation: Doc<"instagramConversations">,
+  args: { accountId: string; text: string; clientMessageId: string; quickReplies?: string[] },
+): Promise<Doc<"instagramMessages">> {
+  checkRequest(conversation, args);
+  if (args.text.trim() === "" || utf8Length(args.text) > MAX_OUTBOUND_TEXT_BYTES) {
+    throw apiError(
+      "INVALID_ARGUMENT",
+      `text must be 1-${MAX_OUTBOUND_TEXT_BYTES} bytes of UTF-8 and not blank.`,
+      { field: "text" },
+    );
+  }
+  const quickReplies = checkQuickReplies(args.quickReplies ?? []);
+  if (!quickReplies.ok) {
+    throw apiError(
+      "INVALID_ARGUMENT",
+      "Quick replies are up to 13 different labels of 1-20 characters.",
+      {
+        field:
+          quickReplies.index === undefined ? "quickReplies" : `quickReplies.${quickReplies.index}`,
+        reason: quickReplies.reason,
+      },
+    );
+  }
+  return await queueReply(ctx, tenant, conversation, args.clientMessageId, {
+    messageType: "text",
+    text: args.text,
+    quickReplies: quickReplies.titles,
+  });
+}
+
+/**
+ * Step 1 for one of the org's Instagram templates (ADR 0022): `{{customer_name}}` is filled
+ * with the customer's first name (or left out), and the filled content is checked again.
+ */
+export async function queueTemplate(
+  ctx: Pick<MutationCtx, "db" | "scheduler">,
+  tenant: Tenant,
+  conversation: Doc<"instagramConversations">,
+  template: Doc<"instagramTemplates">,
+  args: { accountId: string; clientMessageId: string },
+): Promise<Doc<"instagramMessages">> {
+  checkRequest(conversation, args);
+  const filled = checkTemplateContent(fillTemplate(template.content, conversation.contactName));
+  if (!filled.ok) {
+    throw apiError("INVALID_ARGUMENT", "The template is empty without the customer's name.", {
+      field: filled.field,
+      reason: filled.reason,
+    });
+  }
+  return await queueReply(ctx, tenant, conversation, args.clientMessageId, {
+    messageType: "template",
+    template: filled.content,
+    templateName: template.name,
+  });
+}
+
 const claimValidator = v.object({
   connectionId: v.id("connections"),
   igAccountId: v.string(),
   recipient: v.string(),
-  text: v.string(),
+  /** A text reply's text, or (ADR 0022) the template sent instead. */
+  text: v.optional(v.string()),
+  template: v.optional(templateContentValidator),
   quickReplies: v.optional(v.array(v.string())),
   humanAgent: v.boolean(),
 });
+type Claim = Infer<typeof claimValidator>;
+
+/**
+ * The JSON body of the one send call [doc]: the recipient, the Human Agent tag when needed, and
+ * the message: a text with any quick replies, or a template attachment (ADR 0022).
+ */
+export function sendBody(claim: Omit<Claim, "connectionId" | "igAccountId">) {
+  return {
+    recipient: { id: claim.recipient },
+    ...(claim.humanAgent ? { messaging_type: "MESSAGE_TAG", tag: "HUMAN_AGENT" } : {}),
+    message:
+      claim.template !== undefined
+        ? { attachment: templateAttachment(claim.template) }
+        : {
+            text: claim.text,
+            ...(claim.quickReplies !== undefined && claim.quickReplies.length > 0
+              ? {
+                  quick_replies: claim.quickReplies.map((title, i) => ({
+                    content_type: "text",
+                    title,
+                    payload: `QUICK_REPLY_${i + 1}`,
+                  })),
+                }
+              : {}),
+          },
+  };
+}
 
 const messageArgs = { orgId: v.id("organizations"), messageId: v.id("instagramMessages") };
 
@@ -328,7 +439,15 @@ export const claimDelivery = internalMutation({
     }
     const now = Date.now();
     const conversation = await ctx.db.get(message.conversationId);
-    if (conversation === null || conversation.orgId !== orgId || message.text === undefined) {
+    const content =
+      message.messageType === "template"
+        ? message.template !== undefined
+          ? { template: message.template }
+          : null
+        : message.text !== undefined
+          ? { text: message.text }
+          : null;
+    if (conversation === null || conversation.orgId !== orgId || content === null) {
       await failUnsent(ctx.db, message, "invalid_message", now);
       return null;
     }
@@ -348,7 +467,7 @@ export const claimDelivery = internalMutation({
     await ctx.db.patch(message._id, { sendAttemptedAt: now, updatedAt: now });
     return {
       ...sendable.sender,
-      text: message.text,
+      ...content,
       ...(message.quickReplies !== undefined ? { quickReplies: message.quickReplies } : {}),
       // Tagged only when it is still needed: inside the 24-hour window no tag is sent.
       humanAgent: humanAgent && mode === "human_agent",
@@ -373,7 +492,7 @@ const outcomeValidator = v.union(
 type Outcome = Infer<typeof outcomeValidator>;
 
 /** The one Meta call. Never throws; nothing is called when the token cannot be used. */
-async function send(ctx: ActionCtx, claim: Infer<typeof claimValidator>): Promise<Outcome> {
+async function send(ctx: ActionCtx, claim: Claim): Promise<Outcome> {
   try {
     return await withConnectionCredential(ctx, claim.connectionId, async (credential, binding) => {
       if (!isInstagramMessagingCredential(credential) || credential.userId !== claim.igAccountId) {
@@ -395,22 +514,7 @@ async function send(ctx: ActionCtx, claim: Infer<typeof claimValidator>): Promis
             "Content-Type": "application/json",
             Accept: "application/json",
           },
-          body: JSON.stringify({
-            recipient: { id: claim.recipient },
-            ...(claim.humanAgent ? { messaging_type: "MESSAGE_TAG", tag: "HUMAN_AGENT" } : {}),
-            message: {
-              text: claim.text,
-              ...(claim.quickReplies !== undefined && claim.quickReplies.length > 0
-                ? {
-                    quick_replies: claim.quickReplies.map((title, i) => ({
-                      content_type: "text",
-                      title,
-                      payload: `QUICK_REPLY_${i + 1}`,
-                    })),
-                  }
-                : {}),
-            },
-          }),
+          body: JSON.stringify(sendBody(claim)),
         },
         { timeoutMs: SEND_TIMEOUT_MS, budget: new RequestBudget(1) },
       );
@@ -484,7 +588,7 @@ async function acceptWithMid(
     status: readAt !== undefined ? "read" : merge ? "sent" : "submitted",
     ...(merge ? { sentAt: echo.sentAt ?? echo.platformAt } : {}),
     ...(readAt !== undefined ? { readAt } : {}),
-    ...(deletedAt !== undefined ? { deletedAt, text: undefined } : {}),
+    ...(deletedAt !== undefined ? { deletedAt, text: undefined, template: undefined } : {}),
     failureReason: undefined,
     updatedAt: now,
   });

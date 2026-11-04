@@ -10,6 +10,7 @@ import {
   webhookEventValidator,
 } from "../instagram/messaging/validators";
 import { messageDirectionValidator, webhookEventStatusValidator } from "../messaging/validators";
+import { templateContentValidator } from "../instagram/messaging/templates";
 import { orgIdField } from "./common";
 
 // Instagram direct messages (ADR 0017), separate from the WhatsApp tables. Every table is
@@ -179,6 +180,12 @@ export const instagramMessagingTables = {
     tag: v.optional(v.literal("human_agent")),
     /** Inbound (ADR 0021): what the customer tapped to send it. */
     tap: v.optional(tapValidator),
+    /**
+     * Outbound from this app (ADR 0022), type `template`: the template as sent (customer name
+     * filled in) and its name then. Cleared with the text when the message is deleted.
+     */
+    template: v.optional(templateContentValidator),
+    templateName: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

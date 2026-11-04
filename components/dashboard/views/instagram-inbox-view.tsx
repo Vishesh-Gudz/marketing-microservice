@@ -1,7 +1,7 @@
 "use client";
 
 import { usePaginatedQuery } from "convex/react";
-import { Settings } from "lucide-react";
+import { FileText, Settings } from "lucide-react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -110,7 +110,13 @@ export function InstagramInboxView() {
         title="Instagram DMs"
         description="Direct messages from your customers on your Instagram accounts."
       >
-        <div className="pt-2">
+        <div className="flex flex-wrap gap-2 pt-2">
+          <Button asChild variant="outline" size="sm">
+            <Link href="/instagram/messages/templates">
+              <FileText aria-hidden="true" />
+              Templates
+            </Link>
+          </Button>
           <SettingsLink />
         </div>
       </PageHeader>

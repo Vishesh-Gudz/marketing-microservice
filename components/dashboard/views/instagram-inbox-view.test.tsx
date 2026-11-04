@@ -69,6 +69,10 @@ describe("Instagram DM inbox", () => {
     for (const link of screen.getAllByRole("link", { name: "Instagram DM settings" })) {
       expect(link).toHaveAttribute("href", "/instagram/messages/settings");
     }
+    expect(screen.getByRole("link", { name: "Templates" })).toHaveAttribute(
+      "href",
+      "/instagram/messages/templates",
+    );
   });
 
   it("lists each conversation with its contact, account and reply state", () => {

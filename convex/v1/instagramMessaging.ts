@@ -7,7 +7,12 @@ import { disableMessaging, enableCheck, type EnableRefusal } from "../instagram/
 import { instagramMessagingEnabled } from "../instagram/messaging/config";
 import { subscribeIfNeeded } from "../instagram/messaging/lifecycle";
 import { clearIceBreakersFor, setIceBreakersFor } from "../instagram/messaging/iceBreakers";
-import { queueText, replyBlockerOf, type SenderRefusal } from "../instagram/messaging/outbound";
+import {
+  queueTemplate,
+  queueText,
+  replyBlockerOf,
+  type SenderRefusal,
+} from "../instagram/messaging/outbound";
 import { clampPagination, mapPage, paginatedDto, toIso } from "../lib/dto";
 import { apiError } from "../lib/errors";
 import { getOwned, orgAdminAction, orgAdminMutation, orgMutation, orgQuery } from "../lib/tenancy";
@@ -29,8 +34,8 @@ import {
  * Instagram direct messages (ADR 0017). Tenant-scoped through the verified JWT only: every
  * lookup uses an org-first index with ctx.tenant.orgId, and client-supplied ids go through
  * getOwned (another org's conversation is NOT_FOUND). Every member (viewer and up) may read, as
- * for WhatsApp; editors and admins send replies (sendText); only admins turn messaging on and
- * off.
+ * for WhatsApp; editors and admins send replies (sendText, sendTemplate); only admins turn
+ * messaging on and off.
  */
 
 const MAX_ACCOUNTS = 50;
@@ -271,6 +276,32 @@ export const sendText = orgMutation({
     requireMessagingAvailable();
     const conversation = await getOwned(ctx, "instagramConversations", args.conversationId);
     return toInstagramMessageDto(await queueText(ctx, ctx.tenant, conversation, args));
+  },
+});
+
+/**
+ * Editors and admins (ADR 0022): sends one of the org's Instagram templates (v1/
+ * instagramTemplates) in the conversation, from its own messaging account, exactly as sendText
+ * sends a reply: the same refusals, statuses, `clientMessageId` and Human Agent rule. The
+ * template's `{{customer_name}}` is filled with the customer's first name (or left out); the
+ * message keeps the content as sent (`template`, `templateName`), so later changes to the
+ * template never change it. Another org's template is NOT_FOUND.
+ */
+export const sendTemplate = orgMutation({
+  args: {
+    accountId: v.string(),
+    conversationId: v.string(),
+    templateId: v.string(),
+    clientMessageId: v.string(),
+  },
+  returns: instagramMessageDto,
+  handler: async (ctx, { templateId, ...args }) => {
+    requireMessagingAvailable();
+    const conversation = await getOwned(ctx, "instagramConversations", args.conversationId);
+    const template = await getOwned(ctx, "instagramTemplates", templateId);
+    return toInstagramMessageDto(
+      await queueTemplate(ctx, ctx.tenant, conversation, template, args),
+    );
   },
 });
 

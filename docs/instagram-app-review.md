@@ -14,7 +14,8 @@ Meta's dashboards by the app's admin; nothing in it changes the code. Decisions:
    replies → Message controls → Connected tools → **Allow access to messages**.
 3. **Webhooks** (App Dashboard → Instagram → API setup with Unified login → Webhooks): callback
    `<CONVEX_SITE_URL>/instagram/webhook`, the verify token, fields `messages` and
-   `messaging_seen`; add `messaging_postbacks` if Meta offers it (ice breaker taps).
+   `messaging_seen`; add `messaging_postbacks` if Meta offers it (ice breaker taps and template
+   reply buttons).
 
 ## 2. Publish the app (like the WhatsApp app)
 
@@ -37,7 +38,8 @@ accounts of people who have a role on the app and the verified business's own as
 1. `/connections` → Instagram → Connect, choose the professional account, allow every permission.
 2. Link the account, then Instagram DMs → Settings → **Turn on direct messages**.
 3. From another Instagram account, send a DM. It appears in `/instagram/messages` and `/inbox`.
-4. Reply from the conversation (also try a saved reply and quick-reply buttons).
+4. Reply from the conversation (also try a saved reply, quick-reply buttons and a template
+   from Instagram DMs → Templates).
 5. Set ice breakers in Instagram DM settings; open a new chat from a phone to see them.
 
 ## 4. App Review (Advanced Access, for other businesses)

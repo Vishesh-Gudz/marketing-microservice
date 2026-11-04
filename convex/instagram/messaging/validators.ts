@@ -32,8 +32,17 @@ export const ATTACHMENT_TYPES = [
   "story_mention",
 ] as const;
 
-/** Stored message types: text, attachment placeholders, and `story_reply` (`reply_to.story`). */
-export const MESSAGE_TYPES = ["text", ...ATTACHMENT_TYPES, "story_reply", "unsupported"] as const;
+/**
+ * Stored message types: text, attachment placeholders, `story_reply` (`reply_to.story`), and
+ * `template` (ADR 0022: a button message or cards sent from this app).
+ */
+export const MESSAGE_TYPES = [
+  "text",
+  ...ATTACHMENT_TYPES,
+  "story_reply",
+  "template",
+  "unsupported",
+] as const;
 export type MessageType = (typeof MESSAGE_TYPES)[number];
 export const messageTypeValidator = literalUnion(MESSAGE_TYPES);
 
