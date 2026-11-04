@@ -1,29 +1,34 @@
 import { ClerkProvider } from "@clerk/nextjs";
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Instrument_Sans, JetBrains_Mono } from "next/font/google";
+import { CLERK_APPEARANCE } from "@/components/brand/clerk-appearance";
 import { CLERK_PUBLISHABLE_KEY } from "@/lib/auth/config";
 import { CHOOSE_ORGANIZATION_PATH, SIGN_IN_PATH, SIGN_UP_PATH } from "@/lib/auth/mode";
 import { Providers } from "./providers";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// The Gudz type: Instrument Sans for everything, JetBrains Mono for ids and codes
+// (as on gudz-landing @ redesign-2026, app/[locale]/layout.tsx).
+const instrument = Instrument_Sans({
+  variable: "--font-instrument",
   subsets: ["latin"],
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const jetbrains = JetBrains_Mono({
+  variable: "--font-jetbrains",
   subsets: ["latin"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: { default: "Marketing Microservice", template: "%s · Marketing Microservice" },
+  title: { default: "Gudz Marketing", template: "%s · Gudz Marketing" },
   description: "Unified ad spend, campaign, engagement and messaging analytics.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   const document = (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
+    <html lang="en" className={`${instrument.variable} ${jetbrains.variable} h-full antialiased`}>
       <body className="flex min-h-full flex-col">
         <Providers>{children}</Providers>
       </body>
@@ -35,6 +40,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <ClerkProvider
       publishableKey={CLERK_PUBLISHABLE_KEY}
+      appearance={CLERK_APPEARANCE}
       signInUrl={SIGN_IN_PATH}
       signUpUrl={SIGN_UP_PATH}
       afterSignOutUrl={SIGN_IN_PATH}

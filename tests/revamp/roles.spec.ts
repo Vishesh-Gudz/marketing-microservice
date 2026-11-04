@@ -61,7 +61,7 @@ for (const role of ROLES) {
       await page.goto("/organization");
       await settled(page);
       // Dev-token builds show an explanation instead of Clerk's organization profile.
-      await expect(page).toHaveTitle("Organization · Marketing Microservice");
+      await expect(page).toHaveTitle("Organization · Gudz Marketing");
       await expect(page.locator("main")).toContainText(/Organization/);
     });
   });

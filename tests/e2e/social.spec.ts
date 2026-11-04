@@ -10,7 +10,7 @@ test("navigates to the organic page and keeps the global filters", async ({ page
   await nav.getByRole("link", { name: "Organic" }).click();
   await expect(page).toHaveURL(/\/social\?preset=last_7_days$/);
   await expect(nav.getByRole("link", { name: "Organic" })).toHaveAttribute("aria-current", "page");
-  await expect(page).toHaveTitle("Organic · Marketing Microservice");
+  await expect(page).toHaveTitle("Organic · Gudz Marketing");
 });
 
 test("the organic page shows the sign-in gate without a token", async ({ page }) => {

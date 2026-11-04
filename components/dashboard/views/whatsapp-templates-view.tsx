@@ -34,7 +34,7 @@ type TemplateList = FunctionReturnType<typeof api.v1.whatsapp.listAccountTemplat
 type ManagedTemplate = TemplateList["templates"][number];
 
 const FIELD =
-  "rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30";
+  "rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50";
 
 /** Admin-only: deletes one template in one language after an explicit confirmation. */
 function DeleteTemplate({

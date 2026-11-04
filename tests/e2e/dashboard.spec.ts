@@ -26,7 +26,7 @@ test("navigates between dashboard pages and keeps the global filters", async ({ 
     "aria-current",
     "page",
   );
-  await expect(page).toHaveTitle("Campaigns · Marketing Microservice");
+  await expect(page).toHaveTitle("Campaigns · Gudz Marketing");
 });
 
 test("shows the sign-in gate without a token", async ({ page }) => {

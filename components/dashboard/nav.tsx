@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  BarChart3,
   Building2,
   Camera,
   Inbox,
@@ -16,6 +15,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
+import { Logo } from "@/components/brand/logo";
 import { filterParamsOnly } from "@/lib/analytics/filters";
 import { cn } from "@/lib/utils";
 
@@ -75,11 +75,13 @@ export function DashboardNav({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
+/** "Gudz Marketing": the Gudz wordmark in the logo blue, then the product name. */
 export function Brand() {
   return (
-    <span className="flex items-center gap-2 font-semibold">
-      <BarChart3 className="size-5" aria-hidden="true" />
-      Marketing
+    <span className="flex items-center gap-2">
+      <Logo width={undefined} height={undefined} className="h-[18px] w-auto" aria-hidden="true" />
+      <span className="sr-only">Gudz</span>
+      <span className="text-[15px] font-medium tracking-[-0.01em] text-ink">Marketing</span>
     </span>
   );
 }

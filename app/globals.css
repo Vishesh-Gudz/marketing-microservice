@@ -2,13 +2,22 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+/*
+ * Gudz Marketing design tokens. Light theme only, like the Gudz brand.
+ *
+ * Source of truth: gudz-landing @ redesign-2026, app/globals.css (palette, shadows, motion)
+ * and its shadcn variable map (:root there), applied to this app's shadcn variables below.
+ * Deliberate differences from the landing, for accessibility:
+ * - the focus ring (--ring) is the deep blue #0b7bb0 (about 4.7:1 on white); the landing's
+ *   #27aae1 is about 2.65:1;
+ * - --chart-1 is the deep blue too, so chart lines and bars meet 3:1; the logo blue is --chart-2.
+ */
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-instrument), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -47,80 +56,103 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-:root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+/* The Gudz palette, by name, for the components the next phases restyle. */
+@theme {
+  --color-paper: #ffffff;
+  --color-canvas: #f6f7f9;
+  --color-canvas-2: #eef0f3;
+  --color-ink: #0f1115;
+  --color-ink-2: #2b3038;
+  --color-faint: #8e95a0;
+  --color-line: #e7e9ed;
+  --color-line-strong: #d6dae0;
+  --color-line-stronger: #c3c9d1;
+  --color-blue: #27aae1;
+  --color-blue-deep: #0b7bb0;
+  --color-blue-deeper: #0a6a98;
+  --color-blue-50: #eef8fd;
+  --color-blue-100: #d8eefa;
+  /* Status colours: status only, never decoration. */
+  --color-ok: #1f8a5b;
+  --color-ok-tint: #e7f6ee;
+  --color-amber: #b7791f;
+  --color-amber-tint: #fdf3e2;
+  --color-danger: #d14343;
+  --color-danger-tint: #fdecec;
+
+  --shadow-soft: 0 1px 2px rgb(15 17 21 / 0.04), 0 12px 32px -14px rgb(15 17 21 / 0.14);
+  --shadow-lift: 0 1px 2px rgb(15 17 21 / 0.05), 0 24px 48px -20px rgb(15 17 21 / 0.2);
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
 }
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+:root {
+  color-scheme: light;
+  --dur-micro: 150ms;
+  --dur-ui: 240ms;
+  --dur-enter: 600ms;
+  --radius: 0.625rem;
+  --background: #ffffff;
+  --foreground: #0f1115;
+  --card: #ffffff;
+  --card-foreground: #0f1115;
+  --popover: #ffffff;
+  --popover-foreground: #0f1115;
+  --primary: #0b7bb0;
+  --primary-foreground: #ffffff;
+  --secondary: #f6f7f9;
+  --secondary-foreground: #0f1115;
+  --muted: #f6f7f9;
+  --muted-foreground: #5f6672;
+  --accent: #eef8fd;
+  --accent-foreground: #0f1115;
+  --destructive: #d14343;
+  --border: #e7e9ed;
+  --input: #d6dae0;
+  --ring: #0b7bb0;
+  --chart-1: #0b7bb0;
+  --chart-2: #27aae1;
+  --chart-3: #8e95a0;
+  --chart-4: #d8eefa;
+  --chart-5: #2b3038;
+  --sidebar: #f6f7f9;
+  --sidebar-foreground: #0f1115;
+  --sidebar-primary: #0b7bb0;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eef8fd;
+  --sidebar-accent-foreground: #0f1115;
+  --sidebar-border: #e7e9ed;
+  --sidebar-ring: #0b7bb0;
 }
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-ring;
   }
   body {
     @apply bg-background text-foreground;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background: #d8eefa;
+    color: #0f1115;
+  }
+  /* A focus outline people can see; components with their own focus ring keep it. */
+  :focus-visible {
+    outline-width: 2px;
+    outline-style: solid;
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

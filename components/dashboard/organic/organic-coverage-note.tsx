@@ -31,7 +31,7 @@ function OrganicNotice({
       className={cn(
         "flex items-start gap-2 rounded-md border px-3 py-2 text-sm",
         tone === "warning"
-          ? "border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100"
+          ? "border-amber-300 bg-amber-50 text-amber-950"
           : "bg-muted/40 text-muted-foreground",
       )}
     >
