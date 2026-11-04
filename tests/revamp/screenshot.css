@@ -1,0 +1,4 @@
+/* Applied only while Playwright takes screenshots: hides the Next.js dev-mode indicator. */
+nextjs-portal {
+  display: none !important;
+}

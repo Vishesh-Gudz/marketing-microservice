@@ -1,0 +1,2 @@
+# Baselines are compared byte for byte: never convert their line endings.
+__screenshots__/** -text

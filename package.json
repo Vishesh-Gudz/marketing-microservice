@@ -30,6 +30,8 @@
     "test:e2e": "playwright test",
     "test:e2e:connections": "playwright test -c playwright.connections.config.mts",
     "test:e2e:connections:cleanup": "node scripts/e2e-connections.mjs cleanup",
+    "test:revamp": "playwright test -c playwright.revamp.config.mts",
+    "test:revamp:update": "playwright test -c playwright.revamp.config.mts --update-snapshots",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm run test"
   },
   "dependencies": {
