@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
 import { filterParamsOnly } from "@/lib/analytics/filters";
@@ -18,13 +17,16 @@ import {
 } from "@/lib/analytics/organic-values";
 import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
 import { useDashboardFilters } from "@/lib/analytics/use-dashboard-filters";
+import { cn } from "@/lib/utils";
 import { DataStateBadge } from "../data-state-badge";
 import { EmptyState } from "../empty-state";
 import { formatInstant } from "../freshness-note";
 import { InstagramLink } from "../organic/instagram-link";
+import { MediaTile, POST_TYPE_ICON } from "../organic/media-tile";
 import { OrganicSeriesChart } from "../organic/organic-series-chart";
 import { Breadcrumbs, PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
+import { KPI_CELL, KPI_STRIP, SECTION_HEADING, SURFACE } from "../surface";
 import { ValueText } from "../value-text";
 
 const METRICS = POST_VALUE_KEYS.map((value) => ({ value, label: postLabel(value) }));
@@ -43,7 +45,7 @@ function PostDetail({ postId }: { postId: string }) {
     return (
       <>
         <Breadcrumbs items={[{ label: "Organic", href: organicHref }, { label: "Post" }]} />
-        <Skeleton className="h-40 w-full" role="status" aria-label="Loading post" />
+        <Skeleton className="h-40 w-full rounded-[14px]" role="status" aria-label="Loading post" />
       </>
     );
   }
@@ -52,27 +54,32 @@ function PostDetail({ postId }: { postId: string }) {
     <>
       <Breadcrumbs items={[{ label: "Organic", href: organicHref }, { label: "Post" }]} />
       <PageHeader
-        title={`${humanize(data.type)} post`}
+        title={
+          <span className="flex items-center gap-3">
+            <MediaTile icon={POST_TYPE_ICON[data.type]} />
+            {humanize(data.type)} post
+          </span>
+        }
         description={`Published ${formatInstant(data.publishedAt, org.timezone)} (${org.timezone})`}
       >
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="mt-2 flex flex-wrap items-center gap-2">
           {data.removedAt && <Badge variant="outline">Removed from Instagram</Badge>}
           <span title={POST_DATA_STATE_DESCRIPTION[data.dataState]}>
             <DataStateBadge state={data.dataState} showReported />
           </span>
-          <InstagramLink permalink={data.permalink} />
+          <InstagramLink permalink={data.permalink} className="text-blue-deep" />
         </div>
       </PageHeader>
       {data.caption !== undefined && (
-        <section aria-labelledby="caption-heading" className="rounded-lg border p-4">
-          <h2 id="caption-heading" className="sr-only">
+        <section aria-labelledby="caption-heading" className={cn(SURFACE, "px-4 py-3.5")}>
+          <h2 id="caption-heading" className="mb-1 text-[13px] font-medium text-muted-foreground">
             Caption
           </h2>
-          <p className="text-sm whitespace-pre-line">{data.caption}</p>
+          <p className="text-sm whitespace-pre-line text-ink">{data.caption}</p>
         </section>
       )}
-      <section aria-labelledby="latest-heading" className="flex flex-col gap-2">
-        <h2 id="latest-heading" className="text-base font-semibold">
+      <section aria-labelledby="latest-heading" className="flex flex-col gap-3">
+        <h2 id="latest-heading" className={SECTION_HEADING}>
           Lifetime totals
           {latest ? ` as of ${latest.capturedDate} (UTC capture day)` : ""}
         </h2>
@@ -81,24 +88,22 @@ function PostDetail({ postId }: { postId: string }) {
             {POST_DATA_STATE_DESCRIPTION.unknown} Values are never shown as zero before a capture.
           </EmptyState>
         ) : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          // Eight totals fill 2 or 4 columns.
+          <div className={cn(KPI_STRIP, "grid-cols-2 sm:grid-cols-4")}>
             {POST_VALUE_KEYS.map((key) => (
-              <Card key={key} className="gap-2 py-4" data-kpi={key}>
-                <CardHeader className="px-4">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">
-                    <h3>{postLabel(key)}</h3>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="px-4">
-                  <ValueText view={postValueView(key, latest)} className="text-2xl font-semibold" />
-                </CardContent>
-              </Card>
+              <div key={key} className={KPI_CELL} data-kpi={key}>
+                <h3 className="text-[13px] font-medium text-muted-foreground">{postLabel(key)}</h3>
+                <ValueText
+                  view={postValueView(key, latest)}
+                  className="text-2xl leading-tight font-medium tracking-[-0.02em]"
+                />
+              </div>
             ))}
           </div>
         )}
       </section>
       {data.snapshots.length > 0 && (
-        <div className="rounded-lg border p-4" data-testid="post-snapshots">
+        <div className={cn(SURFACE, "p-4")} data-testid="post-snapshots">
           <OrganicSeriesChart
             title="Lifetime totals at each capture"
             heading={`${postLabel(metric)}: lifetime total at each capture (UTC)`}

@@ -18,18 +18,21 @@ import { OrganicKpiGrid, OrganicKpiGridSkeleton } from "../organic/organic-kpi-g
 import { OrganicSeriesPanel } from "../organic/organic-series-panel";
 import { SocialAccountPicker } from "../organic/social-account-picker";
 import { SocialPostsTable } from "../organic/social-posts-table";
-import { PageHeader } from "../page-header";
+import { IdentityBar, OrganicPageHeader } from "../organic/organic-page-header";
 import { QueryBoundary } from "../query-boundary";
+import { SECTION_HEADING } from "../surface";
 import { UpdatingIndicator } from "../updating-indicator";
 
 /** The selected account's identity, link state and data freshness (v1/socialAccounts:get). */
 function AccountSummary({ socialAccountId }: { socialAccountId: string }) {
   const { data } = useAnalyticsQuery(api.v1.socialAccounts.get, { socialAccountId });
-  if (!data) return <Skeleton className="h-10 w-full" role="status" aria-label="Loading account" />;
+  if (!data) {
+    return <Skeleton className="h-10 w-full sm:w-72" role="status" aria-label="Loading account" />;
+  }
   return (
-    <div className="flex flex-col gap-1" data-testid="social-account-summary">
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <span className="font-medium">
+    <div className="flex min-w-0 flex-col gap-1" data-testid="social-account-summary">
+      <div className="flex flex-wrap items-center gap-1.5 text-sm">
+        <span className="font-medium text-ink">
           {data.username !== undefined ? `@${data.username}` : data.name}
         </span>
         {data.username !== undefined && data.name !== data.username && (
@@ -48,15 +51,21 @@ function OrganicTotals({ args }: { args: OrganicOverviewArgs }) {
   const { data, isLoading, isUpdating } = useAnalyticsQuery(api.v1.organicAnalytics.overview, args);
   if (isLoading || !data) return <OrganicKpiGridSkeleton />;
   return (
-    <div
+    <section
+      aria-labelledby="organic-key-metrics"
       className={cn("flex flex-col gap-3", isUpdating && "opacity-60")}
       aria-busy={isUpdating}
       data-testid="organic-totals"
     >
-      <UpdatingIndicator active={isUpdating} />
+      <div className="flex items-center gap-2">
+        <h2 id="organic-key-metrics" className={SECTION_HEADING}>
+          Key metrics
+        </h2>
+        <UpdatingIndicator active={isUpdating} />
+      </div>
       <OrganicCoverageNotice coverage={data.coverage} />
       <OrganicKpiGrid aggregate={data.totals} comparison={data.comparison} />
-    </div>
+    </section>
   );
 }
 
@@ -77,11 +86,11 @@ export function OrganicView({ switcher }: { switcher?: ReactNode } = {}) {
 
   const header = (
     <>
-      <PageHeader
+      <OrganicPageHeader
         title="Instagram (organic)"
         description="Organic performance of a connected Instagram professional account — separate from paid ads. Account metrics use UTC days."
+        switcher={switcher}
       />
-      {switcher}
       <ReauthBanner />
     </>
   );
@@ -90,7 +99,11 @@ export function OrganicView({ switcher }: { switcher?: ReactNode } = {}) {
     return (
       <>
         {header}
-        <Skeleton className="h-16 w-full" role="status" aria-label="Loading Instagram accounts" />
+        <Skeleton
+          className="h-16 w-full rounded-[14px]"
+          role="status"
+          aria-label="Loading Instagram accounts"
+        />
       </>
     );
   }
@@ -122,7 +135,7 @@ export function OrganicView({ switcher }: { switcher?: ReactNode } = {}) {
     return (
       <>
         {header}
-        {picker}
+        <IdentityBar>{picker}</IdentityBar>
         <EmptyState title="This Instagram account is not available">
           The account in the link does not exist or is not visible to your organization. Choose one
           of your accounts above.
@@ -144,12 +157,12 @@ export function OrganicView({ switcher }: { switcher?: ReactNode } = {}) {
   return (
     <>
       {header}
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <IdentityBar>
         {picker}
         <QueryBoundary resetKey={`account:${selectedId}`} title="Account">
           <AccountSummary socialAccountId={selectedId} />
         </QueryBoundary>
-      </div>
+      </IdentityBar>
       <FilterBar dayBasis="utc" accounts={false} granularity />
       <QueryBoundary resetKey={JSON.stringify(overviewArgs)} title="Key metrics">
         <OrganicTotals args={overviewArgs} />

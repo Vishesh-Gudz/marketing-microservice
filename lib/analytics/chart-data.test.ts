@@ -11,6 +11,7 @@ import {
 import {
   axisTick,
   bucketLabel,
+  compactTick,
   buildSeries,
   formatRange,
   plotRows,
@@ -157,5 +158,12 @@ describe("axisTick", () => {
     expect(axisTick(48_000, "impressions", undefined, L)).toBe("48K");
     expect(axisTick(0.015, "ctr", undefined, L)).toBe("1.5%");
     expect(axisTick(1.2, "cpc", "USD", L)).toBe("$1.2");
+  });
+
+  it("labels any series compactly (organic counts and rates)", () => {
+    expect(compactTick(12_400, "number", { locale: L })).toBe("12.4K");
+    expect(compactTick(-30, "number", { locale: L })).toBe("-30");
+    expect(compactTick(0.155, "percent", { locale: L })).toBe("15.5%");
+    expect(compactTick(2_000, "money", { currency: "USD", locale: L })).toBe("$2K");
   });
 });

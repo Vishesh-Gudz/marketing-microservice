@@ -1,17 +1,9 @@
 "use client";
 
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import Link from "next/link";
-import { useId, useState } from "react";
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -35,6 +27,7 @@ import { DeltaChip } from "./delta-chip";
 import { EmptyState } from "./empty-state";
 import { FxNotice } from "./notices";
 import { SURFACE, TABLE_EDGES } from "./surface";
+import { TablePager } from "./table-pager";
 import { UpdatingIndicator } from "./updating-indicator";
 import { ValueText } from "./value-text";
 
@@ -131,7 +124,6 @@ export function PerformanceTable({
   hrefFor?: (row: PerformanceRow) => string;
   caption: string;
 }) {
-  const pageSizeLabelId = useId();
   const scope = useAnalyticsScope();
   const { searchParams, setParams } = useDashboardFilters();
   const params = new URLSearchParams(searchParams.toString());
@@ -271,50 +263,17 @@ export function PerformanceTable({
           )}
         </div>
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-        <div className="flex items-center gap-2">
-          <span id={pageSizeLabelId} className="text-muted-foreground">
-            Rows per page
-          </span>
-          <Select value={String(numItems)} onValueChange={(value) => setNumItems(Number(value))}>
-            <SelectTrigger size="sm" aria-labelledby={pageSizeLabelId} className="w-20">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {PAGE_SIZES.map((size) => (
-                <SelectItem key={size} value={String(size)}>
-                  {size}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground" aria-live="polite">
-            Page {pageNumber}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={pageNumber === 1}
-            onClick={() => setPaging({ key: argsKey, cursors: cursors.slice(0, -1) })}
-          >
-            <ChevronLeft aria-hidden="true" />
-            Previous
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!data || data.isDone || isUpdating}
-            onClick={() =>
-              data && setPaging({ key: argsKey, cursors: [...cursors, data.continueCursor] })
-            }
-          >
-            Next
-            <ChevronRight aria-hidden="true" />
-          </Button>
-        </div>
-      </div>
+      <TablePager
+        sizes={PAGE_SIZES}
+        numItems={numItems}
+        onNumItemsChange={setNumItems}
+        pageNumber={pageNumber}
+        onPrevious={() => setPaging({ key: argsKey, cursors: cursors.slice(0, -1) })}
+        onNext={() =>
+          data && setPaging({ key: argsKey, cursors: [...cursors, data.continueCursor] })
+        }
+        nextDisabled={!data || data.isDone || isUpdating}
+      />
     </section>
   );
 }

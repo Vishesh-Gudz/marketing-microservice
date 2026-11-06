@@ -133,6 +133,8 @@ describe("OrganicView", () => {
   it("renders KPIs, coverage, the chart and posts; missing values are never zero", () => {
     renderWithOrg(<OrganicView />);
     const totals = screen.getByTestId("organic-totals");
+    // A named region with a visible heading, like the paid pages' key metrics.
+    expect(screen.getByRole("region", { name: "Key metrics" })).toBe(totals);
     const reach = within(totals).getByRole("heading", { name: "Reach" }).closest("[data-kpi]")!;
     expect(reach).toHaveTextContent("—");
     expect(reach).not.toHaveTextContent("0");

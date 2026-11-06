@@ -55,8 +55,9 @@ describe("SocialPostsTable", () => {
       "href",
       `/social/posts/post_1?preset=last_7_days&account=${SOCIAL_ACCOUNT_ID}`,
     );
-    // No media, thumbnail or other URLs, no images.
+    // No media, thumbnail or other URLs, no images: a decorative glyph of the type instead.
     expect(row.querySelector("img")).toBeNull();
+    expect(row.querySelector('td:first-child [aria-hidden="true"] svg')).not.toBeNull();
     expect(row.innerHTML).not.toMatch(/scontent|cdninstagram|thumbnail/);
     expect(screen.queryByText(/delta/i)).toBeNull();
   });

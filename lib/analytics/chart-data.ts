@@ -220,6 +220,21 @@ export function axisTick(
   locale: string | undefined = getDisplayLocale(),
 ): string {
   const kind = VALUES[metric].kind;
+  return compactTick(value, kind === "money" || kind === "percent" ? kind : "number", {
+    currency,
+    locale,
+  });
+}
+
+/** A short y-axis label of any series: compact numbers, money in `currency`, or a fraction. */
+export function compactTick(
+  value: number,
+  kind: "money" | "percent" | "number",
+  {
+    currency,
+    locale = getDisplayLocale(),
+  }: { currency?: string | undefined; locale?: string | undefined } = {},
+): string {
   if (kind === "percent") {
     return new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 1 }).format(
       value,

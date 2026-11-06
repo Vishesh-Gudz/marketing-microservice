@@ -27,23 +27,34 @@ export function SocialAccountPicker({
   onSelect,
   truncated = false,
   label = "Instagram account",
+  prefix = "Account",
 }: {
   accounts: readonly SocialAccount[];
   selectedId: string | undefined;
   onSelect: (accountId: string) => void;
   /** The org has more accounts than the first page lists. */
   truncated?: boolean;
+  /** The accessible name. */
   label?: string;
+  /** The short label shown inside the control, like the filter bar. */
+  prefix?: string;
 }) {
   const id = useId();
   const known = accounts.some((account) => account.id === selectedId);
   return (
-    <div className="grid gap-1" data-testid="social-account-picker">
-      <span id={`${id}-label`} className="text-xs font-medium">
+    <div className="grid min-w-0 gap-1" data-testid="social-account-picker">
+      <span id={`${id}-label`} className="sr-only">
         {label}
       </span>
       <Select value={known ? selectedId : undefined} onValueChange={onSelect}>
-        <SelectTrigger size="sm" className="w-72 max-w-full" aria-labelledby={`${id}-label`}>
+        <SelectTrigger
+          size="sm"
+          className="w-full min-w-0 justify-start sm:w-auto sm:min-w-64 [&>svg:last-child]:ml-auto"
+          aria-labelledby={`${id}-label`}
+        >
+          <span aria-hidden="true" className="text-muted-foreground">
+            {prefix}
+          </span>
           <SelectValue placeholder="Choose an account" />
         </SelectTrigger>
         <SelectContent>

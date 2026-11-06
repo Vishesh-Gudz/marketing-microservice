@@ -30,6 +30,7 @@ Next.js allows one `next dev` per project folder. Stop your own dev server first
 | `shell.spec.ts`     | The app shell: no sideways scroll at 5 widths, ⌘K page search, sidebar rail kept after reload, phone dock and menu, the organization loader (Convex held back)                        |
 | `overview.spec.ts`  | The Overview briefing: Needs attention between the filters and the key metrics; one connect prompt when the organization has no ad accounts (the reply rewritten on the socket)       |
 | `analytics.spec.ts` | The analytics workspaces: the phone Filters sheet (a change applies at once) and the chart y axis in the metric format                                                                |
+| `organic.spec.ts`   | The organic pages: Instagram and YouTube read top to bottom, post rows carry a type glyph (never an image), and no organic page scrolls sideways on a phone                           |
 
 How it stays deterministic:
 

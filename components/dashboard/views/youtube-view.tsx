@@ -17,19 +17,19 @@ import { EmptyState } from "../empty-state";
 import { FilterBar } from "../filter-bar";
 import { formatInstant } from "../freshness-note";
 import { Notice } from "../notices";
+import { IdentityBar, OrganicPageHeader } from "../organic/organic-page-header";
 import { SocialAccountPicker } from "../organic/social-account-picker";
 import { YouTubeChannelDays } from "../organic/youtube-channel-days";
 import { YouTubeVideosTable } from "../organic/youtube-videos-table";
-import { PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
 
 /** The selected channel's identity, source, link state and freshness (v1/socialAccounts:get). */
 function ChannelSummary({ channel }: { channel: SocialAccount }) {
   const { timezone } = useOrg();
   return (
-    <div className="flex flex-col gap-1" data-testid="youtube-channel-summary">
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <span className="font-medium">{channel.name}</span>
+    <div className="flex min-w-0 flex-col gap-1" data-testid="youtube-channel-summary">
+      <div className="flex flex-wrap items-center gap-1.5 text-sm">
+        <span className="font-medium text-ink">{channel.name}</span>
         {channel.username !== undefined && (
           <span className="text-muted-foreground">@{channel.username}</span>
         )}
@@ -71,20 +71,22 @@ export function YouTubeView({ switcher }: { switcher?: ReactNode }) {
   });
 
   const header = (
-    <>
-      <PageHeader
-        title="YouTube (organic)"
-        description="Daily channel metrics and video statistics exactly as YouTube reports them — separate from Instagram and paid ads. Channel days are Pacific Time days."
-      />
-      {switcher}
-    </>
+    <OrganicPageHeader
+      title="YouTube (organic)"
+      description="Daily channel metrics and video statistics exactly as YouTube reports them — separate from Instagram and paid ads. Channel days are Pacific Time days."
+      switcher={switcher}
+    />
   );
 
   if (accounts.isLoading || !accounts.data) {
     return (
       <>
         {header}
-        <Skeleton className="h-16 w-full" role="status" aria-label="Loading YouTube channels" />
+        <Skeleton
+          className="h-16 w-full rounded-[14px]"
+          role="status"
+          aria-label="Loading YouTube channels"
+        />
       </>
     );
   }
@@ -96,7 +98,10 @@ export function YouTubeView({ switcher }: { switcher?: ReactNode }) {
         <EmptyState
           title="No YouTube channel connected"
           action={
-            <Link href="/connections" className="text-sm font-medium underline underline-offset-4">
+            <Link
+              href="/connections"
+              className="text-sm font-medium text-blue-deep underline underline-offset-4"
+            >
               Connect YouTube on the Connections page
             </Link>
           }
@@ -117,13 +122,14 @@ export function YouTubeView({ switcher }: { switcher?: ReactNode }) {
       onSelect={(accountId) => setParams({ account: accountId })}
       truncated={!accounts.data.isDone}
       label="YouTube channel"
+      prefix="Channel"
     />
   );
   if (selected === undefined) {
     return (
       <>
         {header}
-        {picker}
+        <IdentityBar>{picker}</IdentityBar>
         <EmptyState title="This YouTube channel is not available">
           The channel in the link does not exist, was deleted, or is not visible to your
           organization. Choose one of your channels above.
@@ -136,7 +142,7 @@ export function YouTubeView({ switcher }: { switcher?: ReactNode }) {
     return (
       <>
         {header}
-        {picker}
+        <IdentityBar>{picker}</IdentityBar>
         <div role="status">
           <Notice tone="info" label="Deleting stored data">
             <p className="font-medium">This channel&apos;s stored YouTube data is being deleted</p>
@@ -154,10 +160,10 @@ export function YouTubeView({ switcher }: { switcher?: ReactNode }) {
   return (
     <>
       {header}
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <IdentityBar>
         {picker}
         <ChannelSummary channel={selected} />
-      </div>
+      </IdentityBar>
       <FilterBar dayBasis="pacific" accounts={false} compare={false} />
       <QueryBoundary resetKey={JSON.stringify(daysArgs)} title="Channel days">
         <YouTubeChannelDays args={daysArgs} />
@@ -174,7 +180,7 @@ export function YouTubeView({ switcher }: { switcher?: ReactNode }) {
       </QueryBoundary>
       <p className="text-xs text-muted-foreground">
         To delete this channel&apos;s stored YouTube data, disconnect YouTube on the{" "}
-        <Link href="/connections" className="underline underline-offset-4">
+        <Link href="/connections" className="text-blue-deep underline underline-offset-4">
           Connections
         </Link>{" "}
         page.

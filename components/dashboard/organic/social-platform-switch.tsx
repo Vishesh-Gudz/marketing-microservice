@@ -31,7 +31,7 @@ export function SocialPlatformSwitch({
 }) {
   return (
     <nav aria-label="Organic platform" data-testid="social-platform-switch">
-      <ul className="inline-flex rounded-md border p-0.5">
+      <ul className="inline-flex gap-0.5 rounded-[10px] border border-line bg-canvas p-0.5">
         {PLATFORMS.map(({ platform, label }) => {
           const active = platform === current;
           return (
@@ -40,10 +40,8 @@ export function SocialPlatformSwitch({
                 href={socialPlatformHref(platform, searchParams)}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "inline-flex h-8 items-center rounded-sm px-3 text-sm font-medium focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-                  active
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:text-foreground",
+                  "inline-flex h-8 items-center rounded-[8px] px-3.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                  active ? "bg-paper text-ink shadow-soft" : "text-muted-foreground hover:text-ink",
                 )}
               >
                 {label}

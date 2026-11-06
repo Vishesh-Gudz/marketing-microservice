@@ -3,7 +3,9 @@
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Aggregate, Comparison } from "@/lib/analytics/types";
 import { KPI_CARDS, VALUES, valueView, type ValueKey } from "@/lib/analytics/values";
+import { cn } from "@/lib/utils";
 import { DeltaChip } from "./delta-chip";
+import { KPI_CELL, KPI_STRIP } from "./surface";
 import { ValueText } from "./value-text";
 
 /** One KPI's value and comparison chip. */
@@ -38,11 +40,9 @@ function KpiFigure({
   );
 }
 
-// One surface split by hairlines (the cells sit on a 1 px gap over the line colour). Ten KPIs
-// fill 2 columns on phones and 5 from md up, so no row is ever left half empty.
-const STRIP =
-  "grid grid-cols-2 gap-px overflow-hidden rounded-[14px] border border-line bg-line shadow-soft md:grid-cols-5";
-const CELL = "flex min-h-28 min-w-0 flex-col items-start gap-1.5 bg-paper px-4 py-3.5";
+// Ten KPIs fill 2 columns on phones and 5 from md up, so no row is ever left half empty.
+const STRIP = cn(KPI_STRIP, "grid-cols-2 md:grid-cols-5");
+const CELL = KPI_CELL;
 
 /** The 10 headline KPIs with comparison deltas, as one strip (the Overview briefing). */
 export function KpiStrip({
