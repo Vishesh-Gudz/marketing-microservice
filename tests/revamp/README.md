@@ -22,12 +22,12 @@ All of these came from earlier `npm run dev:seed` runs.
 
 Next.js allows one `next dev` per project folder. Stop your own dev server first, or start it on port 3200 so the suite reuses it.
 
-| Spec             | What it pins down                                                                                                           |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `visual.spec.ts` | Every route at 1440/1024/768/375 px, plus the accounts popover, saved-reply form, Instagram template builder and phone menu |
-| `roles.spec.ts`  | Viewer, editor and admin of the same organization: role badge, connect, saved replies, templates, WhatsApp settings         |
-| `a11y.spec.ts`   | axe (WCAG 2.2 A/AA) violations per route, kept as text snapshots                                                            |
-| `shell.spec.ts`  | The app shell: no sideways scroll at 5 widths, ⌘K page search, sidebar rail kept after reload, phone dock and menu          |
+| Spec             | What it pins down                                                                                                                                                                     |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `visual.spec.ts` | Every route (and the sign-in, sign-up and choose-organization frames) at 1440/1024/768/375 px, plus the accounts popover, saved-reply form, Instagram template builder and phone menu |
+| `roles.spec.ts`  | Viewer, editor and admin of the same organization: role badge, connect, saved replies, templates, WhatsApp settings                                                                   |
+| `a11y.spec.ts`   | axe (WCAG 2.2 A/AA) violations per route, kept as text snapshots                                                                                                                      |
+| `shell.spec.ts`  | The app shell: no sideways scroll at 5 widths, ⌘K page search, sidebar rail kept after reload, phone dock and menu, the organization loader (Convex held back)                        |
 
 How it stays deterministic:
 
@@ -37,7 +37,7 @@ How it stays deterministic:
 
 Known limits:
 
-- **Dev auth, not Clerk.** The dashboard runs in dev-token mode, so the shell has no Clerk switcher (sidebar) or user menu (top bar), and `/organization` and `/sign-in` show their dev-mode states. The Clerk screens are checked on a preview deploy in the final QA phase.
+- **Dev auth, not Clerk.** The dashboard runs in dev-token mode, so the shell has no Clerk switcher (sidebar) or user menu (top bar), and `/organization`, `/sign-in`, `/sign-up` and `/session-tasks/choose-organization` show their dev-mode states inside the real frame. The Clerk screens are checked on a preview deploy in the final QA phase.
 - **No messaging data.** The seed has no WhatsApp or Instagram DM conversations, and the WhatsApp deployment flag is off locally. The inbox and conversation screens are recorded in their empty and settings states only, and the WhatsApp role check is skipped.
 - **Data can move.** If the local backend re-syncs or changes a connection's state (for example to `needs_reauth`), screenshots change too. Re-record on `main` before comparing a branch.
 - **Per-platform screenshots.** Font rendering differs between operating systems; the committed baseline is `win32`.

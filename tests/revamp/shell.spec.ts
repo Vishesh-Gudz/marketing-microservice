@@ -97,3 +97,24 @@ test.describe("phones", () => {
     await expect(sheet).toBeHidden();
   });
 });
+
+test.describe("organization loader", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("shows the Gudz loader in the content area until the organization resolves", async ({
+    page,
+  }) => {
+    // Hold the Convex sync socket open with no server behind it: auth never completes, so the
+    // gate stays on its loader while the shell around it is already usable.
+    await page.routeWebSocket(/\/api\/[^/]+\/sync/, () => {});
+    await page.goto("/");
+    const loader = page.getByRole("status", { name: "Loading organization" });
+    await expect(loader).toBeVisible({ timeout: 90_000 });
+    await expect(page.getByRole("navigation", { name: "Main" })).toBeVisible();
+    await expect(loader).toContainText("Connecting to your organization…", { timeout: 10_000 });
+    await page.evaluate(() => document.fonts.ready);
+    await expect(page).toHaveScreenshot("org-loader-1440.png", {
+      mask: [page.getByText(/Convex/).last()],
+    });
+  });
+});

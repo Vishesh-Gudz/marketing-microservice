@@ -106,6 +106,24 @@ describe("⌘K palette", () => {
     expect(push).toHaveBeenCalledWith("/conversions");
   });
 
+  it("tags a grouped page with its group only when the name does not already say it", () => {
+    render(<AppShell>content</AppShell>);
+    const dialog = openWithShortcut();
+    const input = within(dialog).getByRole("combobox");
+    fireEvent.change(input, { target: { value: "whatsapp templates" } });
+    expect(
+      within(dialog)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["WhatsApp templates"]);
+    fireEvent.change(input, { target: { value: "organization" } });
+    expect(
+      within(dialog)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["OrganizationSettings"]);
+  });
+
   it("says when nothing matches", () => {
     render(<AppShell>content</AppShell>);
     const dialog = openWithShortcut();

@@ -191,9 +191,10 @@ function PaletteBody({ onDone }: { onDone: () => void }) {
                       aria-hidden="true"
                     />
                     <span className="min-w-0 flex-1 truncate">{link.name}</span>
-                    {link.parent && (
-                      <span className="text-xs text-muted-foreground">{link.parent.label}</span>
-                    )}
+                    {link.parent &&
+                      !link.name.toLowerCase().includes(link.parent.label.toLowerCase()) && (
+                        <span className="text-xs text-muted-foreground">{link.parent.label}</span>
+                      )}
                     {active && (
                       <CornerDownLeft className="size-3.5 text-blue-deep" aria-hidden="true" />
                     )}

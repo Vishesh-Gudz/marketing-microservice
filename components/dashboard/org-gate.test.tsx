@@ -5,6 +5,8 @@ import { AuthUiProvider, type AuthUi } from "@/lib/auth/auth-ui";
 import { ORG } from "@/tests/unit/analytics-fixtures";
 import { auth, ensureMock, queryResults, resetHarness } from "@/tests/unit/dashboard-harness";
 import {
+  GATE_SLOW_MS,
+  GATE_STUCK_MS,
   OrgGateMessage,
   ORG_SWITCH_MAX_ATTEMPTS,
   ORG_SWITCH_RETRY_MS,
@@ -151,5 +153,47 @@ describe("OrgGateMessage when signed out", () => {
     renderMessage();
     expect(screen.getByText("Not signed in")).toBeInTheDocument();
     expect(screen.getByText(/not configured/)).toBeInTheDocument();
+  });
+});
+
+describe("OrgGateMessage while the organization resolves", () => {
+  it("shows the Gudz loader, then says it is still connecting, then offers a reload", () => {
+    render(
+      <Wrapper>
+        <OrgGateMessage state={{ status: "resolving" }} />
+      </Wrapper>,
+    );
+    const loader = screen.getByRole("status", { name: "Loading organization" });
+    expect(loader).toHaveAttribute("aria-busy", "true");
+    expect(loader).not.toHaveTextContent("Connecting");
+    act(() => {
+      vi.advanceTimersByTime(GATE_SLOW_MS);
+    });
+    expect(loader).toHaveTextContent("Connecting to your organization…");
+    expect(screen.queryByRole("button", { name: "Reload the page" })).not.toBeInTheDocument();
+    act(() => {
+      vi.advanceTimersByTime(GATE_STUCK_MS - GATE_SLOW_MS);
+    });
+    expect(loader).toHaveTextContent("This is taking longer than usual.");
+    expect(screen.getByRole("button", { name: "Reload the page" })).toBeInTheDocument();
+  });
+
+  it("keeps its timing from checking to resolving (one loader, not two)", () => {
+    const { rerender } = render(
+      <Wrapper>
+        <OrgGateMessage state={{ status: "checking" }} />
+      </Wrapper>,
+    );
+    act(() => {
+      vi.advanceTimersByTime(GATE_SLOW_MS);
+    });
+    rerender(
+      <Wrapper>
+        <OrgGateMessage state={{ status: "resolving" }} />
+      </Wrapper>,
+    );
+    expect(screen.getByRole("status", { name: "Loading organization" })).toHaveTextContent(
+      "Connecting to your organization…",
+    );
   });
 });

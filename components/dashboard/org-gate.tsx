@@ -3,7 +3,9 @@
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { GudzLoader } from "@/components/brand/gudz-loader";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
 import { isMarketingError } from "@/convex/lib/errors";
@@ -124,7 +126,8 @@ export function OrgBadge({ state }: { state: OrgGateState }) {
     case "error":
       return <Badge variant="destructive">{state.code}</Badge>;
     default:
-      return <Skeleton className="h-5 w-28" role="status" aria-label="Loading organization" />;
+      // Decorative: the content area's loader is the one "Loading organization" status.
+      return <Skeleton className="h-5 w-28" aria-hidden="true" />;
   }
 }
 
@@ -177,16 +180,42 @@ export function OrgGateMessage({ state }: { state: Exclude<OrgGateState, { statu
         </EmptyState>
       );
     default:
-      return (
-        <div
-          className="flex flex-col gap-3"
-          aria-busy="true"
-          role="status"
-          aria-label="Loading organization"
-        >
-          <Skeleton className="h-8 w-48" />
-          <Skeleton className="h-24 w-full" />
-        </div>
-      );
+      return <GateLoader />;
   }
+}
+
+/** After this long the loader says it is still connecting. */
+export const GATE_SLOW_MS = 3_000;
+/** After this long it offers to reload the page. */
+export const GATE_STUCK_MS = 12_000;
+
+/**
+ * The Gudz loader while the organization resolves (first load and after an organization
+ * switch; the sidebar and top bar stay). The gate keeps its own retries; this only explains a
+ * slow start and, if it never finishes, offers a reload.
+ */
+function GateLoader() {
+  const [stage, setStage] = useState<"start" | "slow" | "stuck">("start");
+  useEffect(() => {
+    const slow = setTimeout(() => setStage("slow"), GATE_SLOW_MS);
+    const stuck = setTimeout(() => setStage("stuck"), GATE_STUCK_MS);
+    return () => {
+      clearTimeout(slow);
+      clearTimeout(stuck);
+    };
+  }, []);
+  return (
+    <GudzLoader label="Loading organization">
+      {/* Always rendered, so the text appearing does not move anything. */}
+      <p className="min-h-5 text-sm text-muted-foreground">
+        {stage === "slow" && "Connecting to your organization…"}
+        {stage === "stuck" && "This is taking longer than usual."}
+      </p>
+      {stage === "stuck" && (
+        <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
+          Reload the page
+        </Button>
+      )}
+    </GudzLoader>
+  );
 }

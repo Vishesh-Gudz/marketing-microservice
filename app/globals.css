@@ -231,6 +231,34 @@
   .gudz-btn-secondary:disabled {
     box-shadow: 0 0 0 1px #d6dae0;
   }
+
+  /* Indeterminate progress (the Gudz loader, the route progress bar): a third-width segment
+     sweeping left to right. With reduced motion it stays a still, full-width bar. */
+  .gudz-indeterminate {
+    animation: gudz-indeterminate 1.2s var(--ease-in-out) infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .gudz-indeterminate {
+      animation: none;
+      width: 100%;
+      opacity: 0.6;
+    }
+  }
+
+  /* The dot grid of the Gudz auth and system screens. */
+  .gudz-dot-grid {
+    background-image: radial-gradient(var(--color-line-strong) 1px, transparent 1px);
+    background-size: 18px 18px;
+  }
+}
+
+@keyframes gudz-indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

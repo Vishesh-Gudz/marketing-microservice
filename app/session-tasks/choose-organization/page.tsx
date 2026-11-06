@@ -1,6 +1,6 @@
 import { TaskChooseOrganization } from "@clerk/nextjs";
 import type { Metadata } from "next";
-import { AuthPageShell, ClerkUnavailable } from "@/components/auth/auth-page";
+import { AuthPageShell, ClerkCardPlaceholder, ClerkUnavailable } from "@/components/auth/auth-page";
 import { CLERK_ENABLED } from "@/lib/auth/config";
 
 export const metadata: Metadata = { title: "Choose an organization" };
@@ -10,7 +10,14 @@ export const metadata: Metadata = { title: "Choose an organization" };
 export default function ChooseOrganizationPage() {
   return (
     <AuthPageShell>
-      {CLERK_ENABLED ? <TaskChooseOrganization redirectUrlComplete="/" /> : <ClerkUnavailable />}
+      {CLERK_ENABLED ? (
+        <>
+          <ClerkCardPlaceholder />
+          <TaskChooseOrganization redirectUrlComplete="/" />
+        </>
+      ) : (
+        <ClerkUnavailable />
+      )}
     </AuthPageShell>
   );
 }

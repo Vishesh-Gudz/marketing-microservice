@@ -9,7 +9,7 @@ import { expect, settled, test } from "./support";
 
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 
-const ROUTES = [
+const ROUTES: { name: string; path: string; gate?: boolean }[] = [
   { name: "overview", path: "/" },
   { name: "campaigns", path: "/campaigns" },
   { name: "breakdowns", path: "/breakdowns" },
@@ -26,6 +26,9 @@ const ROUTES = [
   { name: "instagram-dms", path: "/instagram/messages" },
   { name: "instagram-dm-settings", path: "/instagram/messages/settings" },
   { name: "instagram-templates", path: "/instagram/messages/templates" },
+  // Outside the dashboard (no org gate). In dev-token mode they show their "not used" state.
+  { name: "sign-in", path: "/sign-in", gate: false },
+  { name: "sign-up", path: "/sign-up", gate: false },
 ];
 
 async function summary(page: Page): Promise<string> {
@@ -42,7 +45,7 @@ async function summary(page: Page): Promise<string> {
 for (const route of ROUTES) {
   test(`axe: ${route.name}`, async ({ page }) => {
     await page.goto(route.path);
-    await settled(page);
+    await settled(page, { gate: route.gate !== false });
     expect(await summary(page)).toMatchSnapshot(`${route.name}.axe.txt`);
   });
 }
