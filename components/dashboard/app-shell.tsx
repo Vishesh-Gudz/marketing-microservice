@@ -1,31 +1,34 @@
 "use client";
 
-import { Menu } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { ConvexStatus } from "@/components/convex-status";
-import { Button } from "@/components/ui/button";
+import { CommandPalette, usePaletteShortcut } from "@/components/shell/command-palette";
+import { MobileDock } from "@/components/shell/mobile-dock";
+import { Sidebar } from "@/components/shell/sidebar";
+import { TopBar } from "@/components/shell/top-bar";
 import {
   Sheet,
   SheetContent,
   SheetDescription,
   SheetHeader,
   SheetTitle,
-  SheetTrigger,
 } from "@/components/ui/sheet";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { OrgProvider } from "@/lib/analytics/org-context";
-import { AccountControls } from "./account-controls";
+import { OrganizationControl } from "./account-controls";
 import { Brand, DashboardNav } from "./nav";
-import { OrgBadge, OrgGateMessage, useOrgGate } from "./org-gate";
+import { OrgGateMessage, useOrgGate } from "./org-gate";
 
 /**
- * Dashboard shell (D21/D22): skip link, header (menu, org, reporting currency,
- * Convex status), sidebar navigation on large screens and a sheet menu on small
- * ones. Page content renders only once the organization is resolved (D16).
+ * Dashboard shell (D21/D22): skip link; on large screens a sticky, collapsible sidebar; a
+ * top bar (page trail, ⌘K search, organization, Convex status, user menu); on phones and
+ * tablets a bottom dock whose Menu opens the full navigation in a sheet. Page content renders
+ * only once the organization is resolved (D16).
  */
 export function AppShell({ children }: { children: ReactNode }) {
   const gate = useOrgGate();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  usePaletteShortcut(() => setPaletteOpen((open) => !open));
   return (
     <TooltipProvider>
       <a
@@ -34,38 +37,15 @@ export function AppShell({ children }: { children: ReactNode }) {
       >
         Skip to content
       </a>
-      <div className="flex min-h-screen flex-col">
-        <header className="sticky top-0 z-40 flex h-14 items-center gap-3 border-b bg-background/95 px-4 backdrop-blur">
-          <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
-            <SheetTrigger asChild>
-              <Button variant="ghost" size="icon" className="lg:hidden" aria-label="Open menu">
-                <Menu className="size-5" aria-hidden="true" />
-              </Button>
-            </SheetTrigger>
-            <SheetContent side="left" className="w-72 p-4">
-              <SheetHeader className="p-0 pb-4">
-                <SheetTitle>
-                  <Brand />
-                </SheetTitle>
-                <SheetDescription className="sr-only">Dashboard navigation</SheetDescription>
-              </SheetHeader>
-              <DashboardNav onNavigate={() => setMenuOpen(false)} />
-            </SheetContent>
-          </Sheet>
-          <Brand />
-          <div className="ml-auto flex items-center gap-3">
-            <OrgBadge state={gate} />
-            <span className="hidden sm:inline-flex">
-              <ConvexStatus />
-            </span>
-            <AccountControls />
-          </div>
-        </header>
-        <div className="flex flex-1">
-          <aside className="hidden w-56 shrink-0 border-r p-3 lg:block">
-            <DashboardNav />
-          </aside>
-          <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 p-4 outline-none md:p-6">
+      <div className="group/shell flex min-h-dvh">
+        <Sidebar />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <TopBar gate={gate} onSearch={() => setPaletteOpen(true)} />
+          <main
+            id="main-content"
+            tabIndex={-1}
+            className="min-w-0 flex-1 p-4 pb-24 outline-none md:p-6 md:pb-24 lg:pb-8"
+          >
             {gate.status === "ready" ? (
               <OrgProvider org={gate.org}>
                 <div className="mx-auto flex max-w-7xl flex-col gap-4">{children}</div>
@@ -78,6 +58,20 @@ export function AppShell({ children }: { children: ReactNode }) {
           </main>
         </div>
       </div>
+      <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
+        <MobileDock />
+        <SheetContent side="left" className="flex w-72 flex-col gap-0 bg-canvas p-0">
+          <SheetHeader className="h-14 shrink-0 justify-center px-5 py-0">
+            <SheetTitle>
+              <Brand />
+            </SheetTitle>
+            <SheetDescription className="sr-only">Dashboard navigation</SheetDescription>
+          </SheetHeader>
+          <OrganizationControl />
+          <DashboardNav onNavigate={() => setMenuOpen(false)} />
+        </SheetContent>
+      </Sheet>
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
     </TooltipProvider>
   );
 }

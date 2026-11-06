@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiError } from "@/convex/lib/errors";
 import { ORG } from "@/tests/unit/analytics-fixtures";
@@ -71,25 +71,31 @@ describe("AppShell / OrgGate", () => {
     );
   });
 
-  it("lists Connections last in the main navigation, marked current on /connections", () => {
+  it("groups the main navigation and pins Connections and Settings at the bottom", () => {
     auth.isAuthenticated = false;
     setUrl("/connections", "preset=last_7_days&status=connected");
     render(<AppShell>content</AppShell>);
     const nav = screen.getAllByRole("navigation", { name: "Main" })[0]!;
     const links = within(nav).getAllByRole("link");
+    // Templates and Settings are closed groups here, so their pages are not listed.
     expect(links.map((link) => link.textContent)).toEqual([
       "Overview",
+      "Inbox",
       "Campaigns",
       "Breakdowns",
       "Conversions",
       "Accounts",
       "Organic",
-      "Organization",
-      "Inbox",
       "WhatsApp",
       "Instagram DMs",
+      "Saved replies",
       "Connections",
     ]);
+    expect(within(nav).getByRole("group", { name: "Analytics" })).toBeInTheDocument();
+    expect(within(nav).getByRole("group", { name: "Messaging" })).toBeInTheDocument();
+    for (const name of ["Templates", "Settings"]) {
+      expect(within(nav).getByRole("button", { name })).toHaveAttribute("aria-expanded", "false");
+    }
     const connections = within(nav).getByRole("link", { name: "Connections" });
     expect(connections).toHaveAttribute("aria-current", "page");
     // Like every link it carries only the global filters, never page or callback params.
@@ -97,6 +103,76 @@ describe("AppShell / OrgGate", () => {
     for (const link of links.filter((l) => l !== connections)) {
       expect(link).not.toHaveAttribute("aria-current");
     }
+  });
+
+  it("opens the group of the current page and marks only that page", () => {
+    auth.isAuthenticated = false;
+    setUrl("/whatsapp/templates");
+    render(<AppShell>content</AppShell>);
+    const nav = screen.getAllByRole("navigation", { name: "Main" })[0]!;
+    expect(within(nav).getByRole("button", { name: "Templates" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    const current = within(nav).getAllByRole("link", { current: "page" });
+    expect(current).toHaveLength(1);
+    expect(current[0]).toHaveAccessibleName("WhatsApp templates");
+    expect(within(nav).getByRole("link", { name: "WhatsApp" })).not.toHaveAttribute("aria-current");
+    // Groups open and close by hand.
+    const settings = within(nav).getByRole("button", { name: "Settings" });
+    fireEvent.click(settings);
+    expect(settings).toHaveAttribute("aria-expanded", "true");
+    expect(within(nav).getByRole("link", { name: "WhatsApp settings" })).toHaveAttribute(
+      "href",
+      "/whatsapp/settings",
+    );
+    expect(within(nav).getByRole("link", { name: "Organization" })).toBeInTheDocument();
+    fireEvent.click(settings);
+    expect(within(nav).queryByRole("link", { name: "Organization" })).not.toBeInTheDocument();
+  });
+
+  it("marks Saved replies, not Inbox, on the saved replies page", () => {
+    auth.isAuthenticated = false;
+    setUrl("/inbox/saved-replies");
+    render(<AppShell>content</AppShell>);
+    const nav = screen.getAllByRole("navigation", { name: "Main" })[0]!;
+    expect(within(nav).getByRole("link", { name: "Saved replies" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(nav).getByRole("link", { name: "Inbox" })).not.toHaveAttribute("aria-current");
+  });
+
+  it("has a phone dock with the main pages and the full menu", () => {
+    auth.isAuthenticated = false;
+    setUrl("/campaigns/123", "preset=last_7_days&sort=name");
+    render(<AppShell>content</AppShell>);
+    const dock = screen.getByRole("navigation", { name: "Shortcuts" });
+    const links = within(dock).getAllByRole("link");
+    expect(links.map((link) => link.textContent)).toEqual([
+      "Overview",
+      "Inbox",
+      "Campaigns",
+      "Organic",
+    ]);
+    expect(within(dock).getByRole("link", { name: "Campaigns" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(dock).getByRole("link", { name: "Inbox" })).toHaveAttribute(
+      "href",
+      "/inbox?preset=last_7_days",
+    );
+    fireEvent.click(within(dock).getByRole("button", { name: "Open menu" }));
+    const sheet = screen.getByRole("dialog");
+    expect(within(sheet).getByRole("navigation", { name: "Main" })).toBeInTheDocument();
+  });
+
+  it("shows where the page sits in the top bar", () => {
+    auth.isAuthenticated = false;
+    setUrl("/breakdowns");
+    render(<AppShell>content</AppShell>);
+    expect(screen.getByRole("banner")).toHaveTextContent("AnalyticsBreakdowns");
   });
 
   it("has a skip link to the main content", () => {

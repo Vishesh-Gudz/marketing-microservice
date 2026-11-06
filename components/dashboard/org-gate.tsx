@@ -98,15 +98,23 @@ export function useOrgGate(): OrgGateState {
   return { status: "ready", org };
 }
 
-/** Header badge: organization and role. */
+// The role and currency tags give way first when the top bar is short of room: on phones,
+// and next to the sidebar between 1024 and 1279 px.
+const ORG_TAG = "hidden sm:inline-flex lg:hidden xl:inline-flex";
+
+/** Top-bar badge: organization, role and reporting currency. */
 export function OrgBadge({ state }: { state: OrgGateState }) {
   switch (state.status) {
     case "ready":
       return (
-        <span className="flex items-center gap-2" data-testid="org-badge">
-          <span className="max-w-40 truncate text-sm font-medium">{state.org.displayName}</span>
-          <Badge variant="secondary">{state.org.role}</Badge>
-          <Badge variant="outline" title="Reporting currency">
+        <span className="flex min-w-0 items-center gap-2" data-testid="org-badge">
+          <span className="max-w-28 truncate text-sm font-medium text-ink sm:max-w-40">
+            {state.org.displayName}
+          </span>
+          <Badge variant="secondary" className={ORG_TAG}>
+            {state.org.role}
+          </Badge>
+          <Badge variant="outline" title="Reporting currency" className={ORG_TAG}>
             {state.org.reportingCurrency}
           </Badge>
         </span>
