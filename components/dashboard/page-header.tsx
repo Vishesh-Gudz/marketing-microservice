@@ -6,16 +6,26 @@ export function PageHeader({
   title,
   description,
   children,
+  actions,
 }: {
   title: ReactNode;
   description?: ReactNode;
   children?: ReactNode;
+  /** Page-level controls on the title's row, at the right (they wrap below on phones). */
+  actions?: ReactNode;
 }) {
-  return (
-    <div className="flex flex-col gap-1">
+  const heading = (
+    <>
       <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
       {description && <p className="text-sm text-muted-foreground">{description}</p>}
       {children}
+    </>
+  );
+  if (actions === undefined) return <div className="flex flex-col gap-1">{heading}</div>;
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="flex min-w-0 flex-1 basis-80 flex-col gap-1">{heading}</div>
+      {actions}
     </div>
   );
 }

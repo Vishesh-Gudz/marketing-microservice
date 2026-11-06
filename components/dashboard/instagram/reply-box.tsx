@@ -6,6 +6,7 @@ import { useId, useRef, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/convex/_generated/api";
 import type { Notice } from "@/lib/connections/types";
 import { MAX_REPLY_BYTES, sendErrorNotice, utf8Length } from "@/lib/instagram/messages";
@@ -117,7 +118,7 @@ export function ReplyBox({
         />
       </div>
       <Label htmlFor={fieldId}>Message</Label>
-      <textarea
+      <Textarea
         id={fieldId}
         value={text}
         rows={3}
@@ -125,11 +126,6 @@ export function ReplyBox({
         aria-describedby={countId}
         aria-invalid={tooLong || undefined}
         onChange={(event) => edited({ text: event.target.value })}
-        className={cn(
-          "w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-xs outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50 md:text-sm",
-          "focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
-          "aria-invalid:border-destructive aria-invalid:ring-destructive/20",
-        )}
       />
       <span
         id={countId}

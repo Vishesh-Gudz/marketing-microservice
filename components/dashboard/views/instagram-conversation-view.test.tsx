@@ -131,6 +131,17 @@ describe("the thread", () => {
     expect(notFoundMock).toHaveBeenCalled();
   });
 
+  it("lists the conversation's own facts and the channel's tools beside it", () => {
+    show();
+    const details = screen.getByRole("complementary", { name: "Conversation details" });
+    expect(details).toHaveTextContent("Instagram@ana.shop");
+    expect(details).toHaveTextContent("Your account@shop");
+    expect(within(details).getByRole("link", { name: "Instagram DM settings" })).toHaveAttribute(
+      "href",
+      "/instagram/messages/settings",
+    );
+  });
+
   it("names the contact and account, links back to the inbox, oldest message first", () => {
     queryResults.set(GET, conversation());
     queryResults.set(

@@ -13,14 +13,7 @@ export function OrganicPageHeader({
   description: string;
   switcher?: ReactNode;
 }) {
-  return (
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div className="min-w-0 flex-1 basis-80">
-        <PageHeader title={title} description={description} />
-      </div>
-      {switcher}
-    </div>
-  );
+  return <PageHeader title={title} description={description} actions={switcher} />;
 }
 
 /** The account (or channel) picker and the selected account's summary, on one surface. */

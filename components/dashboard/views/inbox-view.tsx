@@ -4,9 +4,7 @@ import { BookmarkPlus } from "lucide-react";
 import { usePaginatedQuery } from "convex/react";
 import Link from "next/link";
 import { useState } from "react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { api } from "@/convex/_generated/api";
 import { useOrg } from "@/lib/analytics/org-context";
@@ -20,6 +18,7 @@ import {
 import { useNow } from "@/lib/whatsapp/inbox";
 import { EmptyState } from "../empty-state";
 import { formatInstant } from "../freshness-note";
+import { ThreadList, ThreadListSkeleton } from "../messaging/thread-list";
 import { PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
 
@@ -33,21 +32,26 @@ const FILTER_LABELS: Readonly<Record<Filter, string>> = { all: "All", ...CHANNEL
 function ChannelFilter({ value, onChange }: { value: Filter; onChange: (next: Filter) => void }) {
   return (
     <div className="flex items-center gap-2">
-      <span id="inbox-channel-label" className="text-sm text-muted-foreground">
+      <span id="inbox-channel-label" className="sr-only">
         Channel
       </span>
       <ToggleGroup
         type="single"
-        variant="outline"
         size="sm"
+        spacing={0.5}
         role="group"
         aria-labelledby="inbox-channel-label"
         value={value}
         // A single toggle group can be cleared by clicking the selected item: keep a choice.
         onValueChange={(next) => next !== "" && onChange(next as Filter)}
+        className="rounded-[10px] border border-line bg-canvas p-0.5"
       >
         {FILTERS.map((filter) => (
-          <ToggleGroupItem key={filter} value={filter} className="px-3">
+          <ToggleGroupItem
+            key={filter}
+            value={filter}
+            className="h-8 rounded-[8px] px-3.5 text-muted-foreground hover:bg-transparent hover:text-ink data-[state=on]:bg-paper data-[state=on]:text-ink data-[state=on]:shadow-soft"
+          >
             {FILTER_LABELS[filter]}
           </ToggleGroupItem>
         ))}
@@ -56,7 +60,7 @@ function ChannelFilter({ value, onChange }: { value: Filter; onChange: (next: Fi
   );
 }
 
-function ThreadList({ filter }: { filter: Filter }) {
+function Threads({ filter }: { filter: Filter }) {
   const { timezone } = useOrg();
   const now = useNow();
   const { results, status, loadMore } = usePaginatedQuery(
@@ -65,9 +69,7 @@ function ThreadList({ filter }: { filter: Filter }) {
     { initialNumItems: THREADS_PER_PAGE },
   );
 
-  if (status === "LoadingFirstPage") {
-    return <Skeleton className="h-40 w-full" role="status" aria-label="Loading conversations" />;
-  }
+  if (status === "LoadingFirstPage") return <ThreadListSkeleton />;
   if (results.length === 0) {
     return (
       <EmptyState title="No conversations yet">
@@ -78,48 +80,25 @@ function ThreadList({ filter }: { filter: Filter }) {
     );
   }
   return (
-    <div className="flex flex-col gap-3">
-      <ul aria-label="Conversations" className="flex flex-col divide-y rounded-lg border">
-        {results.map((thread) => {
-          const state = replyStateAt(thread, now);
-          return (
-            <li key={thread.id}>
-              <Link
-                href={threadHref(thread)}
-                className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-3 hover:bg-accent focus-visible:bg-accent"
-              >
-                <span className="flex min-w-0 flex-col">
-                  <span className="flex min-w-0 items-center gap-2">
-                    <Badge variant="outline">{CHANNEL_LABELS[thread.channel]}</Badge>
-                    <span className="truncate font-medium">{thread.contactLabel}</span>
-                  </span>
-                  <span className="text-xs text-muted-foreground">To {thread.accountLabel}</span>
-                </span>
-                <span className="flex items-center gap-3 text-xs text-muted-foreground">
-                  <Badge variant={state === "open" ? "secondary" : "outline"}>
-                    {REPLY_STATE_LABELS[state]}
-                  </Badge>
-                  <time dateTime={thread.lastMessageAt}>
-                    {formatInstant(thread.lastMessageAt, timezone)}
-                  </time>
-                </span>
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
-      {status !== "Exhausted" && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="self-start"
-          disabled={status === "LoadingMore"}
-          onClick={() => loadMore(THREADS_PER_PAGE)}
-        >
-          {status === "LoadingMore" ? "Loading…" : "Show more conversations"}
-        </Button>
-      )}
-    </div>
+    <ThreadList
+      rows={results.map((thread) => {
+        const state = replyStateAt(thread, now);
+        return {
+          id: thread.id,
+          href: threadHref(thread),
+          channel: thread.channel,
+          channelLabel: CHANNEL_LABELS[thread.channel],
+          contact: thread.contactLabel,
+          account: `To ${thread.accountLabel}`,
+          state: { tone: state, label: REPLY_STATE_LABELS[state] },
+          at: thread.lastMessageAt,
+          atText: formatInstant(thread.lastMessageAt, timezone),
+        };
+      })}
+      canLoadMore={status !== "Exhausted"}
+      loadingMore={status === "LoadingMore"}
+      onLoadMore={() => loadMore(THREADS_PER_PAGE)}
+    />
   );
 }
 
@@ -135,20 +114,21 @@ export function InboxView() {
       <PageHeader
         title="Inbox"
         description="Messages from your customers on WhatsApp and Instagram, newest first."
-      >
-        <div className="flex flex-wrap items-center gap-2 pt-2">
-          <ChannelFilter value={filter} onChange={setFilter} />
+        actions={
           <Button asChild variant="outline" size="sm">
             <Link href="/inbox/saved-replies">
               <BookmarkPlus aria-hidden="true" />
               Saved replies
             </Link>
           </Button>
-        </div>
-      </PageHeader>
-      <QueryBoundary resetKey={`inbox-${filter}`} title="Conversations">
-        <ThreadList filter={filter} />
-      </QueryBoundary>
+        }
+      />
+      <div className="flex flex-col gap-3">
+        <ChannelFilter value={filter} onChange={setFilter} />
+        <QueryBoundary resetKey={`inbox-${filter}`} title="Conversations">
+          <Threads filter={filter} />
+        </QueryBoundary>
+      </div>
     </div>
   );
 }

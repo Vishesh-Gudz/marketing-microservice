@@ -222,6 +222,35 @@ describe("WhatsApp conversation", () => {
     expect(loadMoreMock).toHaveBeenCalledWith(30);
   });
 
+  it("lists the conversation's own facts and the channel's tools beside it", () => {
+    queryResults.set(GET, conversation());
+    queryResults.set(MESSAGES, page([message({})]));
+    renderWithOrg(<WhatsAppConversationView conversationId="conv1" />);
+    const details = screen.getByRole("complementary", { name: "Conversation details" });
+    expect(details).toHaveTextContent("NameAna");
+    expect(details).toHaveTextContent("WhatsApp number+15550001111");
+    expect(details).toHaveTextContent("Your number+1 555-000-0001");
+    expect(within(details).getByRole("link", { name: "WhatsApp templates" })).toHaveAttribute(
+      "href",
+      "/whatsapp/templates",
+    );
+    // The history scrolls on its own, and a keyboard can reach it.
+    expect(screen.getByRole("region", { name: "Conversation" })).toHaveAttribute("tabindex", "0");
+  });
+
+  it("never shows the previous conversation while another one loads", () => {
+    queryResults.set(GET, (args: Record<string, unknown>) =>
+      args.conversationId === "conv1" ? conversation() : undefined,
+    );
+    queryResults.set(MESSAGES, page([message({})]));
+    const { rerender } = renderWithOrg(<WhatsAppConversationView conversationId="conv1" />);
+    expect(screen.getByRole("heading", { level: 1, name: "Ana" })).toBeInTheDocument();
+    rerender(<WhatsAppConversationView conversationId="conv2" />);
+    expect(screen.queryByRole("heading", { level: 1, name: "Ana" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
+    expect(screen.getByRole("status", { name: "Loading conversation" })).toBeInTheDocument();
+  });
+
   it("says so when a conversation has no messages", () => {
     queryResults.set(GET, conversation());
     queryResults.set(MESSAGES, page([]));

@@ -3,14 +3,13 @@
 import { usePaginatedQuery } from "convex/react";
 import { FileText, Settings } from "lucide-react";
 import Link from "next/link";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
 import { useOrg } from "@/lib/analytics/org-context";
 import { businessNumberLabel, contactLabel, isReplyWindowOpen, useNow } from "@/lib/whatsapp/inbox";
 import { EmptyState } from "../empty-state";
 import { formatInstant } from "../freshness-note";
+import { ThreadList, ThreadListSkeleton } from "../messaging/thread-list";
 import { PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
 
@@ -48,9 +47,7 @@ function ConversationList() {
     { initialNumItems: CONVERSATIONS_PER_PAGE },
   );
 
-  if (status === "LoadingFirstPage") {
-    return <Skeleton className="h-40 w-full" role="status" aria-label="Loading conversations" />;
-  }
+  if (status === "LoadingFirstPage") return <ThreadListSkeleton />;
   if (results.length === 0) {
     return (
       <EmptyState title="No conversations yet" action={<SettingsLink />}>
@@ -60,47 +57,26 @@ function ConversationList() {
     );
   }
   return (
-    <div className="flex flex-col gap-3">
-      <ul aria-label="Conversations" className="flex flex-col divide-y rounded-lg border">
-        {results.map((conversation) => {
-          const open = isReplyWindowOpen(conversation.serviceWindowExpiresAt, now);
-          return (
-            <li key={conversation.id}>
-              <Link
-                href={`/whatsapp/conversations/${conversation.id}`}
-                className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-3 hover:bg-accent focus-visible:bg-accent"
-              >
-                <span className="flex min-w-0 flex-col">
-                  <span className="truncate font-medium">{contactLabel(conversation)}</span>
-                  <span className="text-xs text-muted-foreground">
-                    To {businessNumberLabel(conversation)}
-                  </span>
-                </span>
-                <span className="flex items-center gap-3 text-xs text-muted-foreground">
-                  <Badge variant={open ? "secondary" : "outline"}>
-                    {open ? "Reply window open" : "Templates only"}
-                  </Badge>
-                  <time dateTime={conversation.lastMessageAt}>
-                    {formatInstant(conversation.lastMessageAt, timezone)}
-                  </time>
-                </span>
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
-      {status !== "Exhausted" && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="self-start"
-          disabled={status === "LoadingMore"}
-          onClick={() => loadMore(CONVERSATIONS_PER_PAGE)}
-        >
-          {status === "LoadingMore" ? "Loading…" : "Show more conversations"}
-        </Button>
-      )}
-    </div>
+    <ThreadList
+      rows={results.map((conversation) => {
+        const open = isReplyWindowOpen(conversation.serviceWindowExpiresAt, now);
+        return {
+          id: conversation.id,
+          href: `/whatsapp/conversations/${conversation.id}`,
+          channel: "whatsapp" as const,
+          contact: contactLabel(conversation),
+          account: `To ${businessNumberLabel(conversation)}`,
+          state: open
+            ? { tone: "open" as const, label: "Reply window open" }
+            : { tone: "closed" as const, label: "Templates only" },
+          at: conversation.lastMessageAt,
+          atText: formatInstant(conversation.lastMessageAt, timezone),
+        };
+      })}
+      canLoadMore={status !== "Exhausted"}
+      loadingMore={status === "LoadingMore"}
+      onLoadMore={() => loadMore(CONVERSATIONS_PER_PAGE)}
+    />
   );
 }
 
@@ -115,12 +91,13 @@ export function WhatsAppInboxView() {
       <PageHeader
         title="WhatsApp"
         description="Conversations with your customers on your connected WhatsApp numbers."
-      >
-        <div className="flex flex-wrap gap-2 pt-2">
-          <TemplatesLink />
-          <SettingsLink />
-        </div>
-      </PageHeader>
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <TemplatesLink />
+            <SettingsLink />
+          </div>
+        }
+      />
       <QueryBoundary resetKey="whatsapp-conversations" title="WhatsApp conversations">
         <ConversationList />
       </QueryBoundary>

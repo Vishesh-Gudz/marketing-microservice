@@ -2,7 +2,6 @@
 
 import { usePaginatedQuery } from "convex/react";
 import { useId } from "react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
@@ -18,9 +17,17 @@ import {
 } from "@/lib/whatsapp/inbox";
 import { deliveryProblemText } from "@/lib/whatsapp/messages";
 import type { WhatsAppConversation, WhatsAppMessage } from "@/lib/whatsapp/types";
-import { cn } from "@/lib/utils";
 import { EmptyState } from "../empty-state";
 import { formatInstant } from "../freshness-note";
+import {
+  Bubble,
+  ConversationLayout,
+  DetailsPanel,
+  MessageItem,
+  MessageList,
+  ReplyHeading,
+} from "../messaging/conversation";
+import { ContactMark, ReplyStateTag } from "../messaging/thread-list";
 import { Breadcrumbs, PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
 import { ReplyBox } from "../whatsapp/reply-box";
@@ -35,15 +42,15 @@ function ReplyWindow({ conversation }: { conversation: WhatsAppConversation }) {
   const expiresAt = conversation.serviceWindowExpiresAt;
   if (expiresAt !== undefined && isReplyWindowOpen(expiresAt, now)) {
     return (
-      <p className="text-sm text-muted-foreground">
-        <Badge variant="secondary">Reply window open</Badge> Free-form replies are possible until{" "}
-        {formatInstant(expiresAt, timezone)}.
+      <p className="mt-1 text-sm text-muted-foreground">
+        <ReplyStateTag tone="open">Reply window open</ReplyStateTag> Free-form replies are possible
+        until {formatInstant(expiresAt, timezone)}.
       </p>
     );
   }
   return (
-    <p className="text-sm text-muted-foreground">
-      <Badge variant="outline">Templates only</Badge>{" "}
+    <p className="mt-1 text-sm text-muted-foreground">
+      <ReplyStateTag tone="closed">Templates only</ReplyStateTag>{" "}
       {expiresAt === undefined
         ? "The customer has not written yet: only approved templates can be sent."
         : "The customer last wrote more than 24 hours ago: only approved templates can be sent."}
@@ -64,35 +71,28 @@ function MessageBubble({ message, contact }: { message: WhatsAppMessage; contact
   const status = outboundStatusLabel(message.status);
   const problem = outbound ? deliveryProblemText(message) : null;
   return (
-    <li className={cn("flex flex-col gap-1", outbound ? "items-end" : "items-start")}>
-      <span className="text-xs text-muted-foreground">
-        {outbound ? "You" : contact} ·{" "}
-        <time dateTime={message.at}>{formatInstant(message.at, timezone)}</time>
-        {message.origin && ` · ${ORIGIN_LABELS[message.origin]}`}
-      </span>
-      <div
-        className={cn(
-          "max-w-[80%] rounded-lg px-3 py-2 text-sm",
-          outbound ? "bg-primary text-primary-foreground" : "bg-muted",
-        )}
+    <MessageItem
+      outbound={outbound}
+      meta={
+        <>
+          {outbound ? "You" : contact} ·{" "}
+          <time dateTime={message.at}>{formatInstant(message.at, timezone)}</time>
+          {message.origin && ` · ${ORIGIN_LABELS[message.origin]}`}
+        </>
+      }
+    >
+      <Bubble
+        outbound={outbound}
+        placeholder={content.kind === "placeholder"}
+        {...(message.template ? { label: `Template: ${message.template.name}` } : {})}
       >
-        {message.template && (
-          <p className="mb-1 text-xs opacity-80">Template: {message.template.name}</p>
-        )}
-        <p
-          className={cn(
-            "break-words whitespace-pre-wrap",
-            content.kind === "placeholder" && "italic",
-          )}
-        >
-          {content.text}
-        </p>
-      </div>
+        {content.text}
+      </Bubble>
       {status && <span className="text-xs text-muted-foreground">{status}</span>}
       {problem && (
         <span className="max-w-[80%] text-right text-xs text-destructive">{problem}</span>
       )}
-    </li>
+    </MessageItem>
   );
 }
 
@@ -122,11 +122,11 @@ function Thread({ conversation }: { conversation: WhatsAppConversation }) {
           {status === "LoadingMore" ? "Loading…" : "Show older messages"}
         </Button>
       )}
-      <ol aria-label="Messages" className="flex flex-col gap-4">
+      <MessageList newestId={results[0]!.id}>
         {oldestFirst.map((message) => (
           <MessageBubble key={message.id} message={message} contact={contact} />
         ))}
-      </ol>
+      </MessageList>
     </div>
   );
 }
@@ -144,10 +144,8 @@ function Composer({ conversation }: { conversation: WhatsAppConversation }) {
   }
   const open = isReplyWindowOpen(conversation.serviceWindowExpiresAt, now);
   return (
-    <section aria-labelledby={headingId} className="flex flex-col gap-4 rounded-lg border p-4">
-      <h2 id={headingId} className="text-lg font-semibold">
-        Reply
-      </h2>
+    <section aria-labelledby={headingId} className="flex flex-col gap-3">
+      <ReplyHeading id={headingId} />
       {open ? (
         <ReplyBox
           conversationId={conversation.id}
@@ -185,16 +183,49 @@ function Conversation({ conversationId }: { conversationId: string }) {
     <>
       {crumbs(contact)}
       <PageHeader
-        title={contact}
+        title={
+          <span className="flex items-center gap-3">
+            <ContactMark label={contact} channel="whatsapp" size="lg" />
+            {contact}
+          </span>
+        }
         description={`WhatsApp conversation on ${businessNumberLabel(conversation)}`}
       >
         <ReplyWindow conversation={conversation} />
       </PageHeader>
-      <section aria-label="Conversation" className="flex flex-col gap-4">
-        <Thread conversation={conversation} />
-      </section>
-      <Composer conversation={conversation} />
+      <ConversationLayout
+        history={<Thread conversation={conversation} />}
+        reply={<Composer conversation={conversation} />}
+        details={<Details conversation={conversation} />}
+      />
     </>
+  );
+}
+
+/** The conversation's own facts (v1/whatsapp:getConversation) and the channel's tools. */
+function Details({ conversation }: { conversation: WhatsAppConversation }) {
+  const { timezone } = useOrg();
+  return (
+    <DetailsPanel
+      facts={[
+        ...(conversation.contactName !== undefined
+          ? ([["Name", conversation.contactName]] as const)
+          : []),
+        ["WhatsApp number", `+${conversation.contactWaId}`],
+        ["Your number", businessNumberLabel(conversation)],
+        ["Last message", formatInstant(conversation.lastMessageAt, timezone)],
+        ...(conversation.lastInboundAt !== undefined
+          ? ([
+              ["Customer last wrote", formatInstant(conversation.lastInboundAt, timezone)],
+            ] as const)
+          : []),
+      ]}
+      links={[
+        { href: "/whatsapp/templates", label: "WhatsApp templates" },
+        { href: "/inbox/saved-replies", label: "Saved replies" },
+        { href: "/whatsapp/settings", label: "WhatsApp settings" },
+      ]}
+    />
   );
 }
 

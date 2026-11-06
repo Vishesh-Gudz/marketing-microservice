@@ -1,52 +1,16 @@
 import type { Page } from "@playwright/test";
+import { answerQueries } from "./socket";
 import { expect, settled, test, volatile } from "./support";
 
 // The Overview briefing (revamp Phase 6): what needs attention comes first, then the key
 // metrics; an organization without ad accounts gets one prompt instead of empty regions.
 
-const AD_ACCOUNTS = "v1/adAccounts:list";
-
 /**
  * Answer `v1/adAccounts:list` with an empty list, as for an organization that has not linked
  * an ad account yet. Every other message passes through to the local backend unchanged.
  */
-async function withoutAdAccounts(page: Page) {
-  await page.routeWebSocket(/\/api\/[^/]+\/sync/, (ws) => {
-    const server = ws.connectToServer();
-    const queryIds = new Set<number>();
-    ws.onMessage((message) => {
-      if (typeof message === "string" && message.includes(AD_ACCOUNTS)) {
-        const parsed = JSON.parse(message) as {
-          type?: string;
-          modifications?: { type?: string; queryId?: number; udfPath?: string }[];
-        };
-        if (parsed.type === "ModifyQuerySet") {
-          for (const change of parsed.modifications ?? []) {
-            if (change.type === "Add" && change.udfPath === AD_ACCOUNTS) {
-              queryIds.add(change.queryId!);
-            }
-          }
-        }
-      }
-      server.send(message);
-    });
-    server.onMessage((message) => {
-      if (typeof message === "string" && queryIds.size > 0 && message.includes("QueryUpdated")) {
-        const parsed = JSON.parse(message) as {
-          type?: string;
-          modifications?: { type?: string; queryId?: number; value?: unknown }[];
-        };
-        if (parsed.type === "Transition") {
-          for (const change of parsed.modifications ?? []) {
-            if (change.type === "QueryUpdated" && queryIds.has(change.queryId!)) change.value = [];
-          }
-          ws.send(JSON.stringify(parsed));
-          return;
-        }
-      }
-      ws.send(message);
-    });
-  });
+function withoutAdAccounts(page: Page) {
+  return answerQueries(page, { "v1/adAccounts:list": () => [] });
 }
 
 test.describe("large screens", () => {

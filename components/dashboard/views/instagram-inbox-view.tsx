@@ -3,15 +3,14 @@
 import { usePaginatedQuery } from "convex/react";
 import { FileText, Settings } from "lucide-react";
 import Link from "next/link";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
 import { useOrg } from "@/lib/analytics/org-context";
 import { accountLabel, contactLabel } from "@/lib/instagram/messages";
 import { isReplyWindowOpen, useNow } from "@/lib/whatsapp/inbox";
 import { EmptyState } from "../empty-state";
 import { formatInstant } from "../freshness-note";
+import { ThreadList, ThreadListSkeleton } from "../messaging/thread-list";
 import { PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
 
@@ -38,9 +37,7 @@ function ConversationList() {
     { initialNumItems: CONVERSATIONS_PER_PAGE },
   );
 
-  if (status === "LoadingFirstPage") {
-    return <Skeleton className="h-40 w-full" role="status" aria-label="Loading conversations" />;
-  }
+  if (status === "LoadingFirstPage") return <ThreadListSkeleton />;
   if (results.length === 0) {
     return (
       <EmptyState title="No conversations yet" action={<SettingsLink />}>
@@ -50,51 +47,29 @@ function ConversationList() {
     );
   }
   return (
-    <div className="flex flex-col gap-3">
-      <ul aria-label="Conversations" className="flex flex-col divide-y rounded-lg border">
-        {results.map((conversation) => {
-          const open = isReplyWindowOpen(conversation.replyWindowExpiresAt, now);
-          return (
-            <li key={conversation.id}>
-              <Link
-                href={`/instagram/messages/conversations/${conversation.id}`}
-                className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-3 hover:bg-accent focus-visible:bg-accent"
-              >
-                <span className="flex min-w-0 flex-col">
-                  <span className="truncate font-medium">{contactLabel(conversation)}</span>
-                  <span className="text-xs text-muted-foreground">
-                    To {accountLabel(conversation.accountUsername)}
-                  </span>
-                </span>
-                <span className="flex items-center gap-3 text-xs text-muted-foreground">
-                  {conversation.replyBlocker !== undefined ? (
-                    <Badge variant="outline">Replies unavailable</Badge>
-                  ) : (
-                    <Badge variant={open ? "secondary" : "outline"}>
-                      {open ? "Reply window open" : "Reply window closed"}
-                    </Badge>
-                  )}
-                  <time dateTime={conversation.lastMessageAt}>
-                    {formatInstant(conversation.lastMessageAt, timezone)}
-                  </time>
-                </span>
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
-      {status !== "Exhausted" && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="self-start"
-          disabled={status === "LoadingMore"}
-          onClick={() => loadMore(CONVERSATIONS_PER_PAGE)}
-        >
-          {status === "LoadingMore" ? "Loading…" : "Show more conversations"}
-        </Button>
-      )}
-    </div>
+    <ThreadList
+      rows={results.map((conversation) => {
+        const open = isReplyWindowOpen(conversation.replyWindowExpiresAt, now);
+        return {
+          id: conversation.id,
+          href: `/instagram/messages/conversations/${conversation.id}`,
+          channel: "instagram" as const,
+          contact: contactLabel(conversation),
+          account: `To ${accountLabel(conversation.accountUsername)}`,
+          state:
+            conversation.replyBlocker !== undefined
+              ? { tone: "unavailable" as const, label: "Replies unavailable" }
+              : open
+                ? { tone: "open" as const, label: "Reply window open" }
+                : { tone: "closed" as const, label: "Reply window closed" },
+          at: conversation.lastMessageAt,
+          atText: formatInstant(conversation.lastMessageAt, timezone),
+        };
+      })}
+      canLoadMore={status !== "Exhausted"}
+      loadingMore={status === "LoadingMore"}
+      onLoadMore={() => loadMore(CONVERSATIONS_PER_PAGE)}
+    />
   );
 }
 
@@ -109,17 +84,18 @@ export function InstagramInboxView() {
       <PageHeader
         title="Instagram DMs"
         description="Direct messages from your customers on your Instagram accounts."
-      >
-        <div className="flex flex-wrap gap-2 pt-2">
-          <Button asChild variant="outline" size="sm">
-            <Link href="/instagram/messages/templates">
-              <FileText aria-hidden="true" />
-              Templates
-            </Link>
-          </Button>
-          <SettingsLink />
-        </div>
-      </PageHeader>
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <Button asChild variant="outline" size="sm">
+              <Link href="/instagram/messages/templates">
+                <FileText aria-hidden="true" />
+                Templates
+              </Link>
+            </Button>
+            <SettingsLink />
+          </div>
+        }
+      />
       <QueryBoundary resetKey="instagram-conversations" title="Instagram conversations">
         <ConversationList />
       </QueryBoundary>
