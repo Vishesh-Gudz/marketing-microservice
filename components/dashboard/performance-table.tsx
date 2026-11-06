@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { useId, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +34,7 @@ import { DataStateBadge } from "./data-state-badge";
 import { DeltaChip } from "./delta-chip";
 import { EmptyState } from "./empty-state";
 import { FxNotice } from "./notices";
+import { SURFACE, TABLE_EDGES } from "./surface";
 import { UpdatingIndicator } from "./updating-indicator";
 import { ValueText } from "./value-text";
 
@@ -174,96 +175,101 @@ export function PerformanceTable({
 
   return (
     <section className="flex flex-col gap-3" aria-label={caption}>
-      <UpdatingIndicator active={isUpdating} />
       {data && <FxNotice fx={data.fx} />}
-      <div
-        className={cn("overflow-x-auto rounded-md border", isUpdating && "opacity-60")}
-        aria-busy={isLoading || isUpdating}
-      >
-        <Table>
-          <TableCaption className="sr-only">{caption}</TableCaption>
-          <TableHeader>
-            <TableRow>
-              <SortHeader
-                label="Name"
-                column="name"
-                sort={sort}
-                onSort={onSort}
-                className="sticky left-0 z-10 min-w-56 bg-background"
-              />
-              {COLUMNS.map((column) =>
-                column.sortable ? (
-                  <SortHeader
-                    key={column.key}
-                    label={HEADER[column.key]}
-                    column={column.key as SortKey}
-                    sort={sort}
-                    onSort={onSort}
-                    className="text-right"
-                  />
-                ) : (
-                  <TableHead key={column.key} scope="col" className="text-right">
-                    {HEADER[column.key]}
-                  </TableHead>
-                ),
-              )}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading &&
-              Array.from({ length: 5 }, (_, i) => (
-                <TableRow key={i} aria-hidden="true">
-                  <TableCell colSpan={COLUMNS.length + 1}>
-                    <Skeleton className="h-5 w-full" />
+      <div className="relative">
+        <UpdatingIndicator active={isUpdating} overlay />
+        <div
+          className={cn(SURFACE, "overflow-x-auto", isUpdating && "opacity-60")}
+          aria-busy={isLoading || isUpdating}
+        >
+          <Table className={TABLE_EDGES}>
+            <TableCaption className="sr-only">{caption}</TableCaption>
+            <TableHeader>
+              <TableRow>
+                <SortHeader
+                  label="Name"
+                  column="name"
+                  sort={sort}
+                  onSort={onSort}
+                  className="sticky left-0 z-10 min-w-40 bg-paper sm:min-w-56"
+                />
+                {COLUMNS.map((column) =>
+                  column.sortable ? (
+                    <SortHeader
+                      key={column.key}
+                      label={HEADER[column.key]}
+                      column={column.key as SortKey}
+                      sort={sort}
+                      onSort={onSort}
+                      className="text-right"
+                    />
+                  ) : (
+                    <TableHead key={column.key} scope="col" className="text-right">
+                      {HEADER[column.key]}
+                    </TableHead>
+                  ),
+                )}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {isLoading &&
+                Array.from({ length: 5 }, (_, i) => (
+                  <TableRow key={i} aria-hidden="true">
+                    <TableCell colSpan={COLUMNS.length + 1}>
+                      <Skeleton className="h-5 w-full" />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              {data?.page.map((row) => (
+                <TableRow key={row.entity.id} data-row-id={row.entity.id}>
+                  <TableCell className="sticky left-0 z-10 bg-paper whitespace-normal group-hover/row:bg-canvas">
+                    <div className="flex flex-col gap-1">
+                      {hrefFor ? (
+                        <Link
+                          href={withQuery(hrefFor(row))}
+                          className="font-medium underline-offset-4 hover:underline"
+                        >
+                          {row.entity.name}
+                        </Link>
+                      ) : (
+                        <span className="font-medium">{row.entity.name}</span>
+                      )}
+                      <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                        <span>{humanize(row.entity.platform)}</span>
+                        <span aria-hidden="true">·</span>
+                        <span>{humanize(row.entity.status)}</span>
+                        {row.entity.removed && <Badge variant="outline">Removed</Badge>}
+                        <DataStateBadge state={row.dataState} />
+                      </div>
+                    </div>
                   </TableCell>
+                  {COLUMNS.map((column) => (
+                    <TableCell key={column.key} className="text-right align-top">
+                      <div className="flex flex-col items-end gap-0.5">
+                        <ValueText view={valueView(column.key, row)} />
+                        {column.delta && row.comparison && (
+                          <DeltaChip
+                            metric={column.key}
+                            delta={row.comparison.deltas[column.key]}
+                          />
+                        )}
+                      </div>
+                    </TableCell>
+                  ))}
                 </TableRow>
               ))}
-            {data?.page.map((row) => (
-              <TableRow key={row.entity.id} data-row-id={row.entity.id}>
-                <TableCell className="sticky left-0 z-10 bg-background whitespace-normal group-hover/row:bg-canvas">
-                  <div className="flex flex-col gap-1">
-                    {hrefFor ? (
-                      <Link
-                        href={withQuery(hrefFor(row))}
-                        className="font-medium underline-offset-4 hover:underline"
-                      >
-                        {row.entity.name}
-                      </Link>
-                    ) : (
-                      <span className="font-medium">{row.entity.name}</span>
-                    )}
-                    <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
-                      <span>{humanize(row.entity.platform)}</span>
-                      <span aria-hidden="true">·</span>
-                      <span>{humanize(row.entity.status)}</span>
-                      {row.entity.removed && <Badge variant="outline">Removed</Badge>}
-                      <DataStateBadge state={row.dataState} />
-                    </div>
-                  </div>
-                </TableCell>
-                {COLUMNS.map((column) => (
-                  <TableCell key={column.key} className="text-right align-top">
-                    <div className="flex flex-col items-end gap-0.5">
-                      <ValueText view={valueView(column.key, row)} />
-                      {column.delta && row.comparison && (
-                        <DeltaChip metric={column.key} delta={row.comparison.deltas[column.key]} />
-                      )}
-                    </div>
-                  </TableCell>
-                ))}
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-        {data && data.page.length === 0 && (
-          <EmptyState
-            className="m-4"
-            title={`No ${LEVEL_PLURAL[level].toLowerCase()} in this scope`}
-          >
-            Nothing has been synced for the selected accounts yet, or the filters exclude
-            everything.
-          </EmptyState>
-        )}
+            </TableBody>
+          </Table>
+          {data && data.page.length === 0 && (
+            <EmptyState
+              className="m-4"
+              title={`No ${LEVEL_PLURAL[level].toLowerCase()} in this scope`}
+            >
+              Nothing has been synced for the selected accounts yet, or the filters exclude
+              everything.
+            </EmptyState>
+          )}
+        </div>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
         <div className="flex items-center gap-2">
@@ -293,6 +299,7 @@ export function PerformanceTable({
             disabled={pageNumber === 1}
             onClick={() => setPaging({ key: argsKey, cursors: cursors.slice(0, -1) })}
           >
+            <ChevronLeft aria-hidden="true" />
             Previous
           </Button>
           <Button
@@ -304,6 +311,7 @@ export function PerformanceTable({
             }
           >
             Next
+            <ChevronRight aria-hidden="true" />
           </Button>
         </div>
       </div>

@@ -1,12 +1,5 @@
 "use client";
 
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -29,10 +22,12 @@ import { cn } from "@/lib/utils";
 import { DataStateBadge } from "../data-state-badge";
 import { EmptyState } from "../empty-state";
 import { FilterBar } from "../filter-bar";
+import { LabelledSelect } from "../labelled-select";
 import { CoverageNotice, FxNotice } from "../notices";
 import { PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
 import { SpendShare } from "../spend-share";
+import { SECTION_HEADING, SURFACE, TABLE_EDGES } from "../surface";
 import { UpdatingIndicator } from "../updating-indicator";
 import { ValueText } from "../value-text";
 
@@ -69,13 +64,16 @@ function BreakdownTable({ args }: { args: BreakdownArgs }) {
   };
   const caption = `${TAB_LABEL[data.by]}${data.by === "placement" ? ` (${LEVEL_PLURAL[data.level].toLowerCase()} level)` : ""}`;
   return (
-    <div className={cn("flex flex-col gap-3", isUpdating && "opacity-60")} aria-busy={isUpdating}>
-      <UpdatingIndicator active={isUpdating} />
+    <div
+      className={cn("relative flex flex-col gap-3", isUpdating && "opacity-60")}
+      aria-busy={isUpdating}
+    >
+      <UpdatingIndicator active={isUpdating} overlay />
       <CoverageNotice coverage={data.coverage} />
       <FxNotice fx={data.fx} />
       {data.groups.length > 0 && (
-        <div className="rounded-lg border p-4">
-          <h2 className="mb-3 text-base font-semibold">Share of spend</h2>
+        <div className={cn(SURFACE, "p-4")}>
+          <h2 className={cn(SECTION_HEADING, "mb-3")}>Share of spend</h2>
           <SpendShare
             title="Share of spend"
             reportingCurrency={org.reportingCurrency}
@@ -92,12 +90,14 @@ function BreakdownTable({ args }: { args: BreakdownArgs }) {
           No accounts in this scope report this breakdown.
         </EmptyState>
       ) : (
-        <div className="overflow-x-auto rounded-md border">
-          <Table data-testid={`breakdown-${data.by}`}>
+        <div className={cn(SURFACE, "overflow-x-auto")}>
+          <Table data-testid={`breakdown-${data.by}`} className={TABLE_EDGES}>
             <TableCaption className="sr-only">{caption}</TableCaption>
             <TableHeader>
               <TableRow>
-                <TableHead scope="col">{humanize(data.by)}</TableHead>
+                <TableHead scope="col" className="sticky left-0 z-10 min-w-48 bg-paper">
+                  {humanize(data.by)}
+                </TableHead>
                 {COLUMNS.map((key) => (
                   <TableHead key={key} scope="col" className="text-right">
                     {VALUES[key].label}
@@ -108,7 +108,7 @@ function BreakdownTable({ args }: { args: BreakdownArgs }) {
             <TableBody>
               {data.groups.map((group) => (
                 <TableRow key={group.key}>
-                  <TableCell>
+                  <TableCell className="sticky left-0 z-10 bg-paper whitespace-normal group-hover/row:bg-canvas">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-medium">{labelOf(group)}</span>
                       <DataStateBadge state={group.dataState} />
@@ -174,28 +174,14 @@ export function BreakdownsView() {
             ))}
           </TabsList>
           {tab === "placement" && (
-            <div className="flex items-center gap-2 text-sm">
-              <span id="placement-level-label" className="text-muted-foreground">
-                Level
-              </span>
-              <Select
-                value={level}
-                onValueChange={(value) =>
-                  setParams({ level: value === "account" ? undefined : value })
-                }
-              >
-                <SelectTrigger size="sm" className="w-36" aria-labelledby="placement-level-label">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {LEVELS.map((l) => (
-                    <SelectItem key={l} value={l}>
-                      {LEVEL_PLURAL[l]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <LabelledSelect
+              label="Level"
+              value={level}
+              options={LEVELS.map((l) => ({ value: l, label: LEVEL_PLURAL[l] }))}
+              onValueChange={(value) =>
+                setParams({ level: value === "account" ? undefined : value })
+              }
+            />
           )}
         </div>
         {TABS.map((t) => (

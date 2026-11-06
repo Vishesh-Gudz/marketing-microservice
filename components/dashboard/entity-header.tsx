@@ -39,11 +39,14 @@ export function EntityHeader({ entity }: { entity: EntitySummary }) {
         </span>
       }
     >
-      <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+      <dl className="mt-2 flex flex-wrap gap-1.5 text-xs">
         {facts.map(([term, value]) => (
-          <div key={term} className="flex gap-1">
+          <div
+            key={term}
+            className="flex items-center gap-1 rounded-full border border-line bg-paper px-2.5 py-1"
+          >
             <dt className="text-muted-foreground">{term}</dt>
-            <dd>{value}</dd>
+            <dd className="font-medium text-ink">{value}</dd>
           </div>
         ))}
       </dl>

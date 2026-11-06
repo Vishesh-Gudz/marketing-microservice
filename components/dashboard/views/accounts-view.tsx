@@ -28,6 +28,7 @@ import { formatInstant } from "../freshness-note";
 import { FxNotice, ReauthBanner } from "../notices";
 import { PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
+import { SURFACE, TABLE_EDGES } from "../surface";
 import { UpdatingIndicator } from "../updating-indicator";
 import { ValueText } from "../value-text";
 
@@ -59,15 +60,15 @@ function AccountsTable({ args }: { args: BreakdownArgs }) {
   );
   const connection = new Map((connections ?? []).map((c) => [c.id, c]));
   return (
-    <div className="flex flex-col gap-3">
-      <UpdatingIndicator active={isUpdating} />
+    <div className="relative flex flex-col gap-3">
+      <UpdatingIndicator active={isUpdating} overlay />
       {breakdown && <FxNotice fx={breakdown.fx} />}
-      <div className={cn("overflow-x-auto rounded-md border", isUpdating && "opacity-60")}>
-        <Table>
+      <div className={cn(SURFACE, "overflow-x-auto", isUpdating && "opacity-60")}>
+        <Table className={TABLE_EDGES}>
           <TableCaption className="sr-only">Ad accounts, sync coverage and KPIs</TableCaption>
           <TableHeader>
             <TableRow>
-              <TableHead scope="col" className="sticky left-0 z-10 bg-background">
+              <TableHead scope="col" className="sticky left-0 z-10 min-w-52 bg-paper">
                 Account
               </TableHead>
               <TableHead scope="col">Platform</TableHead>
@@ -92,7 +93,7 @@ function AccountsTable({ args }: { args: BreakdownArgs }) {
               const conn = account.connectionId ? connection.get(account.connectionId) : undefined;
               return (
                 <TableRow key={account.id} data-account-id={account.id}>
-                  <TableCell className="sticky left-0 z-10 bg-background whitespace-normal group-hover/row:bg-canvas">
+                  <TableCell className="sticky left-0 z-10 bg-paper whitespace-normal group-hover/row:bg-canvas">
                     <div className="font-medium">{account.name}</div>
                     <div className="font-mono text-xs text-muted-foreground">
                       {account.externalId}
@@ -114,7 +115,7 @@ function AccountsTable({ args }: { args: BreakdownArgs }) {
                         (!account.linked || conn?.status === "needs_reauth") && (
                           <Link
                             href="/connections"
-                            className="text-xs font-medium underline underline-offset-4"
+                            className="text-xs font-medium text-blue-deep underline underline-offset-4"
                           >
                             Manage in Connections
                           </Link>

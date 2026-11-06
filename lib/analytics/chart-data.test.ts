@@ -9,6 +9,7 @@ import {
   usd,
 } from "@/tests/unit/analytics-fixtures";
 import {
+  axisTick,
   bucketLabel,
   buildSeries,
   formatRange,
@@ -146,5 +147,15 @@ describe("labels", () => {
       "Sep 1, 2026 – Sep 30, 2026",
     );
     expect(formatRange({ from: "2026-09-01", to: "2026-09-01" }, L)).toBe("Sep 1, 2026");
+  });
+});
+
+describe("axisTick", () => {
+  it("labels the y axis compactly, in the series currency", () => {
+    expect(axisTick(1250, "spend", "USD", L)).toBe("$1.3K");
+    expect(axisTick(600, "spend", "EUR", L)).toBe("€600");
+    expect(axisTick(48_000, "impressions", undefined, L)).toBe("48K");
+    expect(axisTick(0.015, "ctr", undefined, L)).toBe("1.5%");
+    expect(axisTick(1.2, "cpc", "USD", L)).toBe("$1.2");
   });
 });

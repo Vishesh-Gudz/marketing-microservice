@@ -8,6 +8,7 @@ import { useOrg } from "@/lib/analytics/org-context";
 import type { TimeSeriesArgs } from "@/lib/analytics/types";
 import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
 import { cn } from "@/lib/utils";
+import { SURFACE } from "./surface";
 import { TimeSeriesChart } from "./time-series-chart";
 import { UpdatingIndicator } from "./updating-indicator";
 
@@ -18,19 +19,23 @@ export function TimeSeriesPanel({ args, title }: { args: TimeSeriesArgs; title?:
   const { data, isLoading, isUpdating } = useAnalyticsQuery(api.v1.analytics.timeSeries, args);
 
   if (isLoading || !data) {
-    return <Skeleton className="h-80 w-full rounded-lg" role="status" aria-label="Loading chart" />;
+    return (
+      <Skeleton className="h-80 w-full rounded-[14px]" role="status" aria-label="Loading chart" />
+    );
   }
   return (
-    <div className={cn("rounded-lg border p-4", isUpdating && "opacity-60")} aria-busy={isUpdating}>
-      <UpdatingIndicator active={isUpdating} />
-      <TimeSeriesChart
-        points={data.points}
-        granularity={data.granularity}
-        reportingCurrency={org.reportingCurrency}
-        metric={metric}
-        onMetricChange={setMetric}
-        title={title}
-      />
+    <div className="relative">
+      <UpdatingIndicator active={isUpdating} overlay />
+      <div className={cn(SURFACE, "p-4", isUpdating && "opacity-60")} aria-busy={isUpdating}>
+        <TimeSeriesChart
+          points={data.points}
+          granularity={data.granularity}
+          reportingCurrency={org.reportingCurrency}
+          metric={metric}
+          onMetricChange={setMetric}
+          title={title}
+        />
+      </div>
     </div>
   );
 }

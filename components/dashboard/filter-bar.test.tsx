@@ -121,4 +121,19 @@ describe("FilterBar", () => {
       "Account metrics use UTC days and presets use UTC; post publish dates use Pacific/Auckland.",
     );
   });
+
+  it("on phones, sums up the selection in one Filters button that opens the controls", () => {
+    setUrl("/campaigns", "preset=last_7_days&platforms=meta");
+    renderWithOrg(<FilterBar />);
+    const button = screen.getByRole("button", { name: "Filters" });
+    expect(button).toHaveAccessibleDescription("Last 7 days · Meta · All accounts");
+    fireEvent.click(button);
+    const sheet = screen.getByRole("dialog", { name: "Filters" });
+    // The same controls, with the same names, inside the sheet.
+    expect(within(sheet).getByRole("combobox", { name: "Date range" })).toBeInTheDocument();
+    expect(within(sheet).getByRole("combobox", { name: "Compare" })).toBeInTheDocument();
+    expect(within(sheet).getByRole("group", { name: "Platforms" })).toBeInTheDocument();
+    fireEvent.click(within(sheet).getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
 });

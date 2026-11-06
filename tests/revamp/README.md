@@ -22,13 +22,14 @@ All of these came from earlier `npm run dev:seed` runs.
 
 Next.js allows one `next dev` per project folder. Stop your own dev server first, or start it on port 3200 so the suite reuses it.
 
-| Spec               | What it pins down                                                                                                                                                                     |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `visual.spec.ts`   | Every route (and the sign-in, sign-up and choose-organization frames) at 1440/1024/768/375 px, plus the accounts popover, saved-reply form, Instagram template builder and phone menu |
-| `roles.spec.ts`    | Viewer, editor and admin of the same organization: role badge, connect, saved replies, templates, WhatsApp settings                                                                   |
-| `a11y.spec.ts`     | axe (WCAG 2.2 A/AA) violations per route, kept as text snapshots                                                                                                                      |
-| `shell.spec.ts`    | The app shell: no sideways scroll at 5 widths, ⌘K page search, sidebar rail kept after reload, phone dock and menu, the organization loader (Convex held back)                        |
-| `overview.spec.ts` | The Overview briefing: Needs attention between the filters and the key metrics; one connect prompt when the organization has no ad accounts (the reply rewritten on the socket)       |
+| Spec                | What it pins down                                                                                                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `visual.spec.ts`    | Every route (and the sign-in, sign-up and choose-organization frames) at 1440/1024/768/375 px, plus the accounts popover, saved-reply form, Instagram template builder and phone menu |
+| `roles.spec.ts`     | Viewer, editor and admin of the same organization: role badge, connect, saved replies, templates, WhatsApp settings                                                                   |
+| `a11y.spec.ts`      | axe (WCAG 2.2 A/AA) violations per route, kept as text snapshots                                                                                                                      |
+| `shell.spec.ts`     | The app shell: no sideways scroll at 5 widths, ⌘K page search, sidebar rail kept after reload, phone dock and menu, the organization loader (Convex held back)                        |
+| `overview.spec.ts`  | The Overview briefing: Needs attention between the filters and the key metrics; one connect prompt when the organization has no ad accounts (the reply rewritten on the socket)       |
+| `analytics.spec.ts` | The analytics workspaces: the phone Filters sheet (a change applies at once) and the chart y axis in the metric format                                                                |
 
 How it stays deterministic:
 

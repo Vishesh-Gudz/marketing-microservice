@@ -4,13 +4,6 @@ import { Fragment, useId } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -32,7 +25,9 @@ import { moneyView, type ValueView } from "@/lib/analytics/values";
 import { cn } from "@/lib/utils";
 import { DataStateBadge } from "./data-state-badge";
 import { EmptyState } from "./empty-state";
+import { LabelledSelect } from "./labelled-select";
 import { CoverageNotice, FxNotice } from "./notices";
+import { SURFACE, TABLE_EDGES } from "./surface";
 import { UpdatingIndicator } from "./updating-indicator";
 import { ValueText } from "./value-text";
 
@@ -93,26 +88,16 @@ function FilterSelect({
   allLabel: string;
   onChange: (value: string | undefined) => void;
 }) {
-  const id = useId();
   return (
-    <div className="flex items-center gap-2">
-      <span id={id} className="text-muted-foreground">
-        {label}
-      </span>
-      <Select value={value} onValueChange={(next) => onChange(next === ALL ? undefined : next)}>
-        <SelectTrigger size="sm" className="w-44" aria-labelledby={id}>
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={ALL}>{allLabel}</SelectItem>
-          {options.map((option) => (
-            <SelectItem key={option} value={option}>
-              {humanize(option)}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
+    <LabelledSelect
+      label={label}
+      value={value}
+      options={[
+        { value: ALL, label: allLabel },
+        ...options.map((option) => ({ value: option, label: humanize(option) })),
+      ]}
+      onValueChange={(next) => onChange(next === ALL ? undefined : next)}
+    />
   );
 }
 
@@ -196,8 +181,8 @@ export function ActionsPanel({
               No conversion actions were reported for this period and selection.
             </EmptyState>
           ) : (
-            <div className="overflow-x-auto rounded-md border">
-              <Table data-testid="actions-table">
+            <div className={cn(SURFACE, "overflow-x-auto")}>
+              <Table data-testid="actions-table" className={TABLE_EDGES}>
                 <TableCaption className="sr-only">
                   Conversion actions by action type, one row per attribution window
                 </TableCaption>
@@ -222,8 +207,12 @@ export function ActionsPanel({
                 <TableBody>
                   {groupByActionType(shown).map(([type, rows]) => (
                     <Fragment key={type}>
-                      <TableRow className="bg-muted/40 hover:bg-muted/40" data-action-type={type}>
-                        <TableHead scope="rowgroup" colSpan={6} className="font-semibold">
+                      <TableRow className="bg-canvas hover:bg-canvas" data-action-type={type}>
+                        <TableHead
+                          scope="rowgroup"
+                          colSpan={6}
+                          className="h-9 text-[13px] font-medium text-ink"
+                        >
                           {humanize(type)}
                         </TableHead>
                       </TableRow>

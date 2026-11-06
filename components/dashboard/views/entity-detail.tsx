@@ -11,9 +11,10 @@ import { useAnalyticsScope, useDashboardFilters } from "@/lib/analytics/use-dash
 import { cn } from "@/lib/utils";
 import { EntityHeader } from "../entity-header";
 import { FilterBar } from "../filter-bar";
-import { KpiGrid, KpiGridSkeleton } from "../kpi-grid";
+import { KpiStrip, KpiStripSkeleton } from "../kpi-strip";
 import { CoverageNotice, FxNotice } from "../notices";
 import { QueryBoundary } from "../query-boundary";
+import { SECTION_HEADING } from "../surface";
 import { TimeSeriesPanel } from "../time-series-panel";
 import { UpdatingIndicator } from "../updating-indicator";
 
@@ -57,7 +58,7 @@ export function EntityDetail({
       <>
         {breadcrumbs(undefined)}
         <Skeleton className="h-10 w-72" />
-        <KpiGridSkeleton />
+        <KpiStripSkeleton />
       </>
     );
   }
@@ -75,16 +76,22 @@ export function EntityDetail({
       {breadcrumbs(entity)}
       <EntityHeader entity={entity} />
       <FilterBar accounts={false} granularity />
-      <div
+      <section
+        aria-labelledby="entity-key-metrics"
         className={cn("flex flex-col gap-3", isUpdating && "opacity-60")}
         aria-busy={isUpdating}
         data-testid="entity-totals"
       >
-        <UpdatingIndicator active={isUpdating} />
+        <div className="flex items-center gap-3">
+          <h2 id="entity-key-metrics" className={SECTION_HEADING}>
+            Key metrics
+          </h2>
+          <UpdatingIndicator active={isUpdating} />
+        </div>
         <CoverageNotice coverage={data.coverage} />
         <FxNotice fx={data.fx} />
-        <KpiGrid aggregate={data.totals} comparison={data.comparison} />
-      </div>
+        <KpiStrip aggregate={data.totals} comparison={data.comparison} />
+      </section>
       <QueryBoundary resetKey={JSON.stringify(seriesArgs)} title="Chart">
         <TimeSeriesPanel args={seriesArgs} />
       </QueryBoundary>

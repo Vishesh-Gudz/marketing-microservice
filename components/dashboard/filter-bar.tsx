@@ -1,7 +1,7 @@
 "use client";
 
-import { ChevronDown } from "lucide-react";
-import { useId, useState } from "react";
+import { CalendarDays, ChevronDown, SlidersHorizontal } from "lucide-react";
+import { useId, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { api } from "@/convex/_generated/api";
 import { PERIOD_PRESETS, previousPeriod, rangeDays } from "@/convex/analytics/periods";
@@ -38,6 +46,7 @@ import {
   useDashboardFilters,
   type DayBasis,
 } from "@/lib/analytics/use-dashboard-filters";
+import { cn } from "@/lib/utils";
 
 type Range = { from: string; to: string };
 
@@ -97,21 +106,37 @@ function CustomRangeFields({
   );
 }
 
-function DateRangeControl({
-  filters,
-  range,
-  onChange,
-}: {
+/**
+ * Toolbar controls carry their label inside the control ("Compare  Previous period"); the
+ * accessible name stays the plain label ("Compare"), from a visually hidden element.
+ */
+function Prefix({ children }: { children: ReactNode }) {
+  return (
+    <span aria-hidden="true" className="text-muted-foreground">
+      {children}
+    </span>
+  );
+}
+
+/** A select trigger across the sheet: label and value on the left, the chevron at the end. */
+const STACKED_TRIGGER = "w-full justify-start [&>svg:last-child]:ml-auto";
+
+type ControlProps = {
   filters: DashboardFilters;
   range: Range;
   onChange: (next: DashboardFilters) => void;
-}) {
+  /** Full-width controls, one per line (the phone filter sheet). */
+  stacked?: boolean;
+};
+
+function DateRangeControl({ filters, range, onChange, stacked }: ControlProps) {
+  const id = useId();
   const [editing, setEditing] = useState(false);
   const custom = filters.preset === "custom" || editing;
   return (
-    <div className="flex flex-wrap items-end gap-2">
-      <div className="grid gap-1">
-        <span className="text-xs font-medium" id="date-range-label">
+    <div className={cn("flex flex-wrap items-end gap-2", stacked && "flex-col items-stretch")}>
+      <div className="grid">
+        <span className="sr-only" id={`${id}-label`}>
           Date range
         </span>
         <Select
@@ -130,7 +155,12 @@ function DateRangeControl({
             });
           }}
         >
-          <SelectTrigger size="sm" className="w-44" aria-labelledby="date-range-label">
+          <SelectTrigger
+            size="sm"
+            className={stacked ? STACKED_TRIGGER : "min-w-40"}
+            aria-labelledby={`${id}-label`}
+          >
+            <CalendarDays className="size-4" aria-hidden="true" />
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -157,15 +187,8 @@ function DateRangeControl({
   );
 }
 
-function CompareControl({
-  filters,
-  range,
-  onChange,
-}: {
-  filters: DashboardFilters;
-  range: Range;
-  onChange: (next: DashboardFilters) => void;
-}) {
+function CompareControl({ filters, range, onChange, stacked }: ControlProps) {
+  const id = useId();
   const [editing, setEditing] = useState(false);
   const custom = filters.compare === "custom" || editing;
   const initial =
@@ -173,9 +196,9 @@ function CompareControl({
       ? { from: filters.compareFrom, to: filters.compareTo }
       : previousPeriod(range);
   return (
-    <div className="flex flex-wrap items-end gap-2">
-      <div className="grid gap-1">
-        <span className="text-xs font-medium" id="compare-label">
+    <div className={cn("flex flex-wrap items-end gap-2", stacked && "flex-col items-stretch")}>
+      <div className="grid">
+        <span className="sr-only" id={`${id}-label`}>
           Compare
         </span>
         <Select
@@ -194,7 +217,12 @@ function CompareControl({
             });
           }}
         >
-          <SelectTrigger size="sm" className="w-44" aria-labelledby="compare-label">
+          <SelectTrigger
+            size="sm"
+            className={stacked ? STACKED_TRIGGER : "min-w-40"}
+            aria-labelledby={`${id}-label`}
+          >
+            <Prefix>Compare</Prefix>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -219,16 +247,11 @@ function CompareControl({
   );
 }
 
-function PlatformFilter({
-  filters,
-  onChange,
-}: {
-  filters: DashboardFilters;
-  onChange: (next: DashboardFilters) => void;
-}) {
+function PlatformFilter({ filters, onChange, stacked }: Omit<ControlProps, "range">) {
+  const id = useId();
   return (
-    <div className="grid gap-1">
-      <span className="text-xs font-medium" id="platform-filter-label">
+    <div className="grid">
+      <span className="sr-only" id={`${id}-label`}>
         Platforms
       </span>
       <ToggleGroup
@@ -236,7 +259,8 @@ function PlatformFilter({
         variant="outline"
         size="sm"
         role="group"
-        aria-labelledby="platform-filter-label"
+        aria-labelledby={`${id}-label`}
+        className={stacked ? "w-full *:flex-1" : undefined}
         value={filters.platforms}
         onValueChange={(value) => onChange({ ...filters, platforms: value as AdPlatform[] })}
       >
@@ -250,21 +274,18 @@ function PlatformFilter({
   );
 }
 
-function AccountFilter({
-  filters,
-  onChange,
-}: {
-  filters: DashboardFilters;
-  onChange: (next: DashboardFilters) => void;
-}) {
+function accountsLabel(filters: DashboardFilters): string {
+  return filters.accounts.length === 0
+    ? "All accounts"
+    : `${filters.accounts.length} ${filters.accounts.length === 1 ? "account" : "accounts"}`;
+}
+
+function AccountFilter({ filters, onChange, stacked }: Omit<ControlProps, "range">) {
   const id = useId();
   const { data: accounts } = useAnalyticsQuery(api.v1.adAccounts.list, {});
   const selectable = (accounts ?? []).filter((a) => !a.isManager);
   const selected = new Set(filters.accounts);
-  const label =
-    filters.accounts.length === 0
-      ? "All accounts"
-      : `${filters.accounts.length} ${filters.accounts.length === 1 ? "account" : "accounts"}`;
+  const label = accountsLabel(filters);
   const toggle = (accountId: string, checked: boolean) => {
     const next = checked
       ? [...filters.accounts, accountId].slice(0, MAX_ACCOUNT_FILTER)
@@ -272,8 +293,8 @@ function AccountFilter({
     onChange({ ...filters, accounts: next });
   };
   return (
-    <div className="grid gap-1">
-      <span className="text-xs font-medium" id={`${id}-label`}>
+    <div className="grid">
+      <span className="sr-only" id={`${id}-label`}>
         Accounts
       </span>
       <Popover>
@@ -281,7 +302,7 @@ function AccountFilter({
           <Button
             variant="outline"
             size="sm"
-            className="w-44 justify-between"
+            className={cn("justify-between font-normal", stacked ? "w-full" : "min-w-40")}
             aria-labelledby={`${id}-label ${id}-value`}
           >
             <span id={`${id}-value`}>{label}</span>
@@ -332,19 +353,12 @@ function AccountFilter({
 
 const GRANULARITY_OPTIONS: GranularitySetting[] = ["auto", "day", "week", "month"];
 
-function GranularityControl({
-  filters,
-  range,
-  onChange,
-}: {
-  filters: DashboardFilters;
-  range: Range;
-  onChange: (next: DashboardFilters) => void;
-}) {
+function GranularityControl({ filters, range, onChange, stacked }: ControlProps) {
+  const id = useId();
   const auto = autoGranularity(rangeDays(range));
   return (
-    <div className="grid gap-1">
-      <span className="text-xs font-medium" id="granularity-label">
+    <div className="grid">
+      <span className="sr-only" id={`${id}-label`}>
         Interval
       </span>
       <Select
@@ -353,7 +367,12 @@ function GranularityControl({
           onChange({ ...filters, granularity: value as GranularitySetting })
         }
       >
-        <SelectTrigger size="sm" className="w-36" aria-labelledby="granularity-label">
+        <SelectTrigger
+          size="sm"
+          className={stacked ? STACKED_TRIGGER : "min-w-36"}
+          aria-labelledby={`${id}-label`}
+        >
+          <Prefix>Interval</Prefix>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -364,6 +383,48 @@ function GranularityControl({
           ))}
         </SelectContent>
       </Select>
+    </div>
+  );
+}
+
+/** Below md: a "Filters" button with the current selection; the controls open in a bottom sheet. */
+function PhoneFilters({ summary, children }: { summary: string; children: ReactNode }) {
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="md:hidden">
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full justify-start font-normal"
+            aria-describedby={`${id}-summary`}
+          >
+            <SlidersHorizontal className="size-4" aria-hidden="true" />
+            <span className="font-medium">Filters</span>
+            <span
+              id={`${id}-summary`}
+              aria-hidden="true"
+              className="min-w-0 truncate text-muted-foreground"
+            >
+              {summary}
+            </span>
+          </Button>
+        </SheetTrigger>
+        <SheetContent side="bottom" className="max-h-[85dvh] gap-0 rounded-t-[14px] bg-paper">
+          <SheetHeader className="border-b border-line">
+            <SheetTitle>Filters</SheetTitle>
+            <SheetDescription>Changes apply as you make them.</SheetDescription>
+          </SheetHeader>
+          <div className="flex flex-col gap-3 overflow-y-auto p-4">{children}</div>
+          <div className="border-t border-line p-4">
+            <Button className="w-full" onClick={() => setOpen(false)}>
+              Done
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
@@ -395,39 +456,66 @@ export function FilterBar({
       : scope.compare === "previous_period"
         ? previousPeriod(scope.range)
         : scope.compare;
+  const controls = (stacked: boolean) => (
+    <>
+      <DateRangeControl
+        filters={filters}
+        range={scope.range}
+        onChange={setFilters}
+        stacked={stacked}
+      />
+      {compare && (
+        <CompareControl
+          filters={filters}
+          range={scope.range}
+          onChange={setFilters}
+          stacked={stacked}
+        />
+      )}
+      {accounts && <PlatformFilter filters={filters} onChange={setFilters} stacked={stacked} />}
+      {accounts && <AccountFilter filters={filters} onChange={setFilters} stacked={stacked} />}
+      {granularity && (
+        <GranularityControl
+          filters={filters}
+          range={scope.range}
+          onChange={setFilters}
+          stacked={stacked}
+        />
+      )}
+    </>
+  );
+  const summary = [
+    filters.preset === "custom" ? "Custom range" : PRESET_LABELS[filters.preset],
+    ...(accounts && filters.platforms.length > 0
+      ? [filters.platforms.map(humanize).join(", ")]
+      : []),
+    ...(accounts ? [accountsLabel(filters)] : []),
+  ].join(" · ");
   return (
-    <section
-      aria-label="Filters"
-      className="flex flex-col gap-2 rounded-lg border bg-card p-3"
-      data-testid="filter-bar"
-    >
-      <div className="flex flex-wrap items-end gap-3">
-        <DateRangeControl filters={filters} range={scope.range} onChange={setFilters} />
-        {compare && <CompareControl filters={filters} range={scope.range} onChange={setFilters} />}
-        {accounts && <PlatformFilter filters={filters} onChange={setFilters} />}
-        {accounts && <AccountFilter filters={filters} onChange={setFilters} />}
-        {granularity && (
-          <GranularityControl filters={filters} range={scope.range} onChange={setFilters} />
+    <section aria-label="Filters" className="flex flex-col gap-1.5" data-testid="filter-bar">
+      {/* Phones: one summary button; the controls open in a sheet. */}
+      <PhoneFilters summary={summary}>{controls(true)}</PhoneFilters>
+      <div className="hidden flex-wrap items-end gap-2 md:flex">{controls(false)}</div>
+      <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+        <p className="text-xs text-muted-foreground" data-testid="resolved-range">
+          {formatRange(scope.range)}
+          {compare && comparison ? ` · compared with ${formatRange(comparison)}` : ""}
+        </p>
+        {dayBasis === "utc" ? (
+          <p className="text-xs text-muted-foreground" data-testid="day-basis">
+            Account metrics use UTC days and presets use UTC; post publish dates use {org.timezone}.
+          </p>
+        ) : dayBasis === "pacific" ? (
+          <p className="text-xs text-muted-foreground" data-testid="day-basis">
+            Channel metrics use YouTube&apos;s Pacific Time days and presets use Pacific Time; video
+            publish dates use {org.timezone}.
+          </p>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            Dates are each ad account&apos;s local days; presets use {org.timezone}.
+          </p>
         )}
       </div>
-      <p className="text-xs text-muted-foreground" data-testid="resolved-range">
-        {formatRange(scope.range)}
-        {compare && comparison ? ` · compared with ${formatRange(comparison)}` : ""}
-      </p>
-      {dayBasis === "utc" ? (
-        <p className="text-xs text-muted-foreground" data-testid="day-basis">
-          Account metrics use UTC days and presets use UTC; post publish dates use {org.timezone}.
-        </p>
-      ) : dayBasis === "pacific" ? (
-        <p className="text-xs text-muted-foreground" data-testid="day-basis">
-          Channel metrics use YouTube&apos;s Pacific Time days and presets use Pacific Time; video
-          publish dates use {org.timezone}.
-        </p>
-      ) : (
-        <p className="text-xs text-muted-foreground">
-          Dates are each ad account&apos;s local days; presets use {org.timezone}.
-        </p>
-      )}
     </section>
   );
 }

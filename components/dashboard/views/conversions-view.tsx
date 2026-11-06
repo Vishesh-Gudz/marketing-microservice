@@ -1,17 +1,10 @@
 "use client";
 
-import { useId } from "react";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { LEVEL_PLURAL } from "@/lib/analytics/labels";
 import { useAnalyticsScope, useDashboardFilters } from "@/lib/analytics/use-dashboard-filters";
 import { ActionsPanel } from "../actions-panel";
 import { FilterBar } from "../filter-bar";
+import { LabelledSelect } from "../labelled-select";
 import { PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
 
@@ -20,7 +13,6 @@ type Level = (typeof LEVELS)[number];
 
 /** Conversion actions per type and attribution window for the org or the filtered accounts. */
 export function ConversionsView() {
-  const id = useId();
   const scope = useAnalyticsScope();
   const { searchParams, setParams } = useDashboardFilters();
   const levelParam = searchParams.get("level");
@@ -35,25 +27,13 @@ export function ConversionsView() {
         description="Conversion actions as each platform reports them, per attribution window."
       />
       <FilterBar compare={false} />
-      <div className="flex items-center gap-2 text-sm">
-        <span id={id} className="text-muted-foreground">
-          Level
-        </span>
-        <Select
+      <div className="flex flex-wrap items-center gap-2">
+        <LabelledSelect
+          label="Level"
           value={level}
+          options={LEVELS.map((l) => ({ value: l, label: LEVEL_PLURAL[l] }))}
           onValueChange={(value) => setParams({ level: value === "account" ? undefined : value })}
-        >
-          <SelectTrigger size="sm" className="w-36" aria-labelledby={id}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {LEVELS.map((l) => (
-              <SelectItem key={l} value={l}>
-                {LEVEL_PLURAL[l]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        />
       </div>
       <QueryBoundary
         resetKey={JSON.stringify([args, scope.apiFilters, searchParams.get("primaryOnly")])}

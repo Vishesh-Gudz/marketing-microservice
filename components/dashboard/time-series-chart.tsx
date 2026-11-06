@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState } from "react";
-import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
+import { Area, CartesianGrid, ComposedChart, Line, XAxis, YAxis } from "recharts";
 import { Button } from "@/components/ui/button";
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart";
 import {
@@ -21,6 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  axisTick,
   bucketLabel,
   buildSeries,
   CHART_METRICS,
@@ -34,6 +35,7 @@ import { DATA_STATE_LABEL } from "@/lib/analytics/states";
 import type { TimeSeriesPoint } from "@/lib/analytics/types";
 import { VALUES } from "@/lib/analytics/values";
 import { EmptyState } from "./empty-state";
+import { SECTION_HEADING, TABLE_EDGES } from "./surface";
 
 const GRANULARITY_LABEL: Record<Granularity, string> = { day: "Day", week: "Week", month: "Month" };
 
@@ -75,7 +77,7 @@ function TooltipBody({
   const row = payload?.[0]?.payload as PlotRow | undefined;
   if (!active || !row) return null;
   return (
-    <div className="grid gap-1 rounded-lg border bg-background px-2.5 py-1.5 text-xs shadow-xl">
+    <div className="grid gap-1 rounded-[10px] border border-line bg-paper px-3 py-2 text-xs shadow-lift">
       <div className="font-medium">
         {granularity === "day" ? row.from : `${row.from} – ${row.to}`}
       </div>
@@ -113,6 +115,8 @@ export function TimeSeriesChart({
 }) {
   const [asTable, setAsTable] = useState(false);
   const headingId = useId();
+  // SVG ids cannot hold the colons of React ids inside url(#…).
+  const fillId = `fill-${headingId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const series = buildSeries(points, metric, reportingCurrency);
   const label = VALUES[metric].label;
   const config = { value: { label, color: "var(--chart-1)" } } satisfies ChartConfig;
@@ -122,7 +126,7 @@ export function TimeSeriesChart({
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 id={headingId} className="text-base font-semibold">
+        <h2 id={headingId} className={SECTION_HEADING}>
           {title}
         </h2>
         <div className="flex items-center gap-2">
@@ -158,8 +162,8 @@ export function TimeSeriesChart({
           cannot be combined. Filter to accounts with one currency or add exchange rates.
         </EmptyState>
       ) : asTable ? (
-        <div className="max-h-96 overflow-auto rounded-md border">
-          <Table>
+        <div className="max-h-96 overflow-auto rounded-[10px] border border-line">
+          <Table className={TABLE_EDGES}>
             <TableCaption className="sr-only">{heading}</TableCaption>
             <TableHeader>
               <TableRow>
@@ -198,16 +202,28 @@ export function TimeSeriesChart({
             role="img"
             aria-label={heading}
           >
-            <LineChart data={plotRows(series.rows)} margin={{ left: 8, right: 8, top: 8 }}>
-              <CartesianGrid vertical={false} />
+            <ComposedChart data={plotRows(series.rows)} margin={{ left: 0, right: 8, top: 8 }}>
+              <defs>
+                <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--color-value)" stopOpacity={0.16} />
+                  <stop offset="100%" stopColor="var(--color-value)" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--color-line)" />
               <XAxis
                 dataKey="bucket"
                 tickLine={false}
                 axisLine={false}
                 minTickGap={24}
+                tickMargin={8}
                 tickFormatter={(bucket: string) => bucketLabel(bucket, granularity)}
               />
-              <YAxis tickLine={false} axisLine={false} width={64} />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                width={56}
+                tickFormatter={(value: number) => axisTick(value, metric, series.currency)}
+              />
               <ChartTooltip
                 content={(props) => (
                   <TooltipBody
@@ -217,11 +233,12 @@ export function TimeSeriesChart({
                   />
                 )}
               />
-              <Line
+              <Area
                 dataKey="solid"
                 type="linear"
                 stroke="var(--color-value)"
                 strokeWidth={2}
+                fill={`url(#${fillId})`}
                 connectNulls={false}
                 dot={(props) => <CompleteDot {...(props as DotProps)} />}
                 isAnimationActive={false}
@@ -237,7 +254,7 @@ export function TimeSeriesChart({
                 activeDot={false}
                 isAnimationActive={false}
               />
-            </LineChart>
+            </ComposedChart>
           </ChartContainer>
           <figcaption className="mt-1 text-xs text-muted-foreground">
             Dashed segments and hollow points are partial buckets; gaps are periods without synced

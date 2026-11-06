@@ -208,3 +208,30 @@ export function spendShares(
   if (total <= 0) return { available: false, reason: "no_spend" };
   return { available: true, currency, shares: values.map((v) => (v === null ? null : v / total)) };
 }
+
+/**
+ * A short y-axis label for a chart metric ($1.2K, 12K, 1.5%): ticks only, never a reported
+ * value. Money uses the series currency; percent metrics are fractions (0.015 -> 1.5%).
+ */
+export function axisTick(
+  value: number,
+  metric: ChartMetric,
+  currency: string | undefined,
+  locale: string | undefined = getDisplayLocale(),
+): string {
+  const kind = VALUES[metric].kind;
+  if (kind === "percent") {
+    return new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 1 }).format(
+      value,
+    );
+  }
+  const compact: Intl.NumberFormatOptions = {
+    notation: "compact",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 1,
+  };
+  return new Intl.NumberFormat(
+    locale,
+    kind === "money" && currency ? { ...compact, style: "currency", currency } : compact,
+  ).format(value);
+}

@@ -104,13 +104,15 @@ for (const viewport of [VIEWPORTS[0], VIEWPORTS[3]]) {
     test("accounts filter popover", async ({ page }) => {
       await page.goto("/");
       await settled(page);
-      await page
+      // On phones the filters sit in a sheet behind one "Filters" button (revamp Phase 7).
+      const phone = viewport.width < 768;
+      if (phone) await page.getByRole("button", { name: "Filters" }).click();
+      const scope = phone ? page.getByRole("dialog", { name: "Filters" }) : page;
+      await scope
         .getByRole("button", { name: /accounts/i })
         .first()
         .click();
-      await expect(
-        page.getByRole("dialog").or(page.locator("[data-slot=popover-content]")).first(),
-      ).toBeVisible();
+      await expect(page.locator("[data-slot=popover-content]")).toBeVisible();
       await expect(page).toHaveScreenshot(`accounts-popover-${viewport.name}.png`, {
         mask: volatile(page),
       });
