@@ -2,10 +2,10 @@
 
 import { AlertTriangle, CheckCircle2, Info, XCircle } from "lucide-react";
 import Link from "next/link";
-import { Fragment, type ReactNode } from "react";
+import { createContext, Fragment, useContext, type ReactNode } from "react";
 import { api } from "@/convex/_generated/api";
 import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
-import type { Coverage, Fx } from "@/lib/analytics/types";
+import type { Connection, Coverage, Fx } from "@/lib/analytics/types";
 import { AD_CONNECTION_PROVIDERS, PROVIDERS as AD_PROVIDERS } from "@/lib/connections/providers";
 import { cn } from "@/lib/utils";
 
@@ -37,6 +37,9 @@ const NOTICE_TONES = {
   },
 } as const;
 
+/** Inside a NoticeList, notices drop their own box and render as rows of the list. */
+const InNoticeList = createContext(false);
+
 export function Notice({
   tone,
   children,
@@ -47,16 +50,43 @@ export function Notice({
   label: string;
 }) {
   const { Icon, role, className, iconClassName } = NOTICE_TONES[tone];
+  const asRow = useContext(InNoticeList);
   return (
     <div
       role={role}
       aria-label={label}
-      className={cn("flex items-start gap-2 rounded-[10px] border px-3 py-2 text-sm", className)}
+      className={cn(
+        "flex items-start text-sm",
+        asRow ? "gap-3 px-4 py-3 text-ink" : "gap-2 rounded-[10px] border px-3 py-2",
+        !asRow && className,
+      )}
     >
       <Icon className={cn("mt-0.5 size-4 shrink-0", iconClassName)} aria-hidden="true" />
       <div>{children}</div>
     </div>
   );
+}
+
+/** Notices as rows of one list, separated by hairlines (the Overview's attention panel). */
+export function NoticeList({ children }: { children: ReactNode }) {
+  return (
+    <InNoticeList value={true}>
+      <div className="divide-y divide-line">{children}</div>
+    </InNoticeList>
+  );
+}
+
+/** Whether CoverageNotice has anything to say about this coverage. */
+export function coverageNeedsNotice(coverage: Coverage): boolean {
+  return (
+    coverage.dataState === "unknown" ||
+    coverage.accounts.some((a) => !a.supported || a.daysUncovered > 0)
+  );
+}
+
+/** Connections whose credentials stopped working (what ReauthBanner reports). */
+export function connectionsNeedingReauth(connections: readonly Connection[]): Connection[] {
+  return connections.filter((c) => c.status === "needs_reauth");
 }
 
 /** Reporting-currency conversion status (D11). */
@@ -94,7 +124,7 @@ export function CoverageNotice({ coverage }: { coverage: Coverage }) {
       </Notice>
     );
   }
-  if (uncovered.length === 0 && unsupported === 0) return null;
+  if (!coverageNeedsNotice(coverage)) return null;
   return (
     <Notice tone="warning" label="Partial data">
       {uncovered.length > 0 && (
@@ -129,7 +159,7 @@ const PROVIDER_LABEL = {
  */
 export function ReauthBanner() {
   const { data: connections } = useAnalyticsQuery(api.v1.connections.list, {});
-  const broken = (connections ?? []).filter((c) => c.status === "needs_reauth");
+  const broken = connectionsNeedingReauth(connections ?? []);
   if (broken.length === 0) return null;
   const names = broken.map((c) => c.displayName ?? PROVIDER_LABEL[c.provider]).join(", ");
   return (

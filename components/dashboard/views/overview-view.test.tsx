@@ -36,6 +36,15 @@ const comparison = {
   },
 };
 
+const ACCOUNT = {
+  id: "a1",
+  name: "Meta US",
+  platform: "meta",
+  currency: "USD",
+  isManager: false,
+  linked: true,
+};
+
 describe("OverviewView", () => {
   beforeAll(() => {
     vi.useFakeTimers({ toFake: ["Date"] });
@@ -61,7 +70,7 @@ describe("OverviewView", () => {
       range: { from: "2026-08-26", to: "2026-09-24" },
       fx: { reportingCurrency: "USD", status: "not_needed" },
     });
-    queryResults.set("v1/adAccounts:list", []);
+    queryResults.set("v1/adAccounts:list", [ACCOUNT]);
   });
 
   it("resolves the default preset from the org's today and compares with the previous period", () => {
@@ -254,5 +263,122 @@ describe("OverviewView", () => {
     expect(alert).toHaveAttribute("data-error-kind", "too_many_rows");
     expect(alert).toHaveTextContent("Too much data for one view");
     expect(screen.getByTestId("overview-totals")).toBeInTheDocument();
+  });
+
+  it("gathers reconnects, sync gaps and missing exchange rates in one panel above the metrics", () => {
+    queryResults.set("v1/connections:list", [
+      { id: "c1", provider: "meta", status: "needs_reauth", displayName: "Meta (Dev)" },
+    ]);
+    queryResults.set(
+      "v1/analytics:overview",
+      overview({
+        coverage: {
+          dataState: "partial",
+          accounts: [{ accountId: "a1", daysUncovered: 2, supported: true }],
+        },
+        fx: {
+          reportingCurrency: "USD",
+          status: "missing",
+          missing: [{ currency: "EUR", days: 1 }],
+        },
+      }),
+    );
+    renderWithOrg(<OverviewView />);
+    const panel = screen.getByRole("region", { name: "Needs attention" });
+    expect(within(panel).getByLabelText("Reconnect required")).toHaveTextContent("Meta (Dev)");
+    expect(within(panel).getByRole("link", { name: "Reconnect Meta Ads" })).toHaveAttribute(
+      "href",
+      "/connections",
+    );
+    expect(within(panel).getByLabelText("Partial data")).toHaveTextContent("2 days not yet synced");
+    expect(within(panel).getByLabelText("Currency conversion incomplete")).toHaveTextContent(
+      "EUR (1 day)",
+    );
+    const totals = screen.getByRole("region", { name: "Key metrics" });
+    expect(panel.compareDocumentPosition(totals) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("shows no attention panel when nothing needs attention, and notes complete conversions", () => {
+    queryResults.set("v1/connections:list", [
+      { id: "c1", provider: "meta", status: "active", displayName: "Meta (Dev)" },
+    ]);
+    queryResults.set(
+      "v1/analytics:overview",
+      overview({ fx: { reportingCurrency: "USD", status: "complete" } }),
+    );
+    renderWithOrg(<OverviewView />);
+    expect(screen.queryByRole("region", { name: "Needs attention" })).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("overview-totals")).getByLabelText("Currency conversion"),
+    ).toHaveTextContent("converted to USD with daily exchange rates");
+  });
+
+  it("keeps the reconnect notice in view while the metrics load", () => {
+    queryResults.delete("v1/analytics:overview");
+    queryResults.set("v1/connections:list", [
+      { id: "c1", provider: "google_ads", status: "needs_reauth" },
+    ]);
+    renderWithOrg(<OverviewView />);
+    expect(screen.getByTestId("kpi-skeleton")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: "Needs attention" })).getByLabelText(
+        "Reconnect required",
+      ),
+    ).toHaveTextContent("Google Ads");
+  });
+
+  it.each([
+    ["no ad accounts", []],
+    ["only manager accounts", [{ ...ACCOUNT, id: "m1", isManager: true }]],
+  ])("shows one connect prompt instead of the report with %s", (_, accounts) => {
+    queryResults.set("v1/adAccounts:list", accounts);
+    queryResults.set("v1/connections:list", [
+      { id: "c1", provider: "google_ads", status: "needs_reauth" },
+    ]);
+    renderWithOrg(<OverviewView />);
+    // A connection that needs reconnecting is still reported, in the same panel.
+    expect(
+      within(screen.getByRole("region", { name: "Needs attention" })).getByLabelText(
+        "Reconnect required",
+      ),
+    ).toHaveTextContent("Google Ads");
+    expect(screen.getByRole("heading", { name: "No ad accounts linked yet" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Go to Connections" })).toHaveAttribute(
+      "href",
+      "/connections",
+    );
+    expect(screen.getByRole("link", { name: "Open Organic" })).toHaveAttribute("href", "/social");
+    // No filter bar, no empty regions, and the report queries never run.
+    expect(screen.queryByTestId("resolved-range")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("kpi-skeleton")).not.toBeInTheDocument();
+    expect(lastArgs("v1/analytics:overview")).toBeUndefined();
+    expect(lastArgs("v1/analytics:timeSeries")).toBeUndefined();
+  });
+
+  it("ranks the top campaigns and links them with the current filters", () => {
+    setUrl("/", "preset=last_7_days&sort=name");
+    queryResults.set("v1/analytics:performance", {
+      page: [
+        performanceRow(),
+        performanceRow({ entity: { ...performanceRow().entity, id: "c2", name: "Second" } }),
+      ],
+      isDone: true,
+      continueCursor: "",
+      range: { from: "2026-09-18", to: "2026-09-24" },
+      fx: { reportingCurrency: "USD", status: "not_needed" },
+    });
+    renderWithOrg(<OverviewView />);
+    const top = screen.getByRole("region", { name: "Top campaigns by spend" });
+    const items = within(top).getAllByRole("listitem");
+    expect(items).toHaveLength(2);
+    expect(items[1]).toHaveTextContent(/^2Second/);
+    expect(within(items[1]!).getByRole("link", { name: "Second" })).toHaveAttribute(
+      "href",
+      "/campaigns/c2?preset=last_7_days",
+    );
+    expect(within(top).getByRole("link", { name: "All campaigns" })).toHaveAttribute(
+      "href",
+      "/campaigns?preset=last_7_days",
+    );
   });
 });

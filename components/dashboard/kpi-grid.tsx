@@ -7,6 +7,39 @@ import { KPI_CARDS, VALUES, valueView, type ValueKey } from "@/lib/analytics/val
 import { DeltaChip } from "./delta-chip";
 import { ValueText } from "./value-text";
 
+/** One KPI's value and comparison chip (shared by the KPI cards and the KPI strip). */
+export function KpiFigure({
+  metric,
+  aggregate,
+  comparison,
+  valueClassName = "text-2xl font-semibold",
+  detailClassName = "text-base font-semibold",
+}: {
+  metric: ValueKey;
+  aggregate: Aggregate;
+  comparison?: Comparison;
+  /** Classes of a single value. */
+  valueClassName?: string;
+  /** Classes of a per-currency value ("Multiple currencies"), which needs less emphasis. */
+  detailClassName?: string;
+}) {
+  const view = valueView(metric, aggregate);
+  return (
+    <>
+      {aggregate.dataState === "no_delivery" && view.kind === "unavailable" ? (
+        // D10: say "No delivery" rather than showing 0.
+        <span className="text-base font-medium text-muted-foreground">No delivery</span>
+      ) : (
+        <ValueText
+          view={view}
+          className={view.kind === "value" && view.detail ? detailClassName : valueClassName}
+        />
+      )}
+      {comparison && <DeltaChip metric={metric} delta={comparison.deltas[metric]} />}
+    </>
+  );
+}
+
 export function KpiCard({
   metric,
   aggregate,
@@ -16,7 +49,6 @@ export function KpiCard({
   aggregate: Aggregate;
   comparison?: Comparison;
 }) {
-  const view = valueView(metric, aggregate);
   return (
     <Card className="gap-2 py-4" data-kpi={metric}>
       <CardHeader className="px-4">
@@ -25,21 +57,7 @@ export function KpiCard({
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-1 px-4">
-        {aggregate.dataState === "no_delivery" && view.kind === "unavailable" ? (
-          // D10: say "No delivery" rather than showing 0.
-          <span className="text-base font-medium text-muted-foreground">No delivery</span>
-        ) : (
-          <ValueText
-            view={view}
-            // Per-currency values ("Multiple currencies") need less emphasis than one number.
-            className={
-              view.kind === "value" && view.detail
-                ? "text-base font-semibold"
-                : "text-2xl font-semibold"
-            }
-          />
-        )}
-        {comparison && <DeltaChip metric={metric} delta={comparison.deltas[metric]} />}
+        <KpiFigure metric={metric} aggregate={aggregate} comparison={comparison} />
       </CardContent>
     </Card>
   );
