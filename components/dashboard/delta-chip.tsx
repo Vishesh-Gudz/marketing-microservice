@@ -5,8 +5,8 @@ import { cn } from "@/lib/utils";
 import { PartialMarker } from "./partial-marker";
 
 const TONE_CLASS = {
-  positive: "text-emerald-700",
-  negative: "text-red-700",
+  positive: "text-ok-ink",
+  negative: "text-danger-ink",
   neutral: "text-muted-foreground",
 } as const;
 
@@ -50,7 +50,7 @@ export function DeltaChip({
       <span className="sr-only">{word} </span>
       {view.absoluteText && <span className="tabular-nums">{view.absoluteText}</span>}
       <span className="tabular-nums">{view.absoluteText ? `(${view.text})` : view.text}</span>
-      {view.partial && <PartialMarker className="text-amber-600" />}
+      {view.partial && <PartialMarker className="text-amber" />}
     </span>
   );
 }

@@ -1,12 +1,11 @@
 "use client";
 
-import { AlertTriangle, Info } from "lucide-react";
 import type { ReactNode } from "react";
 import { formatDateKey } from "@/lib/analytics/chart-data";
 import { useOrg } from "@/lib/analytics/org-context";
 import type { OrganicCoverage, SocialAccount } from "@/lib/analytics/organic-types";
-import { cn } from "@/lib/utils";
 import { formatInstant } from "../freshness-note";
+import { Notice } from "../notices";
 
 /**
  * Organic data freshness and coverage, straight from the API (the dashboard computes no
@@ -23,21 +22,11 @@ function OrganicNotice({
   label: string;
   children: ReactNode;
 }) {
-  const Icon = tone === "warning" ? AlertTriangle : Info;
+  // Same tones, roles and labels as the shared Notice.
   return (
-    <div
-      role={tone === "warning" ? "status" : undefined}
-      aria-label={label}
-      className={cn(
-        "flex items-start gap-2 rounded-md border px-3 py-2 text-sm",
-        tone === "warning"
-          ? "border-amber-300 bg-amber-50 text-amber-950"
-          : "bg-muted/40 text-muted-foreground",
-      )}
-    >
-      <Icon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-      <div>{children}</div>
-    </div>
+    <Notice tone={tone} label={label}>
+      {children}
+    </Notice>
   );
 }
 

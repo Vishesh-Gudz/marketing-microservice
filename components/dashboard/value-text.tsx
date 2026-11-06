@@ -31,7 +31,7 @@ export function ValueText({ view, className }: { view: ValueView; className?: st
       </Tooltip>
     );
   }
-  const partial = view.partial && <PartialMarker className="ml-0.5 text-amber-600" />;
+  const partial = view.partial && <PartialMarker className="ml-0.5 text-amber" />;
   if (!view.detail) {
     return (
       <span className={cn("tabular-nums", className)}>

@@ -92,7 +92,7 @@ function AccountsTable({ args }: { args: BreakdownArgs }) {
               const conn = account.connectionId ? connection.get(account.connectionId) : undefined;
               return (
                 <TableRow key={account.id} data-account-id={account.id}>
-                  <TableCell className="sticky left-0 z-10 bg-background whitespace-normal">
+                  <TableCell className="sticky left-0 z-10 bg-background whitespace-normal group-hover/row:bg-canvas">
                     <div className="font-medium">{account.name}</div>
                     <div className="font-mono text-xs text-muted-foreground">
                       {account.externalId}

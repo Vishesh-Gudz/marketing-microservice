@@ -163,7 +163,7 @@ export function SocialPostsTable({
               ))}
             {data?.page.map((post) => (
               <TableRow key={post.id} data-post-id={post.id}>
-                <TableCell className="sticky left-0 z-10 bg-background whitespace-normal">
+                <TableCell className="sticky left-0 z-10 bg-background whitespace-normal group-hover/row:bg-canvas">
                   <div className="flex max-w-80 flex-col gap-1">
                     <Link
                       href={postHref(post, params)}

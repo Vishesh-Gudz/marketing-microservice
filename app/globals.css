@@ -72,13 +72,20 @@
   --color-blue-deeper: #0a6a98;
   --color-blue-50: #eef8fd;
   --color-blue-100: #d8eefa;
-  /* Status colours: status only, never decoration. */
+  /* Status colours: status only, never decoration. `-ink` shades are for small text on white or
+     on the tint (4.5:1 and up); the plain tones are for icons, dots and large text. */
   --color-ok: #1f8a5b;
+  --color-ok-ink: #17704a;
   --color-ok-tint: #e7f6ee;
+  --color-ok-line: #c9ead8;
   --color-amber: #b7791f;
+  --color-amber-ink: #8a5a12;
   --color-amber-tint: #fdf3e2;
+  --color-amber-line: #f0dcb4;
   --color-danger: #d14343;
+  --color-danger-ink: #a83232;
   --color-danger-tint: #fdecec;
+  --color-danger-line: #f2c4c4;
 
   --shadow-soft: 0 1px 2px rgb(15 17 21 / 0.04), 0 12px 32px -14px rgb(15 17 21 / 0.14);
   --shadow-lift: 0 1px 2px rgb(15 17 21 / 0.05), 0 24px 48px -20px rgb(15 17 21 / 0.2);
@@ -143,6 +150,86 @@
     outline-width: 2px;
     outline-style: solid;
     outline-offset: 2px;
+  }
+  /* Lucide icons at the Gudz glyph weight (1.5px instead of 2px). */
+  svg.lucide {
+    stroke-width: 1.5;
+  }
+}
+
+/*
+ * Buttons, from gudz-landing @ redesign-2026 (app/globals.css .btn-*): a lit top edge and a soft
+ * blue drop shadow on primary; a hairline secondary. Danger follows the same recipe (Gudz Control).
+ */
+@layer components {
+  .gudz-btn-primary {
+    color: #fff;
+    background: linear-gradient(180deg, #1182ba 0%, #0a70a2 100%);
+    text-shadow: 0 1px 0 rgb(0 0 0 / 0.08);
+    box-shadow:
+      0 0 0 1px #09679a,
+      inset 0 1px 0 rgb(255 255 255 / 0.24),
+      inset 0 -1px 0 rgb(0 0 0 / 0.08),
+      0 1px 2px rgb(9 103 154 / 0.24),
+      0 6px 14px -6px rgb(11 123 176 / 0.5);
+  }
+  .gudz-btn-primary:hover {
+    background: linear-gradient(180deg, #1286bf 0%, #0b74a7 100%);
+    box-shadow:
+      0 0 0 1px #09679a,
+      inset 0 1px 0 rgb(255 255 255 / 0.28),
+      inset 0 -1px 0 rgb(0 0 0 / 0.08),
+      0 2px 4px rgb(9 103 154 / 0.24),
+      0 10px 22px -8px rgb(11 123 176 / 0.55);
+  }
+  .gudz-btn-primary:active {
+    box-shadow:
+      0 0 0 1px #09679a,
+      inset 0 1px 2px rgb(0 0 0 / 0.16);
+  }
+
+  .gudz-btn-secondary {
+    color: var(--color-ink);
+    background: #fff;
+    box-shadow:
+      0 0 0 1px #d6dae0,
+      inset 0 -1px 0 rgb(15 17 21 / 0.05),
+      0 1px 2px rgb(15 17 21 / 0.06);
+  }
+  .gudz-btn-secondary:hover {
+    background: #fafbfc;
+    box-shadow:
+      0 0 0 1px #c3c9d1,
+      inset 0 -1px 0 rgb(15 17 21 / 0.05),
+      0 3px 8px -2px rgb(15 17 21 / 0.1);
+  }
+  .gudz-btn-secondary:active {
+    background: #f6f7f9;
+    box-shadow:
+      0 0 0 1px #c3c9d1,
+      inset 0 1px 2px rgb(15 17 21 / 0.08);
+  }
+
+  .gudz-btn-danger {
+    color: #fff;
+    background: linear-gradient(180deg, #dc4d4d 0%, #c13a3a 100%);
+    text-shadow: 0 1px 0 rgb(0 0 0 / 0.1);
+    box-shadow:
+      0 0 0 1px #a83232,
+      inset 0 1px 0 rgb(255 255 255 / 0.2),
+      0 6px 14px -6px rgb(209 67 67 / 0.5);
+  }
+  .gudz-btn-danger:hover {
+    background: linear-gradient(180deg, #e05252 0%, #c63e3e 100%);
+  }
+
+  /* Disabled buttons drop the lift so they read as inactive; secondary keeps its hairline. */
+  .gudz-btn-primary:disabled,
+  .gudz-btn-danger:disabled {
+    box-shadow: none;
+  }
+  .gudz-btn-secondary:disabled {
+    box-shadow: 0 0 0 1px #d6dae0;
   }
 }
 

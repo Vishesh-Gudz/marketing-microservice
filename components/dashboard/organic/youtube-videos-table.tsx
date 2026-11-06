@@ -151,7 +151,7 @@ export function YouTubeVideosTable({
               const title = video.title ?? "Untitled video";
               return (
                 <TableRow key={video.id} data-video-id={video.id}>
-                  <TableCell className="sticky left-0 z-10 bg-background whitespace-normal">
+                  <TableCell className="sticky left-0 z-10 bg-background whitespace-normal group-hover/row:bg-canvas">
                     <div className="flex max-w-80 flex-col gap-1">
                       <span className="line-clamp-2 font-medium">{title}</span>
                       <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">

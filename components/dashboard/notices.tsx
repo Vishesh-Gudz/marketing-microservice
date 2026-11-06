@@ -9,22 +9,31 @@ import type { Coverage, Fx } from "@/lib/analytics/types";
 import { AD_CONNECTION_PROVIDERS, PROVIDERS as AD_PROVIDERS } from "@/lib/connections/providers";
 import { cn } from "@/lib/utils";
 
+// Gudz status tones: tinted surface + hairline in the tone, coloured icon, ink text (4.5:1+).
 const NOTICE_TONES = {
-  info: { Icon: Info, role: undefined, className: "bg-muted/40 text-muted-foreground" },
+  info: {
+    Icon: Info,
+    role: undefined,
+    className: "border-line bg-canvas text-ink-2",
+    iconClassName: "text-muted-foreground",
+  },
   warning: {
     Icon: AlertTriangle,
     role: "status",
-    className: "border-amber-300 bg-amber-50 text-amber-950",
+    className: "border-amber-line bg-amber-tint text-ink",
+    iconClassName: "text-amber",
   },
   success: {
     Icon: CheckCircle2,
     role: "status",
-    className: "border-emerald-300 bg-emerald-50 text-emerald-950",
+    className: "border-ok-line bg-ok-tint text-ink",
+    iconClassName: "text-ok",
   },
   error: {
     Icon: XCircle,
     role: "alert",
-    className: "border-destructive/40 bg-destructive/5 text-foreground",
+    className: "border-danger-line bg-danger-tint text-ink",
+    iconClassName: "text-danger",
   },
 } as const;
 
@@ -37,14 +46,14 @@ export function Notice({
   children: ReactNode;
   label: string;
 }) {
-  const { Icon, role, className } = NOTICE_TONES[tone];
+  const { Icon, role, className, iconClassName } = NOTICE_TONES[tone];
   return (
     <div
       role={role}
       aria-label={label}
-      className={cn("flex items-start gap-2 rounded-md border px-3 py-2 text-sm", className)}
+      className={cn("flex items-start gap-2 rounded-[10px] border px-3 py-2 text-sm", className)}
     >
-      <Icon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+      <Icon className={cn("mt-0.5 size-4 shrink-0", iconClassName)} aria-hidden="true" />
       <div>{children}</div>
     </div>
   );

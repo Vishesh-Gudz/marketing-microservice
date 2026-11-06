@@ -220,7 +220,7 @@ export function PerformanceTable({
               ))}
             {data?.page.map((row) => (
               <TableRow key={row.entity.id} data-row-id={row.entity.id}>
-                <TableCell className="sticky left-0 z-10 bg-background whitespace-normal">
+                <TableCell className="sticky left-0 z-10 bg-background whitespace-normal group-hover/row:bg-canvas">
                   <div className="flex flex-col gap-1">
                     {hrefFor ? (
                       <Link

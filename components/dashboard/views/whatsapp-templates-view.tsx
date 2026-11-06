@@ -29,12 +29,14 @@ import { Breadcrumbs, PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
 import { TemplateBuilder } from "../whatsapp/template-builder";
 import { TemplatePreview } from "../whatsapp/template-preview";
+import { fieldClassName } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 
 type TemplateList = FunctionReturnType<typeof api.v1.whatsapp.listAccountTemplates>;
 type ManagedTemplate = TemplateList["templates"][number];
 
-const FIELD =
-  "rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50";
+// Shared field look (components/ui/textarea.tsx).
+const FIELD = cn(fieldClassName, "w-auto md:text-sm text-sm");
 
 /** Admin-only: deletes one template in one language after an explicit confirmation. */
 function DeleteTemplate({
