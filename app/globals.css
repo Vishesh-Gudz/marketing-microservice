@@ -250,6 +250,62 @@
     background-image: radial-gradient(var(--color-line-strong) 1px, transparent 1px);
     background-size: 18px 18px;
   }
+  /*
+   * Clerk's buttons and fields inside the sign-in frame (CLERK_EMBEDDED in
+   * components/brand/clerk-appearance.ts), in the landing / Control button recipe. Clerk styles
+   * its elements itself, so these need !important. The field gets a visible 1px border (Clerk
+   * draws it at 11% opacity) and keeps a focus ring.
+   */
+  .gudz-clerk-primary {
+    height: 2.75rem !important;
+    max-height: none !important;
+    font-size: 14.5px !important;
+    color: #fff !important;
+    background: linear-gradient(180deg, #1182ba 0%, #0a70a2 100%) !important;
+    text-shadow: 0 1px 0 rgb(0 0 0 / 0.08);
+    box-shadow:
+      0 0 0 1px #09679a,
+      inset 0 1px 0 rgb(255 255 255 / 0.24),
+      inset 0 -1px 0 rgb(0 0 0 / 0.08),
+      0 1px 2px rgb(9 103 154 / 0.24),
+      0 6px 14px -6px rgb(11 123 176 / 0.5) !important;
+  }
+  .gudz-clerk-primary:hover {
+    background: linear-gradient(180deg, #1286bf 0%, #0b74a7 100%) !important;
+  }
+  .gudz-clerk-secondary {
+    height: 2.75rem !important;
+    max-height: none !important;
+    color: var(--color-ink) !important;
+    background: #fff !important;
+    box-shadow:
+      0 0 0 1px var(--color-line-strong),
+      inset 0 -1px 0 rgb(15 17 21 / 0.05),
+      0 1px 2px rgb(15 17 21 / 0.06) !important;
+  }
+  .gudz-clerk-secondary:hover {
+    background: #fafbfc !important;
+  }
+  .gudz-clerk-input {
+    height: 2.75rem !important;
+    max-height: none !important;
+    box-shadow: 0 0 0 1px var(--color-line-strong) !important;
+  }
+  .gudz-clerk-input:hover {
+    box-shadow: 0 0 0 1px var(--color-line-stronger) !important;
+  }
+  .gudz-clerk-input:focus {
+    box-shadow:
+      0 0 0 1px var(--color-ring),
+      0 0 0 3px color-mix(in oklab, var(--color-ring) 20%, transparent) !important;
+  }
+
+  /* The same grid fading out from the top (the sign-in panel, as in Gudz Control). */
+  .gudz-dot-canvas {
+    background-image: radial-gradient(var(--color-line-strong) 1px, transparent 1px);
+    background-size: 18px 18px;
+    mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 30%, transparent 75%);
+  }
 }
 
 @keyframes gudz-indeterminate {

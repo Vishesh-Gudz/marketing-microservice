@@ -32,3 +32,38 @@ export const CLERK_APPEARANCE: Appearance = {
     borderRadius: "0.625rem",
   },
 };
+
+/**
+ * Clerk's sign-in, sign-up and choose-organization widgets inside the Gudz sign-in frame
+ * (components/auth/auth-page.tsx): flat, at the form's width, without their own card. Their
+ * header (title and subtitle) is left out because the frame's own heading says the same; every
+ * field, button, link and the footer stay where Clerk puts them.
+ */
+export const CLERK_EMBEDDED: Appearance = {
+  elements: {
+    rootBox: { width: "100%" },
+    cardBox: {
+      width: "100%",
+      maxWidth: "none",
+      boxShadow: "none",
+      border: "none",
+      borderRadius: 0,
+      background: "transparent",
+    },
+    card: {
+      padding: 0,
+      boxShadow: "none",
+      border: "none",
+      borderRadius: 0,
+      background: "transparent",
+      gap: "1.5rem",
+    },
+    header: { display: "none" },
+    footer: { background: "transparent", padding: 0, marginTop: "1.5rem" },
+    footerAction: { justifyContent: "flex-start", padding: 0 },
+    // Button and field looks: app/globals.css (.gudz-clerk-*), which win over Clerk's styles.
+    formButtonPrimary: "gudz-clerk-primary",
+    socialButtonsBlockButton: "gudz-clerk-secondary",
+    formFieldInput: "gudz-clerk-input",
+  },
+};
