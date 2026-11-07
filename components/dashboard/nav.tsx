@@ -21,7 +21,6 @@ import {
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useId, useState, type ReactNode } from "react";
-import { Logo } from "@/components/brand/logo";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -441,22 +440,6 @@ export function DashboardNav({
   );
 }
 
-/** "Gudz Marketing": the Gudz wordmark in the logo blue, then the product name. */
-export function Brand({ compact = false }: { compact?: boolean }) {
-  return (
-    <span className="flex items-center gap-2">
-      <Logo
-        width={undefined}
-        height={undefined}
-        className={cn("w-auto", compact ? "h-[11px]" : "h-[18px]")}
-        aria-hidden="true"
-      />
-      <span className="sr-only">Gudz</span>
-      <span
-        className={cn("text-[15px] font-medium tracking-[-0.01em] text-ink", compact && "sr-only")}
-      >
-        Marketing
-      </span>
-    </span>
-  );
-}
+// The brand lives in its own module (components/brand/brand.tsx) so public pages can show it
+// without loading this navigation; the shell keeps importing it from here.
+export { Brand } from "@/components/brand/brand";

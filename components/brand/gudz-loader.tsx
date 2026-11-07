@@ -23,7 +23,7 @@ export function GudzLoader({
       aria-busy="true"
       className={cn("flex flex-col items-center gap-5 py-24 text-center", className)}
     >
-      <Logo width={undefined} height={undefined} className="h-6 w-auto" aria-hidden="true" />
+      <Logo className="h-6 w-auto" />
       <div
         aria-hidden="true"
         className="relative h-0.5 w-32 overflow-hidden rounded-full bg-canvas-2"

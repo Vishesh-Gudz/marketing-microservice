@@ -11,7 +11,7 @@ npm run test:revamp        # starts `next dev` on :3200 unless one is running th
 npm run test:revamp:update # re-record after an intended change, then review the diff
 ```
 
-The suite reads whatever `dev-org` holds on your local backend. The committed baselines were recorded on 4 Nov 2026 with:
+The suite reads whatever `dev-org` holds on your local backend. The committed baselines were first recorded on 4 Nov 2026 and re-recorded for the final revamp state on 7 Nov 2026, with:
 
 - **Ad accounts:** Google Ads USD and JPY active, EUR closed; Meta USD and IDR active.
 - **Instagram:** two mock accounts.
@@ -44,7 +44,7 @@ How it stays deterministic:
 Known limits:
 
 - **Dev auth, not Clerk.** The dashboard runs in dev-token mode, so the shell has no Clerk switcher (sidebar) or user menu (top bar), and `/organization`, `/sign-in`, `/sign-up` and `/session-tasks/choose-organization` show their dev-mode states inside the real frame. The Clerk screens are checked on a preview deploy in the final QA phase.
-- **No messaging data.** The seed has no WhatsApp or Instagram DM conversations, and the WhatsApp deployment flag is off locally. The inbox and conversation screens are recorded in their empty and settings states only, and the WhatsApp role check is skipped.
+- **No messaging data in the seed.** The seed has no WhatsApp or Instagram DM conversations, and the WhatsApp deployment flag is off locally. `visual.spec.ts` records those pages in their empty and settings states; `inbox.spec.ts`, `library.spec.ts` and `a11y.spec.ts` answer the messaging queries with the made-up data of `fixtures.ts` instead. The WhatsApp role check is skipped.
 - **Data can move.** If the local backend re-syncs or changes a connection's state (for example to `needs_reauth`), screenshots change too. Re-record on `main` before comparing a branch.
 - **Per-platform screenshots.** Font rendering differs between operating systems; the committed baseline is `win32`.
 - **Subtle colours.** Playwright treats pixels within its colour threshold as equal, so a change between near-whites (canvas `#f6f7f9` vs white) can pass without a diff. After such a change, re-record with `npx playwright test -c playwright.revamp.config.mts --update-snapshots=all` and review the images (then restore any shot outside the change that was only re-encoded).

@@ -31,7 +31,7 @@ export function searchPages(text: string): FlatNavLink[] {
  * typed (so "conv" picks Conversions, not Inbox by its keywords), else the first result.
  */
 export function bestMatchIndex(results: readonly FlatNavLink[], text: string): number {
-  const words = text.toLowerCase().split(/s+/).filter(Boolean);
+  const words = text.toLowerCase().split(/\s+/).filter(Boolean);
   const byName = results.findIndex((link) =>
     words.every((word) => link.name.toLowerCase().includes(word)),
   );

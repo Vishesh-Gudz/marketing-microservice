@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Brand } from "@/components/dashboard/nav";
+import { Brand } from "@/components/brand/brand";
 import { DATA_DELETION_PATH, PRIVACY_PATH } from "@/lib/auth/mode";
 import { formatLegalDate, LEGAL } from "@/lib/legal/company";
 

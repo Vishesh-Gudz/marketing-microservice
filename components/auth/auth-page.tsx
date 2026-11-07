@@ -2,7 +2,7 @@ import { ClerkLoading } from "@clerk/nextjs";
 import { Check } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Brand } from "@/components/dashboard/nav";
+import { Brand } from "@/components/brand/brand";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AUTH_MODE } from "@/lib/auth/config";

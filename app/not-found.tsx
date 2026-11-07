@@ -1,7 +1,7 @@
 import { Compass } from "lucide-react";
 import Link from "next/link";
 import { SystemMessage } from "@/components/brand/system-message";
-import { Brand } from "@/components/dashboard/nav";
+import { Brand } from "@/components/brand/brand";
 import { Button } from "@/components/ui/button";
 
 // Unknown URLs outside the dashboard's routes: the Gudz frame on the dot grid, one way back.

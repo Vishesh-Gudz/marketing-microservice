@@ -12,7 +12,7 @@ vi.mock("next/navigation", async () => {
 });
 
 import { AppShell } from "@/components/dashboard/app-shell";
-import { searchPages } from "./command-palette";
+import { bestMatchIndex, searchPages } from "./command-palette";
 
 describe("navigation helpers", () => {
   it("marks the longest matching page as current", () => {
@@ -42,6 +42,14 @@ describe("navigation helpers", () => {
     expect(names("insta settings")).toEqual(["Instagram DM settings"]);
     expect(names("ANALYTICS camp")).toEqual(["Campaigns"]);
     expect(names("nothing like this")).toEqual([]);
+  });
+
+  it("splits what is typed at spaces, not at the letter s", () => {
+    // Overview matches "s" only by a keyword ("spend"); the highlight goes to a page whose own
+    // name has an s. Splitting at "s" left no word, so Overview was highlighted.
+    const results = searchPages("s");
+    expect(results[0]!.name).toBe("Overview");
+    expect(results[bestMatchIndex(results, "s")]!.name.toLowerCase()).toContain("s");
   });
 });
 
