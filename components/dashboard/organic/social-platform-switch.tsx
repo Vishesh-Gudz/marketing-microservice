@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ChannelLogo } from "@/components/brand/channel-logo";
 import { filterParamsOnly } from "@/lib/analytics/filters";
 import type { SocialPlatformView } from "@/lib/analytics/organic-filters";
 import { cn } from "@/lib/utils";
@@ -40,10 +41,11 @@ export function SocialPlatformSwitch({
                 href={socialPlatformHref(platform, searchParams)}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "inline-flex h-8 items-center rounded-[8px] px-3.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                  "inline-flex h-8 items-center gap-1.5 rounded-[8px] px-3.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
                   active ? "bg-paper text-ink shadow-soft" : "text-muted-foreground hover:text-ink",
                 )}
               >
+                <ChannelLogo channel={platform} className="size-3.5" />
                 {label}
               </Link>
             </li>

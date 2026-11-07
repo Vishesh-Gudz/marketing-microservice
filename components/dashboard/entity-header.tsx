@@ -1,15 +1,17 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { formatMoney } from "@/lib/analytics/format";
 import { humanize } from "@/lib/analytics/labels";
 import type { EntitySummary } from "@/lib/analytics/types";
 import { PageHeader } from "./page-header";
+import { PlatformName } from "./platform-name";
 
 /** Name and attributes of a campaign / ad group / ad (from overview `entity`, D5). */
 export function EntityHeader({ entity }: { entity: EntitySummary }) {
-  const facts: [string, string][] = [
-    ["Platform", humanize(entity.platform)],
+  const facts: [string, ReactNode][] = [
+    ["Platform", <PlatformName key="platform" platform={entity.platform} />],
     ["Status", humanize(entity.status)],
     ...(entity.deliveryStatus
       ? ([["Delivery", humanize(entity.deliveryStatus)]] as [string, string][])

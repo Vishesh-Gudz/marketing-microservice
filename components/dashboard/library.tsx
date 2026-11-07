@@ -1,5 +1,4 @@
-import type { LucideIcon } from "lucide-react";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type ComponentType, type ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { SECTION_HEADING, SURFACE } from "./surface";
@@ -114,7 +113,8 @@ export function ChannelCard({
   children,
 }: {
   id: string;
-  icon: LucideIcon;
+  /** A Lucide icon or an integration's colour logo. */
+  icon: ComponentType<{ className?: string }>;
   title: string;
   description?: ReactNode;
   children: ReactNode;
@@ -124,9 +124,9 @@ export function ChannelCard({
       <header className="flex items-center gap-3 border-b border-line px-4 py-3.5 md:px-5">
         <span
           aria-hidden="true"
-          className="grid size-9 shrink-0 place-items-center rounded-[10px] border border-line bg-canvas text-ink-2"
+          className="grid size-10 shrink-0 place-items-center rounded-[12px] border border-line bg-paper text-ink-2 shadow-soft"
         >
-          <Icon className="size-[18px]" />
+          <Icon className="size-5" />
         </span>
         <div className="flex min-w-0 flex-col">
           <h2 id={id} className="text-[15px] font-semibold text-ink">

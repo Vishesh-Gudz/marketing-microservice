@@ -22,6 +22,7 @@ import { useAnalyticsScope } from "@/lib/analytics/use-dashboard-filters";
 import { VALUES, valueView, type ValueKey } from "@/lib/analytics/values";
 import { isAdConnectionProvider } from "@/lib/connections/providers";
 import { cn } from "@/lib/utils";
+import { PlatformName } from "../platform-name";
 import { EmptyState } from "../empty-state";
 import { FilterBar } from "../filter-bar";
 import { formatInstant } from "../freshness-note";
@@ -99,7 +100,9 @@ function AccountsTable({ args }: { args: BreakdownArgs }) {
                       {account.externalId}
                     </div>
                   </TableCell>
-                  <TableCell>{humanize(account.platform)}</TableCell>
+                  <TableCell>
+                    <PlatformName platform={account.platform} />
+                  </TableCell>
                   <TableCell>
                     {account.currency} · {account.timezone}
                   </TableCell>

@@ -1,6 +1,7 @@
 "use client";
 
-import { FileText, MessageCircle } from "lucide-react";
+import { FileText } from "lucide-react";
+import { WhatsAppLogo } from "@/components/brand/channel-logo";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -60,7 +61,7 @@ export function WhatsAppView() {
       )}
       <ChannelCard
         id="whatsapp-connect"
-        icon={MessageCircle}
+        icon={WhatsAppLogo}
         title="Connect WhatsApp"
         description="A WhatsApp Business number, for your inbox and templates."
       >

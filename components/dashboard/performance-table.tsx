@@ -22,6 +22,7 @@ import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
 import { useAnalyticsScope, useDashboardFilters } from "@/lib/analytics/use-dashboard-filters";
 import { valueView, type ValueKey } from "@/lib/analytics/values";
 import { cn } from "@/lib/utils";
+import { PlatformName } from "./platform-name";
 import { DataStateBadge } from "./data-state-badge";
 import { DeltaChip } from "./delta-chip";
 import { EmptyState } from "./empty-state";
@@ -227,7 +228,7 @@ export function PerformanceTable({
                         <span className="font-medium">{row.entity.name}</span>
                       )}
                       <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
-                        <span>{humanize(row.entity.platform)}</span>
+                        <PlatformName platform={row.entity.platform} />
                         <span aria-hidden="true">·</span>
                         <span>{humanize(row.entity.status)}</span>
                         {row.entity.removed && <Badge variant="outline">Removed</Badge>}

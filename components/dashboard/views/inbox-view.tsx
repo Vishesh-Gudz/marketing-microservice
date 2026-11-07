@@ -5,6 +5,7 @@ import { usePaginatedQuery } from "convex/react";
 import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { ChannelLogo } from "@/components/brand/channel-logo";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { api } from "@/convex/_generated/api";
 import { useOrg } from "@/lib/analytics/org-context";
@@ -52,6 +53,7 @@ function ChannelFilter({ value, onChange }: { value: Filter; onChange: (next: Fi
             value={filter}
             className="h-8 rounded-[8px] px-3.5 text-muted-foreground hover:bg-transparent hover:text-ink data-[state=on]:bg-paper data-[state=on]:text-ink data-[state=on]:shadow-soft"
           >
+            {filter !== "all" && <ChannelLogo channel={filter} className="size-3.5" />}
             {FILTER_LABELS[filter]}
           </ToggleGroupItem>
         ))}

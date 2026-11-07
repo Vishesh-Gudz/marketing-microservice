@@ -19,6 +19,7 @@ import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
 import { useAnalyticsScope, useDashboardFilters } from "@/lib/analytics/use-dashboard-filters";
 import { valueView } from "@/lib/analytics/values";
 import { cn } from "@/lib/utils";
+import { PlatformName } from "../platform-name";
 import { AttentionPanel } from "../attention-panel";
 import { DeltaChip } from "../delta-chip";
 import { EmptyState } from "../empty-state";
@@ -197,7 +198,9 @@ function TopCampaigns({ args }: { args: PerformanceArgs }) {
                 >
                   {row.entity.name}
                 </Link>
-                <p className="text-xs text-muted-foreground">{humanize(row.entity.platform)}</p>
+                <p className="text-xs text-muted-foreground">
+                  <PlatformName platform={row.entity.platform} />
+                </p>
               </div>
               <div className="flex flex-col items-end gap-0.5 text-right">
                 <ValueText view={valueView("spend", row)} />

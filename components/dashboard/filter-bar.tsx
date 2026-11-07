@@ -47,6 +47,7 @@ import {
   type DayBasis,
 } from "@/lib/analytics/use-dashboard-filters";
 import { cn } from "@/lib/utils";
+import { PlatformName } from "./platform-name";
 
 type Range = { from: string; to: string };
 
@@ -266,7 +267,7 @@ function PlatformFilter({ filters, onChange, stacked }: Omit<ControlProps, "rang
       >
         {PLATFORMS.map((platform) => (
           <ToggleGroupItem key={platform} value={platform} className="px-3">
-            {humanize(platform)}
+            <PlatformName platform={platform} />
           </ToggleGroupItem>
         ))}
       </ToggleGroup>
@@ -327,7 +328,8 @@ function AccountFilter({ filters, onChange, stacked }: Omit<ControlProps, "range
                   <Label htmlFor={`${id}-${account.id}`} className="font-normal">
                     {account.name}
                     <span className="text-xs text-muted-foreground">
-                      {humanize(account.platform)} · {account.currency}
+                      <PlatformName platform={account.platform} className="align-middle" /> ·{" "}
+                      {account.currency}
                       {!account.linked ? " · unlinked" : ""}
                     </span>
                   </Label>

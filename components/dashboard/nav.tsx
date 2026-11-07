@@ -9,16 +9,15 @@ import {
   LayoutDashboard,
   LayoutTemplate,
   Megaphone,
-  MessageCircle,
   MessageSquareText,
   Plug,
-  Send,
   Settings,
   Target,
   Wallet,
-  type LucideIcon,
 } from "lucide-react";
+import type { ComponentType } from "react";
 import Link from "next/link";
+import { InstagramLogo, WhatsAppLogo } from "@/components/brand/channel-logo";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useId, useState, type ReactNode } from "react";
 import {
@@ -32,16 +31,19 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { filterParamsOnly } from "@/lib/analytics/filters";
 import { cn } from "@/lib/utils";
 
+/** A Lucide icon or an integration's colour logo (components/brand/channel-logo.tsx). */
+export type NavIcon = ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" }>;
+
 export type NavLinkItem = {
   href: string;
   label: string;
-  icon: LucideIcon;
+  icon: NavIcon;
   /** Read after the visible label, so a link inside a group has a unique accessible name. */
   srSuffix?: string;
   /** Extra words the ⌘K palette matches. */
   keywords?: string;
 };
-export type NavGroupItem = { label: string; icon: LucideIcon; children: readonly NavLinkItem[] };
+export type NavGroupItem = { label: string; icon: NavIcon; children: readonly NavLinkItem[] };
 export type NavEntry = NavLinkItem | NavGroupItem;
 export type NavSection = { label?: string; items: readonly NavEntry[] };
 
@@ -74,8 +76,13 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     label: "Messaging",
     items: [
       // WhatsApp (ADR 0013) and Instagram direct messages (ADR 0017): the channel inboxes.
-      { href: "/whatsapp", label: "WhatsApp", icon: MessageCircle, keywords: "inbox chats" },
-      { href: "/instagram/messages", label: "Instagram DMs", icon: Send, keywords: "inbox direct" },
+      { href: "/whatsapp", label: "WhatsApp", icon: WhatsAppLogo, keywords: "inbox chats" },
+      {
+        href: "/instagram/messages",
+        label: "Instagram DMs",
+        icon: InstagramLogo,
+        keywords: "inbox direct",
+      },
       {
         href: "/inbox/saved-replies",
         label: "Saved replies",
@@ -90,14 +97,14 @@ export const NAV_SECTIONS: readonly NavSection[] = [
             href: "/whatsapp/templates",
             label: "WhatsApp",
             srSuffix: "templates",
-            icon: MessageCircle,
+            icon: WhatsAppLogo,
             keywords: "message templates",
           },
           {
             href: "/instagram/messages/templates",
             label: "Instagram",
             srSuffix: "templates",
-            icon: Send,
+            icon: InstagramLogo,
             keywords: "message templates buttons cards",
           },
         ],
@@ -124,14 +131,14 @@ export const NAV_FOOTER: readonly NavEntry[] = [
         href: "/whatsapp/settings",
         label: "WhatsApp",
         srSuffix: "settings",
-        icon: MessageCircle,
+        icon: WhatsAppLogo,
         keywords: "phone number connect",
       },
       {
         href: "/instagram/messages/settings",
         label: "Instagram",
         srSuffix: "DM settings",
-        icon: Send,
+        icon: InstagramLogo,
         keywords: "messaging ice breakers",
       },
       // Standalone SaaS: members, invitations and roles (Clerk organization profile, D9).
@@ -221,7 +228,7 @@ const ITEM_CURRENT =
   "bg-paper text-ink shadow-[0_0_0_1px_var(--color-line),0_1px_2px_rgb(15_17_21/0.05)]";
 const RAIL_ITEM = "size-10 justify-center px-0";
 
-function ItemIcon({ icon: Icon, current }: { icon: LucideIcon; current: boolean }) {
+function ItemIcon({ icon: Icon, current }: { icon: NavIcon; current: boolean }) {
   return (
     <Icon
       className={cn(

@@ -1,7 +1,12 @@
 "use client";
 
 import { useAction } from "convex/react";
-import { Camera, Megaphone, Play } from "lucide-react";
+import {
+  GoogleAdsLogo,
+  InstagramLogo,
+  MetaLogo,
+  YouTubeLogo,
+} from "@/components/brand/channel-logo";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/convex/_generated/api";
@@ -104,7 +109,7 @@ export function ConnectionsView() {
           <ChannelCard
             key={provider}
             id={`connections-${provider}`}
-            icon={Megaphone}
+            icon={provider === "google_ads" ? GoogleAdsLogo : MetaLogo}
             title={name}
             description="Ad accounts and campaigns for Overview and the analytics pages."
           >
@@ -121,7 +126,7 @@ export function ConnectionsView() {
       })}
       <ChannelCard
         id="connections-youtube"
-        icon={Play}
+        icon={YouTubeLogo}
         title="YouTube"
         description="Your channel's daily metrics and videos for the Organic page."
       >
@@ -133,7 +138,7 @@ export function ConnectionsView() {
       </ChannelCard>
       <ChannelCard
         id="connections-instagram"
-        icon={Camera}
+        icon={InstagramLogo}
         title="Instagram"
         description="Your Instagram professional account, for direct messages."
       >

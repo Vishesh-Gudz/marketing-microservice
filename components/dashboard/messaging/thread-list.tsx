@@ -1,7 +1,8 @@
 "use client";
 
-import { MessageCircle, Send, type LucideIcon } from "lucide-react";
 import Link from "next/link";
+import type { ComponentType } from "react";
+import { InstagramLogo, WhatsAppLogo } from "@/components/brand/channel-logo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -9,10 +10,12 @@ import type { InboxChannel } from "@/lib/inbox/threads";
 import { cn } from "@/lib/utils";
 import { SURFACE } from "../surface";
 
-/** The channel glyphs of the sidebar (WhatsApp, Instagram DMs). */
-export const CHANNEL_ICON: Readonly<Record<InboxChannel, LucideIcon>> = {
-  whatsapp: MessageCircle,
-  instagram: Send,
+/** Each channel's colour logo, as in the sidebar (WhatsApp, Instagram DMs). */
+export const CHANNEL_ICON: Readonly<
+  Record<InboxChannel, ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" }>>
+> = {
+  whatsapp: WhatsAppLogo,
+  instagram: InstagramLogo,
 };
 
 /** How a reply state reads: open is good news, unavailable is a warning, closed is neutral. */
@@ -62,8 +65,8 @@ export function ContactMark({
         {initial ?? <Icon className="size-4" />}
       </span>
       {initial !== undefined && (
-        <span className="absolute -right-0.5 -bottom-0.5 flex size-4 items-center justify-center rounded-full border border-line bg-paper text-ink-2">
-          <Icon className="size-2.5" />
+        <span className="absolute -right-1 -bottom-1 flex size-[18px] items-center justify-center rounded-full bg-paper shadow-[0_0_0_1px_var(--color-line)]">
+          <Icon className="size-3" />
         </span>
       )}
     </span>
