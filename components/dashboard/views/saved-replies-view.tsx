@@ -28,6 +28,7 @@ import {
   STARTER_GROUP_LABELS,
   type SavedReplyStarter,
 } from "@/lib/messaging/saved-reply-starters";
+import { enterRunsOwnAction } from "@/lib/messaging/enter-key";
 import { cn } from "@/lib/utils";
 import { ConnectionNotice } from "../connections/connection-notice";
 import { EmptyState } from "../empty-state";
@@ -100,6 +101,10 @@ function SavedReplyForm({
   const instagram = draft.channels.includes("instagram");
   const tooLong = textTooLong(draft.text, draft.channels);
   const label = newQuickReply.trim();
+  const canAddQuickReply =
+    label !== "" &&
+    !draft.quickReplies.includes(label) &&
+    draft.quickReplies.length < LIMITS.quickReplies;
   const ready =
     draft.title.trim() !== "" &&
     draft.title.length <= LIMITS.title &&
@@ -107,6 +112,11 @@ function SavedReplyForm({
     !tooLong &&
     draft.channels.length > 0;
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }));
+
+  function addQuickReply() {
+    set({ quickReplies: [...draft.quickReplies, label] });
+    setNewQuickReply("");
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -253,21 +263,17 @@ function SavedReplyForm({
               value={newQuickReply}
               maxLength={LIMITS.quickReplyChars}
               placeholder="Button label"
+              onKeyDown={enterRunsOwnAction(() => {
+                if (canAddQuickReply) addQuickReply();
+              })}
               onChange={(e) => setNewQuickReply(e.target.value)}
             />
             <Button
               type="button"
               variant="outline"
               size="sm"
-              disabled={
-                label === "" ||
-                draft.quickReplies.includes(label) ||
-                draft.quickReplies.length >= LIMITS.quickReplies
-              }
-              onClick={() => {
-                set({ quickReplies: [...draft.quickReplies, label] });
-                setNewQuickReply("");
-              }}
+              disabled={!canAddQuickReply}
+              onClick={addQuickReply}
             >
               Add button
             </Button>

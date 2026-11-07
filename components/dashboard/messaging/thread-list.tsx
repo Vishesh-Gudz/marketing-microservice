@@ -21,7 +21,7 @@ export const CHANNEL_ICON: Readonly<
 /** How a reply state reads: open is good news, unavailable is a warning, closed is neutral. */
 export type ReplyTone = "open" | "closed" | "unavailable";
 
-const TONE_CLASS: Readonly<Record<ReplyTone, string>> = {
+export const TONE_CLASS: Readonly<Record<ReplyTone, string>> = {
   open: "bg-ok-tint text-ok-ink",
   closed: "bg-canvas text-ink-2",
   unavailable: "border-amber-line bg-amber-tint text-amber-ink",

@@ -8,7 +8,7 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 
 /** "YYYY-MM-DD" of an instant in a time zone. */
-function dayKey(at: number, timeZone: string): string {
+export function dayKey(at: number, timeZone: string): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",
@@ -18,7 +18,7 @@ function dayKey(at: number, timeZone: string): string {
 }
 
 /** Whole calendar days between two "YYYY-MM-DD" keys. */
-function daysBetween(from: string, to: string): number {
+export function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 }
 

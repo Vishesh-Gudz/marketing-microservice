@@ -1,6 +1,7 @@
 "use client";
 
 import { useAction } from "convex/react";
+import { LayoutTemplate } from "lucide-react";
 import Link from "next/link";
 import { useId, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -110,8 +111,15 @@ function TemplateForm({
  * sendTemplate), for editors and admins, whether or not the reply window is open. Templates are
  * read from Meta when the picker opens; ones this app cannot send yet are listed with the reason
  * and cannot be chosen. The server checks every value again before anything is stored.
+ * `prominent`: the reply window is closed, so a template is the way to reply (primary button).
  */
-export function TemplatePicker({ conversationId }: { conversationId: string }) {
+export function TemplatePicker({
+  conversationId,
+  prominent = false,
+}: {
+  conversationId: string;
+  prominent?: boolean;
+}) {
   const listTemplates = useAction(api.v1.whatsapp.listTemplates);
   const sendTemplate = useAction(api.v1.whatsapp.sendTemplate);
   const [state, setState] = useState<Step>({ step: "closed" });
@@ -165,7 +173,14 @@ export function TemplatePicker({ conversationId }: { conversationId: string }) {
     <div className="flex flex-col gap-3">
       {notice && <ConnectionNotice notice={notice} />}
       {state.step === "closed" && (
-        <Button type="button" variant="outline" className="self-start" onClick={() => void open()}>
+        <Button
+          type="button"
+          variant={prominent ? "default" : "outline"}
+          size={prominent ? "default" : "sm"}
+          className="self-start"
+          onClick={() => void open()}
+        >
+          <LayoutTemplate aria-hidden="true" />
           Choose a template
         </Button>
       )}

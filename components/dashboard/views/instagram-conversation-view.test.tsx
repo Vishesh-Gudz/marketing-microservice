@@ -20,6 +20,8 @@ vi.mock("next/navigation", async () => (await import("@/tests/unit/dashboard-har
 import InstagramConversationPage, {
   metadata,
 } from "@/app/(dashboard)/(inbox)/instagram/messages/conversations/[conversationId]/page";
+import { formatInstant } from "../freshness-note";
+import { InboxListContext } from "../messaging/inbox-context";
 import { InstagramConversationView } from "./instagram-conversation-view";
 
 // One Instagram conversation (ADR 0017, IM5) through the dashboard harness: the thread, each
@@ -154,8 +156,7 @@ describe("the thread", () => {
     renderWithOrg(<InstagramConversationView conversationId="conv1" />);
     expect(screen.getByRole("heading", { level: 1, name: "@ana.shop" })).toBeInTheDocument();
     expect(screen.getByText("Instagram conversation on @shop")).toBeInTheDocument();
-    const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
-    expect(within(crumbs).getByRole("link", { name: "Instagram DMs" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Back to Instagram DMs" })).toHaveAttribute(
       "href",
       "/instagram/messages",
     );
@@ -164,6 +165,17 @@ describe("the thread", () => {
     expect(items[0]).toHaveTextContent("Do you ship?");
     expect(items[1]).toHaveTextContent("You");
     expect(items[1]).toHaveTextContent("Seen");
+  });
+
+  it("goes back to the unified inbox when opened from it (D-M12)", () => {
+    queryResults.set(GET, conversation());
+    queryResults.set(MESSAGES, page([message({})]));
+    renderWithOrg(
+      <InboxListContext value="inbox">
+        <InstagramConversationView conversationId="conv1" />
+      </InboxListContext>,
+    );
+    expect(screen.getByRole("link", { name: "Back to Inbox" })).toHaveAttribute("href", "/inbox");
   });
 
   it("shows every reply status, and is honest about failed and unconfirmed ones", () => {
@@ -258,7 +270,12 @@ describe("who may reply, and when", () => {
   ])("lets %s reply while the window is open", (_label, org) => {
     show({}, org);
     expect(screen.getByRole("heading", { level: 2, name: "Reply" })).toBeInTheDocument();
-    expect(screen.getByText(/Reply window open/)).toBeInTheDocument();
+    const chip = screen.getByText("Reply window open");
+    expect(chip).toHaveTextContent(/^Reply window open\s*· 23h left$/);
+    expect(chip).toHaveAttribute(
+      "title",
+      `Replies are possible until ${formatInstant("2026-10-31T11:00:00.000Z", ORG.timezone)}.`,
+    );
     expect(messageBox()).toBeInTheDocument();
   });
 
@@ -276,7 +293,8 @@ describe("who may reply, and when", () => {
   ])("offers no reply box when %s", (_case, overrides, text) => {
     show(overrides);
     expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
-    expect(screen.getAllByText(new RegExp(text.replace(".", "\\.")))[0]).toBeInTheDocument();
+    expect(screen.getByText("Reply window closed")).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(text.replace(".", "\\.")))).toBeInTheDocument();
   });
 
   it.each([
@@ -292,8 +310,8 @@ describe("who may reply, and when", () => {
       // The window is open, but the header must not promise a reply the server would refuse.
       expect(screen.getByText("Replies unavailable")).toBeInTheDocument();
       expect(screen.queryByText("Reply window open")).toBeNull();
-      expect(screen.queryByText(/Replies are possible/)).toBeNull();
-      expect(screen.getAllByText(text)).toHaveLength(2);
+      expect(screen.queryByTitle(/Replies are possible/)).toBeNull();
+      expect(screen.getByText(text)).toBeInTheDocument();
       expect(screen.getByRole("link", { name: "Open the Instagram DM settings" })).toHaveAttribute(
         "href",
         "/instagram/messages/settings",
@@ -428,14 +446,58 @@ describe("reply tools (ADR 0021)", () => {
       replyWindowExpiresAt: "2026-10-30T11:00:00.000Z",
       humanAgentWindowExpiresAt: "2026-11-05T11:00:00.000Z",
     });
-    expect(screen.getByText("Human agent window")).toBeInTheDocument();
+    expect(screen.getByText("Human agent window")).toHaveTextContent(/· 5d left$/);
     expect(screen.getByText(/only a personal reply/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Send as human agent" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Conversation details" })).toHaveTextContent(
+      `Human agent replies until${formatInstant("2026-11-05T11:00:00.000Z", ORG.timezone)}`,
+    );
   });
 
   it("offers no reply after 24 hours without the Human Agent window", () => {
     show({ replyWindowExpiresAt: "2026-10-30T11:00:00.000Z" });
     expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
+  });
+
+  it("keeps a typed draft and its buttons when replies stop, until discarded (D-M5)", async () => {
+    const send = mockMutation(SEND).mockResolvedValue({});
+    const { rerender } = show();
+    await type("Which size?");
+    fireEvent.change(screen.getByRole("textbox", { name: "New quick-reply button" }), {
+      target: { value: "Small" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add button" }));
+    queryResults.set(GET, conversation({ replyWindowExpiresAt: "2026-10-30T11:59:00.000Z" }));
+    rerender(<InstagramConversationView conversationId="conv1" />);
+    expect(messageBox()).toHaveValue("Which size?");
+    expect(messageBox()).toHaveAttribute("readonly");
+    expect(screen.getByRole("list", { name: "Quick-reply buttons" })).toHaveTextContent("Small");
+    expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Templates" })).toBeNull();
+    await act(async () => {
+      fireEvent.submit(messageBox().closest("form")!);
+    });
+    expect(send).not.toHaveBeenCalled();
+    // The customer writes again: the draft can be sent as it was.
+    queryResults.set(GET, conversation());
+    rerender(<InstagramConversationView conversationId="conv1" />);
+    await act(async () => fireEvent.click(sendButton()));
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Which size?", quickReplies: ["Small"] }),
+    );
+  });
+
+  it("adds a quick-reply button on Enter, never sending the reply (D-M1)", async () => {
+    const send = mockMutation(SEND).mockResolvedValue({});
+    show();
+    await type("Which size?");
+    const field = screen.getByRole("textbox", { name: "New quick-reply button" });
+    fireEvent.change(field, { target: { value: "Large" } });
+    // The browser's implicit submit only happens when Enter's keydown is not cancelled.
+    expect(fireEvent.keyDown(field, { key: "Enter" })).toBe(false);
+    expect(screen.getByRole("list", { name: "Quick-reply buttons" })).toHaveTextContent("Large");
+    expect(field).toHaveValue("");
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("marks taps, human agent replies and the buttons a reply carried", () => {
@@ -489,6 +551,18 @@ describe("templates (ADR 0022)", () => {
     },
     updatedAt: "2026-10-30T10:00:00.000Z",
   };
+
+  it("never sends the typed reply when Enter is pressed in the template search (D-M1)", async () => {
+    queryResults.set(TEMPLATES, [WELCOME]);
+    const send = mockMutation(SEND).mockResolvedValue({});
+    show();
+    await type("Hello");
+    fireEvent.click(screen.getByRole("button", { name: "Templates" }));
+    const search = screen.getByRole("textbox", { name: "Search templates" });
+    // The browser's implicit submit only happens when Enter's keydown is not cancelled.
+    expect(fireEvent.keyDown(search, { key: "Enter" })).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+  });
 
   it("previews the chosen template for this customer and sends it with a client id", async () => {
     queryResults.set(TEMPLATES, [WELCOME]);

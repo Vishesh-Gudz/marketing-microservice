@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useState, type ComponentType, type ReactNode } from "react";
 import { ChannelLogo, InstagramLogo, WhatsAppLogo } from "@/components/brand/channel-logo";
 import { cn } from "@/lib/utils";
+import { InboxListContext, type ListSource } from "./inbox-context";
 import { InboxView } from "../views/inbox-view";
 import { InstagramInboxView } from "../views/instagram-inbox-view";
 import { WhatsAppInboxView } from "../views/whatsapp-inbox-view";
@@ -13,9 +14,8 @@ import { WhatsAppInboxView } from "../views/whatsapp-inbox-view";
 // The inbox workspace (Kinso K2): an app rail, the conversation list and the open conversation
 // side by side. It is the layout of /inbox, /whatsapp, /instagram/messages and both
 // conversation routes (app/(dashboard)/(inbox)), so the list stays on screen and keeps its place
-// while conversations open beside it. URLs are unchanged.
-
-type ListSource = "inbox" | "whatsapp" | "instagram";
+// while conversations open beside it. URLs are unchanged. An open conversation fills the pane
+// (data-conversation-pane, Kinso K3) and goes back to the list it was opened from.
 
 const LISTS: readonly {
   source: ListSource;
@@ -113,45 +113,47 @@ export function InboxWorkspace({ children }: { children: ReactNode }) {
   const headingLevel = conversationOpen ? 2 : 1;
 
   return (
-    <div
-      data-inbox-workspace=""
-      className="flex flex-col lg:grid lg:h-[calc(100dvh-3.5rem)] lg:grid-cols-[21rem_minmax(0,1fr)] xl:grid-cols-[5rem_22rem_minmax(0,1fr)]"
-    >
-      <AppRail source={source} />
-      <section
-        aria-label="Conversation list"
-        className={cn(
-          "flex min-h-0 flex-col bg-canvas/60 pt-4 lg:border-r lg:border-line",
-          conversationOpen && "hidden lg:flex",
-        )}
-      >
-        <ListChips source={source} />
-        <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
-          {source === "inbox" ? (
-            <InboxView headingLevel={headingLevel} />
-          ) : source === "whatsapp" ? (
-            <WhatsAppInboxView headingLevel={headingLevel} />
-          ) : (
-            <InstagramInboxView headingLevel={headingLevel} />
-          )}
-        </div>
-      </section>
+    <InboxListContext value={source}>
       <div
-        className={cn(
-          "@container min-h-0 min-w-0 bg-paper lg:overflow-y-auto",
-          !conversationOpen && "hidden lg:block",
-        )}
+        data-inbox-workspace=""
+        className="flex flex-col lg:grid lg:h-[calc(100dvh-3.5rem)] lg:grid-cols-[21rem_minmax(0,1fr)] xl:grid-cols-[5rem_22rem_minmax(0,1fr)]"
       >
-        <div className="p-4 md:p-6">{children}</div>
+        <AppRail source={source} />
+        <section
+          aria-label="Conversation list"
+          className={cn(
+            "flex min-h-0 flex-col bg-canvas/60 pt-4 lg:border-r lg:border-line",
+            conversationOpen && "hidden lg:flex",
+          )}
+        >
+          <ListChips source={source} />
+          <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
+            {source === "inbox" ? (
+              <InboxView headingLevel={headingLevel} />
+            ) : source === "whatsapp" ? (
+              <WhatsAppInboxView headingLevel={headingLevel} />
+            ) : (
+              <InstagramInboxView headingLevel={headingLevel} />
+            )}
+          </div>
+        </section>
+        <div
+          className={cn(
+            "@container min-h-0 min-w-0 bg-paper lg:overflow-y-auto",
+            !conversationOpen && "hidden lg:block",
+          )}
+        >
+          <div className="p-4 md:p-6 lg:h-full has-[[data-conversation-pane]]:p-0">{children}</div>
+        </div>
       </div>
-    </div>
+    </InboxListContext>
   );
 }
 
 /** The pane on a list page, before a conversation is chosen. */
 export function NoConversationOpen() {
   return (
-    <div className="flex min-h-[24rem] flex-col items-center justify-center gap-4 text-center lg:h-[calc(100dvh-3.5rem-3rem)]">
+    <div className="flex min-h-[24rem] flex-col items-center justify-center gap-4 text-center lg:h-full">
       <div aria-hidden="true" className="flex items-center -space-x-2">
         <span className="grid size-12 place-items-center rounded-[14px] bg-paper shadow-soft ring-1 ring-line">
           <ChannelLogo channel="whatsapp" className="size-6" />

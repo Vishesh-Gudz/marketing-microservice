@@ -242,6 +242,11 @@ const SEND_ERROR_MESSAGES: Readonly<Record<string, Omit<Notice, "tone">>> = {
   },
 };
 
+/** Why an account cannot reply, as a short title (the composer's notice, Kinso K3). */
+export function replyBlockerTitle(blocker: ReplyBlocker): string {
+  return SEND_ERROR_MESSAGES[blocker]!.title;
+}
+
 /** A refused reply, in fixed words. */
 export function sendErrorNotice(error: unknown): Notice {
   const reason = detail(error, "reason");

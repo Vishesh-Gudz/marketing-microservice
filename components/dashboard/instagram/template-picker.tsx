@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
 import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
 import type { Notice } from "@/lib/connections/types";
+import { enterRunsOwnAction } from "@/lib/messaging/enter-key";
 import {
   fillTemplateContent,
   KIND_LABELS,
@@ -125,6 +126,7 @@ export function TemplatePicker({
                 id={searchId}
                 value={search}
                 placeholder="Search templates"
+                onKeyDown={enterRunsOwnAction()}
                 onChange={(e) => setSearch(e.target.value)}
               />
               {templates === undefined ? (

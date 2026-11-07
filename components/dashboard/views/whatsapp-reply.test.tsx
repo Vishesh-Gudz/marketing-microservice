@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiError } from "@/convex/lib/errors";
 import type { Org } from "@/lib/analytics/types";
 import type {
+  WhatsAppAccount,
   WhatsAppConversation,
+  WhatsAppNumber,
   WhatsAppTemplate,
   WhatsAppTemplateList,
 } from "@/lib/whatsapp/types";
@@ -120,9 +122,118 @@ describe("who may reply", () => {
   it("offers only templates once the reply window has closed", () => {
     show({ serviceWindowExpiresAt: "2026-10-24T11:59:00.000Z" });
     expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
+    expect(screen.getByText("The 24-hour reply window is closed")).toBeInTheDocument();
     expect(
-      screen.getByText("The reply window is closed: only an approved template can be sent."),
+      screen.getByText(
+        "The customer last wrote more than 24 hours ago: only approved templates can be sent.",
+      ),
     ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Choose a template" })).toBeInTheDocument();
+  });
+});
+
+describe("a draft when the reply window closes (D-M5)", () => {
+  const closedNow = { serviceWindowExpiresAt: "2026-10-24T11:59:00.000Z" };
+
+  it("keeps the typed draft, read-only and unsendable, until it is discarded", async () => {
+    const send = mockMutation(SEND_TEXT).mockResolvedValue({});
+    const { rerender } = show();
+    await type("Your order ships today");
+    // The window closes while the draft is open (the 30-second tick or a new read).
+    queryResults.set("v1/whatsapp:getConversation", conversation(closedNow));
+    rerender(<WhatsAppConversationView conversationId="conv1" />);
+    expect(messageBox()).toHaveValue("Your order ships today");
+    expect(messageBox()).toHaveAttribute("readonly");
+    expect(screen.getByText(/Your unsent draft is kept here/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
+    await act(async () => {
+      fireEvent.submit(messageBox().closest("form")!);
+    });
+    expect(send).not.toHaveBeenCalled();
+    // A template can still be sent meanwhile.
+    expect(screen.getByRole("button", { name: "Choose a template" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Discard draft" }));
+    expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
+  });
+
+  it("offers the kept draft for sending again when the customer writes", async () => {
+    const send = mockMutation(SEND_TEXT).mockResolvedValue({});
+    const { rerender } = show();
+    await type("Still interested?");
+    queryResults.set("v1/whatsapp:getConversation", conversation(closedNow));
+    rerender(<WhatsAppConversationView conversationId="conv1" />);
+    queryResults.set("v1/whatsapp:getConversation", conversation());
+    rerender(<WhatsAppConversationView conversationId="conv1" />);
+    expect(messageBox()).toHaveValue("Still interested?");
+    await act(async () => fireEvent.click(sendButton()));
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: "conv1", text: "Still interested?" }),
+    );
+  });
+});
+
+describe("a number that cannot send (D-M3)", () => {
+  const ACCOUNTS = "v1/whatsapp:listAccounts";
+
+  function accounts(
+    number: Partial<WhatsAppNumber> = {},
+    account: Partial<WhatsAppAccount> = {},
+  ): WhatsAppAccount[] {
+    return [
+      {
+        id: "a1",
+        connectionId: "c1",
+        wabaId: "100000000000001",
+        onboardingType: "cloud_api",
+        status: "active",
+        setupStatus: "connected",
+        connectedAt: "2026-10-01T10:00:00.000Z",
+        numbers: [
+          {
+            id: "n1",
+            phoneNumberId: "200000000000001",
+            status: "active",
+            registered: true,
+            businessApp: false,
+            ...number,
+          },
+        ],
+        ...account,
+      },
+    ];
+  }
+
+  it.each([
+    ["is disconnected", accounts({ status: "disconnected" }), "Number no longer connected"],
+    [
+      "needs a new connection",
+      accounts({}, { setupStatus: "reauthorization_required" }),
+      "Connect WhatsApp again",
+    ],
+    ["is not registered yet", accounts({ registered: false }), "Number not ready"],
+  ])("offers no reply and no template when the number %s", (_case, list, title) => {
+    queryResults.set(ACCOUNTS, list);
+    show();
+    expect(screen.getByText("Replies unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("Reply window open")).toBeNull();
+    expect(screen.getByText(title)).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Choose a template" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Open the WhatsApp settings" })).toHaveAttribute(
+      "href",
+      "/whatsapp/settings",
+    );
+  });
+
+  it.each([
+    ["the accounts load", undefined],
+    ["the number can send", accounts()],
+    ["the accounts do not list the number", accounts({ phoneNumberId: "other" })],
+  ])("keeps the reply box while %s (the server decides)", (_case, list) => {
+    if (list !== undefined) queryResults.set(ACCOUNTS, list);
+    show();
+    expect(screen.queryByText("Replies unavailable")).toBeNull();
+    expect(messageBox()).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Choose a template" })).toBeInTheDocument();
   });
 });
@@ -358,5 +469,15 @@ describe("saved replies (ADR 0021)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Thanks/ }));
     expect(messageBox()).toHaveValue("Thank you, Ana!");
     expect(sendButton()).toBeEnabled();
+  });
+
+  it("never sends the reply when Enter is pressed in the search (D-M1)", () => {
+    queryResults.set("v1/savedReplies:list", []);
+    show();
+    fireEvent.click(screen.getByRole("button", { name: "Saved replies" }));
+    const search = screen.getByRole("textbox", { name: "Search saved replies" });
+    // The browser's implicit submit only happens when Enter's keydown is not cancelled.
+    expect(fireEvent.keyDown(search, { key: "Enter" })).toBe(false);
+    expect(fireEvent.keyDown(search, { key: "a" })).toBe(true);
   });
 });

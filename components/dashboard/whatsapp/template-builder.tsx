@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/convex/_generated/api";
 import type { Notice } from "@/lib/connections/types";
+import { enterRunsOwnAction } from "@/lib/messaging/enter-key";
 import { cn } from "@/lib/utils";
 import {
   addButton,
@@ -291,6 +292,13 @@ function TemplateForm({
   }
 
   const variableName = normalizeTemplateName(variable).replace(/^[^a-z]+/, "");
+
+  function insertVariable() {
+    const spacer = state.body === "" || state.body.endsWith(" ") ? "" : " ";
+    set({ body: `${state.body}${spacer}{{${variableName}}}` });
+    setVariable("");
+  }
+
   return (
     <form
       aria-label="New template"
@@ -396,6 +404,10 @@ function TemplateForm({
               id={`${id}-variable`}
               value={variable}
               placeholder="order_number"
+              // Enter inserts the variable; it never submits the template to Meta (D-M1).
+              onKeyDown={enterRunsOwnAction(() => {
+                if (variableName !== "") insertVariable();
+              })}
               onChange={(e) => setVariable(e.target.value)}
             />
           </Field>
@@ -403,11 +415,7 @@ function TemplateForm({
             type="button"
             variant="outline"
             disabled={variableName === ""}
-            onClick={() => {
-              const spacer = state.body === "" || state.body.endsWith(" ") ? "" : " ";
-              set({ body: `${state.body}${spacer}{{${variableName}}}` });
-              setVariable("");
-            }}
+            onClick={insertVariable}
           >
             Insert into body
           </Button>

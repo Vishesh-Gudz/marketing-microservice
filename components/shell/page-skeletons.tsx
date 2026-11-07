@@ -73,17 +73,37 @@ export function LibrarySkeleton() {
   );
 }
 
-/** One conversation: breadcrumb, heading, messages, the reply box. */
+/**
+ * One conversation, as the inbox workspace shows it (Kinso K3): the header bar, messages at the
+ * bottom of the history, the composer card. Fills the pane like the conversation does.
+ */
 export function ConversationSkeleton() {
   return (
-    <Frame>
-      <Heading crumb />
-      <div className="flex flex-col gap-3 rounded-[14px] border border-line p-4">
-        <Skeleton className="h-12 w-2/3 rounded-[12px]" />
-        <Skeleton className="ml-auto h-12 w-1/2 rounded-[12px]" />
-        <Skeleton className="h-12 w-3/5 rounded-[12px]" />
+    <div
+      role="status"
+      aria-label="Loading page"
+      aria-busy="true"
+      data-conversation-pane=""
+      className="flex flex-col lg:h-full"
+    >
+      <RouteProgress />
+      <div className="flex items-center gap-3 border-b border-line px-4 py-3 md:px-6">
+        <Skeleton className="size-10 rounded-full" />
+        <div className="flex flex-col gap-1.5">
+          <Skeleton className="h-4 w-40" />
+          <Skeleton className="h-3 w-56 max-w-full" />
+        </div>
       </div>
-      <Skeleton className="h-28 rounded-[14px]" />
-    </Frame>
+      <div className="flex min-h-64 flex-1 flex-col bg-canvas/50 px-4 py-5 md:px-6">
+        <div className="mx-auto mt-auto flex w-full max-w-3xl flex-col gap-3">
+          <Skeleton className="h-12 w-3/5 rounded-[16px]" />
+          <Skeleton className="ml-auto h-12 w-1/2 rounded-[16px]" />
+          <Skeleton className="h-16 w-2/3 rounded-[16px]" />
+        </div>
+      </div>
+      <div className="bg-canvas/50 px-3 pb-3 md:px-6 md:pb-4">
+        <Skeleton className="mx-auto h-32 w-full max-w-3xl rounded-[14px]" />
+      </div>
+    </div>
   );
 }

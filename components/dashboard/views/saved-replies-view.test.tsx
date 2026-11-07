@@ -111,6 +111,22 @@ describe("Saved replies page", () => {
     });
   });
 
+  it("adds a quick-reply button on Enter, never saving the reply (D-M1)", () => {
+    const create = mockMutation(CREATE);
+    renderWithOrg(<SavedRepliesView />);
+    fireEvent.click(screen.getByRole("button", { name: "New saved reply" }));
+    const form = screen.getByRole("form", { name: "New saved reply" });
+    const field = within(form).getByRole("textbox", { name: "New quick-reply button" });
+    fireEvent.change(field, { target: { value: "Prices" } });
+    // The browser's implicit submit only happens when Enter's keydown is not cancelled.
+    expect(fireEvent.keyDown(field, { key: "Enter" })).toBe(false);
+    expect(within(form).getByRole("list", { name: "Quick-reply buttons" })).toHaveTextContent(
+      "Prices",
+    );
+    expect(field).toHaveValue("");
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("edits, explains a refusal, and deletes after a confirmation", async () => {
     const update = mockMutation(UPDATE).mockRejectedValueOnce(
       apiError("CONFLICT", "server text", { reason: "title_in_use" }),

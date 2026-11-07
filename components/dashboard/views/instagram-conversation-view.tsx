@@ -4,10 +4,10 @@ import { usePaginatedQuery } from "convex/react";
 import Link from "next/link";
 import { useId } from "react";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
 import { useOrg } from "@/lib/analytics/org-context";
 import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
+import { timeLeft } from "@/lib/inbox/conversation-time";
 import {
   accountLabel,
   contactLabel,
@@ -17,6 +17,7 @@ import {
   outboundStatusLabel,
   HUMAN_AGENT_TEXT,
   REPLY_BLOCKED_TEXT,
+  replyBlockerTitle,
   senderLabel,
 } from "@/lib/instagram/messages";
 import type { InstagramConversation, InstagramMessage } from "@/lib/instagram/types";
@@ -28,14 +29,18 @@ import { ReplyBox } from "../instagram/reply-box";
 import { TemplatePreview } from "../instagram/template-preview";
 import {
   Bubble,
-  ConversationLayout,
-  DetailsPanel,
+  ComposerNotice,
+  ConversationPane,
+  ConversationPaneSkeleton,
+  DetailsList,
   MessageItem,
   MessageList,
+  MessageMeta,
+  MessagesSkeleton,
+  MessageTimeline,
   ReplyHeading,
+  ReplyWindowChip,
 } from "../messaging/conversation";
-import { ContactMark, ReplyStateTag } from "../messaging/thread-list";
-import { Breadcrumbs, PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
 
 /** Messages loaded per page; the thread shows the newest, oldest at the top. */
@@ -65,6 +70,10 @@ function replyModeOf(
   return { blocked: REPLY_BLOCKED_TEXT.window_closed };
 }
 
+/**
+ * The header chip: replies unavailable (the account cannot send, whatever the window), the window
+ * open or the Human Agent window (with time left), or closed.
+ */
 function ReplyWindow({ conversation }: { conversation: InstagramConversation }) {
   const { timezone } = useOrg();
   const now = useNow();
@@ -72,41 +81,56 @@ function ReplyWindow({ conversation }: { conversation: InstagramConversation }) 
   // The account cannot send at all: an open window would promise a reply that is refused.
   if (conversation.replyBlocker !== undefined) {
     return (
-      <p className="mt-1 text-sm text-muted-foreground">
-        <ReplyStateTag tone="unavailable">Replies unavailable</ReplyStateTag>{" "}
-        {REPLY_BLOCKED_TEXT[conversation.replyBlocker]}
-      </p>
+      <ReplyWindowChip
+        tone="unavailable"
+        label="Replies unavailable"
+        title={REPLY_BLOCKED_TEXT[conversation.replyBlocker]}
+      />
     );
   }
   if (expiresAt !== undefined && isReplyWindowOpen(expiresAt, now)) {
     return (
-      <p className="mt-1 text-sm text-muted-foreground">
-        <ReplyStateTag tone="open">Reply window open</ReplyStateTag> Replies are possible until{" "}
-        {formatInstant(expiresAt, timezone)}.
-      </p>
+      <ReplyWindowChip
+        tone="open"
+        label="Reply window open"
+        left={timeLeft(expiresAt, now)}
+        title={`Replies are possible until ${formatInstant(expiresAt, timezone)}.`}
+      />
     );
   }
   const humanUntil = conversation.humanAgentWindowExpiresAt;
   if (humanUntil !== undefined && isReplyWindowOpen(humanUntil, now)) {
     return (
-      <p className="mt-1 text-sm text-muted-foreground">
-        <ReplyStateTag tone="open">Human agent window</ReplyStateTag> {HUMAN_AGENT_TEXT} Until{" "}
-        {formatInstant(humanUntil, timezone)}.
-      </p>
+      <ReplyWindowChip
+        tone="open"
+        label="Human agent window"
+        left={timeLeft(humanUntil, now)}
+        title={`${HUMAN_AGENT_TEXT} Until ${formatInstant(humanUntil, timezone)}.`}
+      />
     );
   }
   return (
-    <p className="mt-1 text-sm text-muted-foreground">
-      <ReplyStateTag tone="closed">Reply window closed</ReplyStateTag>{" "}
-      {expiresAt === undefined
-        ? REPLY_BLOCKED_TEXT.window_unopened
-        : REPLY_BLOCKED_TEXT.window_closed}
-    </p>
+    <ReplyWindowChip
+      tone="closed"
+      label="Reply window closed"
+      title={
+        expiresAt === undefined
+          ? REPLY_BLOCKED_TEXT.window_unopened
+          : REPLY_BLOCKED_TEXT.window_closed
+      }
+    />
   );
 }
 
-function MessageBubble({ message, contact }: { message: InstagramMessage; contact: string }) {
-  const { timezone } = useOrg();
+function MessageBubble({
+  message,
+  contact,
+  continued,
+}: {
+  message: InstagramMessage;
+  contact: string;
+  continued: boolean;
+}) {
   const outbound = message.direction === "outbound";
   const content = messageContent(message);
   const status = outbound ? outboundStatusLabel(message.status) : undefined;
@@ -115,11 +139,9 @@ function MessageBubble({ message, contact }: { message: InstagramMessage; contac
   return (
     <MessageItem
       outbound={outbound}
+      continued={continued}
       meta={
-        <>
-          {senderLabel(message, contact)} ·{" "}
-          <time dateTime={message.at}>{formatInstant(message.at, timezone)}</time>
-        </>
+        <MessageMeta sender={senderLabel(message, contact)} at={message.at} continued={continued} />
       }
     >
       {message.template !== undefined && message.deletedAt === undefined ? (
@@ -149,11 +171,11 @@ function MessageBubble({ message, contact }: { message: InstagramMessage; contac
         </ul>
       )}
       {notes.length > 0 && (
-        <span className="text-xs text-muted-foreground">{notes.join(" · ")}</span>
+        <span className="px-1 text-xs text-muted-foreground">{notes.join(" · ")}</span>
       )}
-      {status && <span className="text-xs text-muted-foreground">{status}</span>}
+      {status && <span className="px-1 text-xs text-muted-foreground">{status}</span>}
       {problem && (
-        <span className="max-w-[80%] text-right text-xs text-destructive">{problem}</span>
+        <span className="max-w-[80%] px-1 text-right text-xs text-destructive">{problem}</span>
       )}
     </MessageItem>
   );
@@ -166,9 +188,7 @@ function Thread({ conversation }: { conversation: InstagramConversation }) {
     { conversationId: conversation.id },
     { initialNumItems: MESSAGES_PER_PAGE },
   );
-  if (status === "LoadingFirstPage") {
-    return <Skeleton className="h-60 w-full" role="status" aria-label="Loading messages" />;
-  }
+  if (status === "LoadingFirstPage") return <MessagesSkeleton />;
   if (results.length === 0) return <EmptyState title="No messages in this conversation yet" />;
   // The API lists newest first; a thread reads from the top down.
   const oldestFirst = [...results].reverse();
@@ -194,9 +214,12 @@ function Thread({ conversation }: { conversation: InstagramConversation }) {
             : undefined
         }
       >
-        {oldestFirst.map((message) => (
-          <MessageBubble key={message.id} message={message} contact={contact} />
-        ))}
+        <MessageTimeline
+          messages={oldestFirst}
+          render={(message, continued) => (
+            <MessageBubble message={message} contact={contact} continued={continued} />
+          )}
+        />
       </MessageList>
     </div>
   );
@@ -205,7 +228,8 @@ function Thread({ conversation }: { conversation: InstagramConversation }) {
 /**
  * Replying, for editors and admins, only when the server would accept a reply now: the account
  * can send (no `replyBlocker`) and the customer's 24-hour window is open (re-checked every 30
- * seconds; the server decides again). Viewers read only.
+ * seconds; the server decides again). Viewers read only. The reply box stays in place when
+ * replies stop, so a typed draft is kept (D-M5).
  */
 function Composer({ conversation }: { conversation: InstagramConversation }) {
   const { role } = useOrg();
@@ -216,29 +240,43 @@ function Composer({ conversation }: { conversation: InstagramConversation }) {
   }
   const reply = replyModeOf(conversation, now);
   const contactName = conversation.contactName ?? conversation.contactUsername;
+  const unavailable = conversation.replyBlocker !== undefined;
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
       <ReplyHeading id={headingId} />
-      {"mode" in reply ? (
-        <ReplyBox
-          accountId={conversation.messagingAccountId}
-          conversationId={conversation.id}
-          {...(contactName !== undefined ? { contactName } : {})}
-          humanAgent={reply.mode === "human_agent"}
-        />
-      ) : (
-        <div className="flex flex-col gap-2 text-sm text-muted-foreground">
-          <p>{reply.blocked}</p>
-          {conversation.replyBlocker !== undefined && (
-            <Link
-              href="/instagram/messages/settings"
-              className="self-start text-blue-deep underline-offset-4 hover:underline"
-            >
-              Open the Instagram DM settings
-            </Link>
-          )}
-        </div>
+      {"blocked" in reply && (
+        <ComposerNotice
+          tone={unavailable ? "unavailable" : "closed"}
+          title={
+            conversation.replyBlocker !== undefined
+              ? replyBlockerTitle(conversation.replyBlocker)
+              : conversation.replyWindowExpiresAt === undefined
+                ? "Waiting for the customer to write"
+                : "The 24-hour reply window is closed"
+          }
+          {...(unavailable
+            ? {
+                action: (
+                  <Link
+                    href="/instagram/messages/settings"
+                    className="self-start text-blue-deep underline-offset-4 hover:underline"
+                  >
+                    Open the Instagram DM settings
+                  </Link>
+                ),
+              }
+            : {})}
+        >
+          {reply.blocked}
+        </ComposerNotice>
       )}
+      <ReplyBox
+        accountId={conversation.messagingAccountId}
+        conversationId={conversation.id}
+        {...(contactName !== undefined ? { contactName } : {})}
+        humanAgent={"mode" in reply && reply.mode === "human_agent"}
+        closed={"blocked" in reply}
+      />
     </section>
   );
 }
@@ -247,46 +285,33 @@ function Conversation({ conversationId }: { conversationId: string }) {
   const { data: conversation } = useAnalyticsQuery(api.v1.instagramMessaging.getConversation, {
     conversationId,
   });
-  const crumbs = (label: string) => (
-    <Breadcrumbs items={[{ label: "Instagram DMs", href: "/instagram/messages" }, { label }]} />
-  );
-  if (conversation === undefined) {
-    return (
-      <>
-        {crumbs("Conversation")}
-        <Skeleton className="h-40 w-full" role="status" aria-label="Loading conversation" />
-      </>
-    );
-  }
-  const contact = contactLabel(conversation);
+  if (conversation === undefined) return <ConversationPaneSkeleton />;
   return (
-    <>
-      {crumbs(contact)}
-      <PageHeader
-        title={
-          <span className="flex items-center gap-3">
-            <ContactMark label={contact} channel="instagram" size="lg" />
-            {contact}
-          </span>
-        }
-        description={`Instagram conversation on ${accountLabel(conversation.accountUsername)}`}
-      >
-        <ReplyWindow conversation={conversation} />
-      </PageHeader>
-      <ConversationLayout
-        history={<Thread conversation={conversation} />}
-        reply={<Composer conversation={conversation} />}
-        details={<Details conversation={conversation} />}
-      />
-    </>
+    <ConversationPane
+      channel="instagram"
+      contact={contactLabel(conversation)}
+      description={`Instagram conversation on ${accountLabel(conversation.accountUsername)}`}
+      status={<ReplyWindow conversation={conversation} />}
+      history={<Thread conversation={conversation} />}
+      reply={<Composer conversation={conversation} />}
+      details={<Details conversation={conversation} />}
+    />
   );
 }
 
 /** The conversation's own facts (v1/instagramMessaging:getConversation) and the channel's tools. */
 function Details({ conversation }: { conversation: InstagramConversation }) {
   const { timezone } = useOrg();
+  const now = useNow();
+  const reply = replyModeOf(conversation, now);
+  const until =
+    "mode" in reply
+      ? reply.mode === "standard"
+        ? conversation.replyWindowExpiresAt
+        : conversation.humanAgentWindowExpiresAt
+      : undefined;
   return (
-    <DetailsPanel
+    <DetailsList
       facts={[
         ...(conversation.contactName !== undefined
           ? ([["Name", conversation.contactName]] as const)
@@ -299,6 +324,16 @@ function Details({ conversation }: { conversation: InstagramConversation }) {
         ...(conversation.lastInboundAt !== undefined
           ? ([
               ["Customer last wrote", formatInstant(conversation.lastInboundAt, timezone)],
+            ] as const)
+          : []),
+        ...(until !== undefined
+          ? ([
+              [
+                "mode" in reply && reply.mode === "human_agent"
+                  ? "Human agent replies until"
+                  : "Replies possible until",
+                formatInstant(until, timezone),
+              ],
             ] as const)
           : []),
       ]}
@@ -319,7 +354,7 @@ function Details({ conversation }: { conversation: InstagramConversation }) {
  */
 export function InstagramConversationView({ conversationId }: { conversationId: string }) {
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col lg:h-full">
       <QueryBoundary resetKey={conversationId} title="Instagram conversation" notFoundAsPage>
         <Conversation conversationId={conversationId} />
       </QueryBoundary>

@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
 import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
+import { enterRunsOwnAction } from "@/lib/messaging/enter-key";
 import {
   fillSavedReply,
   type SavedReply,
@@ -76,6 +77,7 @@ export function SavedReplyPicker({
             id={searchId}
             value={search}
             placeholder="Search saved replies"
+            onKeyDown={enterRunsOwnAction()}
             onChange={(e) => setSearch(e.target.value)}
           />
           {replies === undefined ? (

@@ -224,6 +224,21 @@ describe("creating a template", () => {
     expect(list).toHaveBeenCalledTimes(2);
   });
 
+  it("inserts a variable on Enter, never submitting the template to Meta (D-M1)", async () => {
+    await render();
+    const create = mockAction(CREATE);
+    fireEvent.click(screen.getByRole("button", { name: "New template" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start from scratch" }));
+    const form = screen.getByRole("form", { name: "New template" });
+    const field = within(form).getByLabelText("Add a variable");
+    fireEvent.change(field, { target: { value: "Order Number" } });
+    // The browser's implicit submit only happens when Enter's keydown is not cancelled.
+    expect(fireEvent.keyDown(field, { key: "Enter" })).toBe(false);
+    expect(within(form).getByLabelText("Message body")).toHaveValue("{{order_number}}");
+    expect(field).toHaveValue("");
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("builds one from scratch: variables, samples, buttons and their order", async () => {
     await render();
     const create = mockAction(CREATE).mockResolvedValue({

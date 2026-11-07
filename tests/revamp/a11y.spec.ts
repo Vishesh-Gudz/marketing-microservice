@@ -109,6 +109,15 @@ const STATES: Case[] = [
     },
   },
   {
+    name: "conversation-details-sheet",
+    path: "/whatsapp/conversations/demo",
+    data: true,
+    open: async (page) => {
+      await page.getByRole("button", { name: "Details" }).click();
+      await page.getByRole("dialog").waitFor();
+    },
+  },
+  {
     name: "page-search",
     path: "/",
     open: async (page) => {

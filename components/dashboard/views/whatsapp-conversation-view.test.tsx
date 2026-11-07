@@ -18,7 +18,9 @@ vi.mock("next/navigation", async () => (await import("@/tests/unit/dashboard-har
 import WhatsAppConversationPage, {
   metadata,
 } from "@/app/(dashboard)/(inbox)/whatsapp/conversations/[conversationId]/page";
+import { clockTime } from "@/lib/inbox/conversation-time";
 import { formatInstant } from "../freshness-note";
+import { InboxListContext } from "../messaging/inbox-context";
 import { WhatsAppConversationView } from "./whatsapp-conversation-view";
 
 // One WhatsApp conversation (ADR 0013): its messages oldest at the top, each outbound message's
@@ -57,6 +59,13 @@ function message(overrides: Partial<WhatsAppMessage>): WhatsAppMessage {
 
 function page(messages: WhatsAppMessage[], isDone = true) {
   return { page: messages, isDone, continueCursor: isDone ? "" : "c1" };
+}
+
+/** A message's meta line as text: who, the clock time, the full time (for screen readers). */
+function meta(sender: string, at: string, note?: string): string {
+  return `${sender} · ${clockTime(at, ORG.timezone)}${formatInstant(at, ORG.timezone)}${
+    note !== undefined ? ` · ${note}` : ""
+  }`;
 }
 
 beforeEach(() => {
@@ -98,23 +107,36 @@ describe("WhatsApp conversation", () => {
     expect(screen.getByRole("status", { name: "Loading messages" })).toBeInTheDocument();
   });
 
-  it("names the contact and the number, links back to the inbox and shows the open window", () => {
+  it("names the contact and the number, links back to its list and shows the open window", () => {
     queryResults.set(GET, conversation());
     queryResults.set(MESSAGES, page([message({})]));
     renderWithOrg(<WhatsAppConversationView conversationId="conv1" />);
     expect(screen.getByRole("heading", { level: 1, name: "Ana" })).toBeInTheDocument();
     expect(screen.getByText("WhatsApp conversation on +1 555-000-0001")).toBeInTheDocument();
-    const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
-    expect(within(crumbs).getByRole("link", { name: "WhatsApp" })).toHaveAttribute(
+    // Outside the workspace's unified list, back goes to the channel's own list.
+    expect(screen.getByRole("link", { name: "Back to WhatsApp" })).toHaveAttribute(
       "href",
       "/whatsapp",
     );
-    expect(screen.getByText("Reply window open")).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        `Free-form replies are possible until ${formatInstant("2026-10-25T11:00:00.000Z", ORG.timezone)}.`,
-      ),
-    ).toBeInTheDocument();
+    // The chip counts down; the exact end is in its title and in the details.
+    const until = formatInstant("2026-10-25T11:00:00.000Z", ORG.timezone);
+    const chip = screen.getByText("Reply window open");
+    expect(chip).toHaveTextContent(/^Reply window open\s*· 23h left$/);
+    expect(chip).toHaveAttribute("title", `Free-form replies are possible until ${until}.`);
+    expect(screen.getByRole("complementary", { name: "Conversation details" })).toHaveTextContent(
+      `Free-form replies until${until}`,
+    );
+  });
+
+  it("goes back to the list it was opened from in the inbox workspace (D-M12)", () => {
+    queryResults.set(GET, conversation());
+    queryResults.set(MESSAGES, page([message({})]));
+    renderWithOrg(
+      <InboxListContext value="inbox">
+        <WhatsAppConversationView conversationId="conv1" />
+      </InboxListContext>,
+    );
+    expect(screen.getByRole("link", { name: "Back to Inbox" })).toHaveAttribute("href", "/inbox");
   });
 
   it.each([
@@ -166,10 +188,10 @@ describe("WhatsApp conversation", () => {
     renderWithOrg(<WhatsAppConversationView conversationId="conv1" />);
     const items = within(screen.getByRole("list", { name: "Messages" })).getAllByRole("listitem");
     expect(items.map((item) => item.textContent)).toEqual([
-      `Ana · ${formatInstant("2026-10-24T11:00:00.000Z", ORG.timezone)}<b>Where</b> is\nmy order?`,
-      `Ana · ${formatInstant("2026-10-24T11:05:00.000Z", ORG.timezone)}Photo (not shown in this inbox)`,
-      `You · ${formatInstant("2026-10-24T11:10:00.000Z", ORG.timezone)}Checking nowNot deliveredThe customer's 24-hour reply window had closed. Send an approved template instead.`,
-      `You · ${formatInstant("2026-10-24T11:20:00.000Z", ORG.timezone)}Template: order_updateHi Ana, your order A-1 has shipped.Read`,
+      `${meta("Ana", "2026-10-24T11:00:00.000Z")}<b>Where</b> is\nmy order?`,
+      `${meta("Ana", "2026-10-24T11:05:00.000Z")}Photo (not shown in this inbox)`,
+      `${meta("You", "2026-10-24T11:10:00.000Z")}Checking nowNot deliveredThe customer's 24-hour reply window had closed. Send an approved template instead.`,
+      `${meta("You", "2026-10-24T11:20:00.000Z")}Template: order_updateHi Ana, your order A-1 has shipped.Read`,
     ]);
     // A message's text is shown as text, never interpreted as markup.
     expect(items[0]!.querySelector("b")).toBeNull();
@@ -208,10 +230,44 @@ describe("WhatsApp conversation", () => {
     renderWithOrg(<WhatsAppConversationView conversationId="conv1" />);
     const items = within(screen.getByRole("list", { name: "Messages" })).getAllByRole("listitem");
     expect(items.map((item) => item.textContent)).toEqual([
-      `Ana · ${formatInstant("2026-10-22T09:00:00.000Z", ORG.timezone)} · importedDo you deliver?`,
-      `You · ${formatInstant("2026-10-22T09:01:00.000Z", ORG.timezone)} · importedYes, we doRead`,
-      `You · ${formatInstant("2026-10-24T11:20:00.000Z", ORG.timezone)} · sent from the WhatsApp Business appOn my wayDelivered`,
+      `${meta("Ana", "2026-10-22T09:00:00.000Z", "imported")}Do you deliver?`,
+      `${meta("You", "2026-10-22T09:01:00.000Z", "imported")}Yes, we doRead`,
+      `${meta("You", "2026-10-24T11:20:00.000Z", "sent from the WhatsApp Business app")}On my wayDelivered`,
     ]);
+  });
+
+  it("breaks the history by day and groups a sender's messages within five minutes", () => {
+    queryResults.set(GET, conversation());
+    queryResults.set(
+      MESSAGES,
+      page([
+        message({
+          id: "m4",
+          direction: "outbound",
+          text: "Yes",
+          status: "read",
+          at: "2026-10-24T11:20:00.000Z",
+        }),
+        message({ id: "m3", text: "Still there?", at: "2026-10-24T11:03:00.000Z" }),
+        message({ id: "m2", text: "Hello again", at: "2026-10-24T11:00:00.000Z" }),
+        message({ id: "m1", text: "Hi", at: "2026-10-22T09:00:00.000Z" }),
+      ]),
+    );
+    renderWithOrg(<WhatsAppConversationView conversationId="conv1" />);
+    const list = screen.getByRole("list", { name: "Messages" });
+    // The day breaks are visual only: every message's time says its date to screen readers.
+    expect(
+      [...list.querySelectorAll('li[aria-hidden="true"]')].map((li) => li.textContent),
+    ).toEqual(["Thursday", "Today"]);
+    const items = within(list).getAllByRole("listitem");
+    expect(items).toHaveLength(4);
+    const time = items[1]!.querySelector("time")!;
+    expect(time).toHaveAttribute("dateTime", "2026-10-24T11:00:00.000Z");
+    expect(time).toHaveAttribute("title", formatInstant("2026-10-24T11:00:00.000Z", ORG.timezone));
+    // m3 continues m2 (three minutes later): the name is said only to screen readers.
+    expect(within(items[1]!).getByText("Ana ·")).not.toHaveClass("sr-only");
+    expect(within(items[2]!).getByText("Ana ·")).toHaveClass("sr-only");
+    expect(within(items[3]!).getByText("You ·")).not.toHaveClass("sr-only");
   });
 
   it("loads older messages on request", () => {
@@ -236,6 +292,27 @@ describe("WhatsApp conversation", () => {
     );
     // The history scrolls on its own, and a keyboard can reach it.
     expect(screen.getByRole("region", { name: "Conversation" })).toHaveAttribute("tabindex", "0");
+  });
+
+  it("shows or hides the details column, and opens them in a sheet on smaller screens", () => {
+    queryResults.set(GET, conversation());
+    queryResults.set(MESSAGES, page([message({})]));
+    renderWithOrg(<WhatsAppConversationView conversationId="conv1" />);
+    // Two Details buttons: one per screen size, only one of them shown (CSS).
+    const [column, sheet] = screen.getAllByRole("button", { name: "Details" });
+    const details = screen.getByRole("complementary", { name: "Conversation details" });
+    expect(column).toHaveAttribute("aria-controls", details.id);
+    expect(column).toHaveAttribute("aria-expanded", "true");
+    expect(details).toHaveClass("2xl:flex");
+    fireEvent.click(column!);
+    expect(column).toHaveAttribute("aria-expanded", "false");
+    expect(details).not.toHaveClass("2xl:flex");
+    fireEvent.click(sheet!);
+    const dialog = screen.getByRole("dialog", { name: "Details" });
+    expect(within(dialog).getByRole("link", { name: "WhatsApp templates" })).toHaveAttribute(
+      "href",
+      "/whatsapp/templates",
+    );
   });
 
   it("never shows the previous conversation while another one loads", () => {

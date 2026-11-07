@@ -157,8 +157,11 @@ export const INSTAGRAM_MESSAGES = [
   },
 ];
 
-/** The shown conversations, whatever id the page asks for. */
-export async function withConversations(page: Page) {
+/**
+ * The shown conversations, whatever id the page asks for; `whatsapp` changes the open WhatsApp
+ * conversation (e.g. a closed reply window).
+ */
+export async function withConversations(page: Page, whatsapp: Record<string, unknown> = {}) {
   await answerQueries(page, {
     "v1/inbox:listThreads": () => page1(THREADS),
     "v1/whatsapp:listConversations": () =>
@@ -174,7 +177,7 @@ export async function withConversations(page: Page) {
         },
       ]),
     "v1/instagramMessaging:listConversations": () => page1([INSTAGRAM_CONVERSATION]),
-    "v1/whatsapp:getConversation": () => WHATSAPP_CONVERSATION,
+    "v1/whatsapp:getConversation": () => ({ ...WHATSAPP_CONVERSATION, ...whatsapp }),
     "v1/whatsapp:listMessages": () => page1(WHATSAPP_MESSAGES),
     "v1/instagramMessaging:getConversation": () => INSTAGRAM_CONVERSATION,
     "v1/instagramMessaging:listMessages": () => page1(INSTAGRAM_MESSAGES),

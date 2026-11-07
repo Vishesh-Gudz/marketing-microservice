@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { MAX_REPLY_CHARS, newClientMessageId } from "@/lib/whatsapp/inbox";
 import { sendErrorNotice } from "@/lib/whatsapp/messages";
 import { ConnectionNotice } from "../connections/connection-notice";
+import { COMPOSER_FIELD } from "../messaging/conversation";
 import { SavedReplyPicker } from "../messaging/saved-reply-picker";
 
 /**
@@ -18,14 +19,20 @@ import { SavedReplyPicker } from "../messaging/saved-reply-picker";
  * reply window is open. One send at a time. The draft keeps its `clientMessageId` until it is
  * sent or edited, so pressing Send again after an error can never send it twice. A refusal is
  * shown in fixed words; the sent message then appears in the thread with its status.
+ *
+ * `closed` (D-M5): the window closed (or the number cannot send) while the box was open. The box
+ * stays mounted, so a typed draft is kept, read-only, until it is discarded or the window opens
+ * again; nothing can be sent from it meanwhile. With no draft it shows nothing.
  */
 export function ReplyBox({
   conversationId,
   contactName,
+  closed = false,
 }: {
   conversationId: string;
   /** For saved replies (ADR 0021): fills in `{{customer_name}}`. */
   contactName?: string;
+  closed?: boolean;
 }) {
   const sendText = useMutation(api.v1.whatsapp.sendText);
   const [text, setText] = useState("");
@@ -40,7 +47,7 @@ export function ReplyBox({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (inFlight.current || blank || tooLong) return;
+    if (closed || inFlight.current || blank || tooLong) return;
     inFlight.current = true;
     setPending(true);
     setNotice(null);
@@ -56,23 +63,36 @@ export function ReplyBox({
     }
   }
 
+  if (closed && text === "") return null;
+
   return (
     <form className="flex flex-col gap-2" onSubmit={(event) => void submit(event)}>
       {notice && <ConnectionNotice notice={notice} />}
-      <SavedReplyPicker
-        channel="whatsapp"
-        {...(contactName !== undefined ? { contactName } : {})}
-        disabled={pending}
-        onPick={(reply) => {
-          setText(reply.text);
-          setDraftId(newClientMessageId());
-        }}
-      />
-      <Label htmlFor={fieldId}>Message</Label>
+      {closed ? (
+        <p className="text-xs text-muted-foreground">
+          Your unsent draft is kept here. It can be sent if the customer writes again.
+        </p>
+      ) : (
+        <SavedReplyPicker
+          channel="whatsapp"
+          {...(contactName !== undefined ? { contactName } : {})}
+          disabled={pending}
+          onPick={(reply) => {
+            setText(reply.text);
+            setDraftId(newClientMessageId());
+          }}
+        />
+      )}
+      <Label htmlFor={fieldId} className="sr-only">
+        Message
+      </Label>
       <Textarea
         id={fieldId}
         value={text}
         rows={3}
+        placeholder="Write a reply…"
+        className={COMPOSER_FIELD}
+        readOnly={closed}
         disabled={pending}
         aria-describedby={countId}
         aria-invalid={tooLong || undefined}
@@ -81,16 +101,33 @@ export function ReplyBox({
           setDraftId(newClientMessageId());
         }}
       />
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center justify-between gap-2 border-t border-line pt-2">
         <span
           id={countId}
-          className={cn("text-xs", tooLong ? "text-destructive" : "text-muted-foreground")}
+          className={cn(
+            "text-xs tabular-nums",
+            tooLong ? "text-destructive" : "text-muted-foreground",
+          )}
         >
           {text.length} / {MAX_REPLY_CHARS} characters
         </span>
-        <Button type="submit" disabled={pending || blank || tooLong}>
-          {pending ? "Sending…" : "Send"}
-        </Button>
+        {closed ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setText("");
+              setDraftId(newClientMessageId());
+            }}
+          >
+            Discard draft
+          </Button>
+        ) : (
+          <Button type="submit" disabled={pending || blank || tooLong}>
+            {pending ? "Sending…" : "Send"}
+          </Button>
+        )}
       </div>
     </form>
   );
