@@ -1,5 +1,7 @@
 "use client";
 
+import { TriangleAlert } from "lucide-react";
+import { SystemMessage } from "@/components/brand/system-message";
 import { Button } from "@/components/ui/button";
 import { describeError } from "@/lib/analytics/errors";
 
@@ -8,12 +10,20 @@ import { describeError } from "@/lib/analytics/errors";
 export default function DashboardError({ error, retry }: { error: Error; retry: () => void }) {
   const described = describeError(error);
   return (
-    <div role="alert" className="flex flex-col items-start gap-3 rounded-lg border p-6">
-      <h1 className="text-lg font-semibold">{described.title}</h1>
-      <p className="text-sm text-muted-foreground">{described.message}</p>
-      <Button variant="outline" onClick={() => retry()}>
-        Try again
-      </Button>
+    <div className="flex justify-center py-10 md:py-16">
+      <SystemMessage
+        role="alert"
+        icon={TriangleAlert}
+        tone="danger"
+        title={described.title}
+        actions={
+          <Button variant="outline" onClick={() => retry()}>
+            Try again
+          </Button>
+        }
+      >
+        {described.message}
+      </SystemMessage>
     </div>
   );
 }

@@ -33,6 +33,7 @@ Next.js allows one `next dev` per project folder. Stop your own dev server first
 | `organic.spec.ts`   | The organic pages: Instagram and YouTube read top to bottom, post rows carry a type glyph (never an image), and no organic page scrolls sideways on a phone                                                                                       |
 | `inbox.spec.ts`     | The inbox and conversation pages over made-up threads answered on the Convex socket (`socket.ts`; nothing is written or sent): rows never wrap, a conversation opens at its newest message, the details panel beside or below                     |
 | `library.spec.ts`   | The library and settings pages over made-up saved replies, Instagram templates and messaging accounts (socket answers; nothing is saved, deleted or connected): cards per row, a delete asks on the card and Escape closes it, no sideways scroll |
+| `system.spec.ts`    | The system and legal pages: an unknown URL answers 404 in the middle of the screen, a missing item keeps the shell, the legal pages read in one column with their links, no sideways scroll                                                       |
 
 How it stays deterministic:
 
