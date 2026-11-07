@@ -5,11 +5,11 @@ import { cn } from "@/lib/utils";
 function Buttons({ buttons, label }: { buttons: TemplateButton[]; label: string }) {
   if (buttons.length === 0) return null;
   return (
-    <ul aria-label={label} className="flex flex-col divide-y border-t">
+    <ul aria-label={label} className="flex flex-col divide-y divide-line border-t border-line">
       {buttons.map((button, i) => (
         <li
           key={`${button.type}-${i}`}
-          className="flex items-center justify-center gap-1.5 px-3 py-1.5 text-sm font-medium text-primary"
+          className="flex items-center justify-center gap-1.5 px-3 py-1.5 text-sm font-medium text-blue-deep"
         >
           {button.type === "url" ? (
             <ExternalLink aria-hidden="true" className="size-3.5" />
@@ -42,7 +42,7 @@ export function TemplatePreview({
       <figure
         aria-label={label}
         className={cn(
-          "flex w-full max-w-xs flex-col overflow-hidden rounded-lg border bg-background text-foreground",
+          "flex w-full max-w-xs flex-col overflow-hidden rounded-[12px] border border-line bg-paper text-ink shadow-soft",
           className,
         )}
       >
@@ -62,10 +62,10 @@ export function TemplatePreview({
             <li
               key={i}
               aria-label={`Card ${i + 1}`}
-              className="flex w-56 shrink-0 flex-col overflow-hidden rounded-lg border bg-background text-foreground"
+              className="flex w-56 shrink-0 flex-col overflow-hidden rounded-[12px] border border-line bg-paper text-ink shadow-soft"
             >
               {card.imageUrl && (
-                <div className="flex h-24 items-center justify-center gap-1.5 bg-muted px-2 text-xs text-muted-foreground">
+                <div className="flex h-24 items-center justify-center gap-1.5 bg-canvas px-2 text-xs text-muted-foreground">
                   <ImageIcon aria-hidden="true" className="size-4" />
                   <span className="truncate">{host ? `Picture from ${host}` : "Picture"}</span>
                 </div>

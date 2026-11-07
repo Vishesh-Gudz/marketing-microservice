@@ -10,7 +10,12 @@ import { connectionActionNotice } from "@/lib/connections/messages";
 import { connectReturnUrl, navigateToAuthorization } from "@/lib/connections/navigation";
 import { PROVIDERS, type ConnectionProvider } from "@/lib/connections/providers";
 import type { Notice } from "@/lib/connections/types";
+import { fieldClassName } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import { ConnectionNotice } from "./connection-notice";
+
+/** The connection picker shown when a provider has more than one connection. */
+export const CONNECTION_SELECT = cn(fieldClassName, "h-9 w-fit max-w-full py-1.5");
 
 /**
  * Admin-only: starts the provider's OAuth through v1/connections:beginConnect and leaves for

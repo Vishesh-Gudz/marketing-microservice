@@ -27,7 +27,10 @@ import {
 import { connectionActionNotice } from "@/lib/connections/messages";
 import { PROVIDERS, type AdConnectionProvider } from "@/lib/connections/providers";
 import type { Notice } from "@/lib/connections/types";
+import { cn } from "@/lib/utils";
 import { EmptyState } from "../empty-state";
+import { INNER_TABLE, SUB_HEADING } from "../library";
+import { TABLE_EDGES } from "../surface";
 import { ConnectionNotice } from "./connection-notice";
 
 /** Empty discovery, in the provider's words. */
@@ -129,7 +132,7 @@ export function DiscoveredAccounts({
 
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
-      <h3 id={headingId} className="text-base font-semibold">
+      <h3 id={headingId} className={SUB_HEADING}>
         Choose the account to sync
       </h3>
       {refreshing && (
@@ -159,7 +162,7 @@ export function DiscoveredAccounts({
               defeat the table's horizontal scroll on narrow screens. */}
           <fieldset className="flex min-w-0 flex-col gap-2">
             <legend className="text-sm text-muted-foreground">{LEGEND[provider]}</legend>
-            <div className="overflow-x-auto rounded-md border">
+            <div className={cn(INNER_TABLE, TABLE_EDGES)}>
               <Table>
                 <TableCaption className="sr-only">Discovered {info.name} accounts</TableCaption>
                 <TableHeader>

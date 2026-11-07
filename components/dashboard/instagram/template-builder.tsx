@@ -24,11 +24,17 @@ import {
 } from "@/lib/instagram/templates";
 import { cn } from "@/lib/utils";
 import { ConnectionNotice } from "../connections/connection-notice";
+import { CHECKLIST, FORM_ACTIONS, PANEL_HEADER, PREVIEW_WELL } from "../library";
+import { SECTION_HEADING, SURFACE } from "../surface";
 import { TemplatePreview } from "./template-preview";
-import { fieldClassName } from "@/components/ui/textarea";
+import { fieldClassName, Textarea } from "@/components/ui/textarea";
 
 // Shared field look (components/ui/textarea.tsx).
 const FIELD = fieldClassName;
+
+/** A choice drawn as a card: the native radio, then its label. */
+const OPTION =
+  "flex cursor-pointer items-center gap-2.5 rounded-[10px] border border-line bg-paper px-3 py-2.5 text-sm font-medium text-ink transition-colors hover:border-line-strong has-[:checked]:border-primary/40 has-[:checked]:bg-blue-50/60";
 
 export type TemplateDraft = { id?: string; name: string; content: TemplateContent };
 
@@ -91,7 +97,7 @@ function ButtonsEditor({
           key={i}
           role="group"
           aria-label={`${legend}: button ${i + 1}`}
-          className="flex flex-wrap items-end gap-2 rounded-md border p-2"
+          className="flex flex-wrap items-end gap-2 rounded-[10px] border border-line bg-canvas/50 p-2.5"
         >
           <div className="flex flex-col gap-1">
             <Label htmlFor={`${id}-${i}-type`} className="text-xs">
@@ -193,8 +199,8 @@ function CardEditor({
   const id = useId();
   const n = index + 1;
   return (
-    <fieldset className="flex flex-col gap-3 rounded-lg border p-3">
-      <legend className="px-1 text-sm font-medium">Card {n}</legend>
+    <fieldset className="flex min-w-0 flex-col gap-3 rounded-[12px] border border-line bg-canvas/40 p-3">
+      <legend className="px-1 text-sm font-medium text-ink">Card {n}</legend>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={`${id}-title`}>Title</Label>
         <Input
@@ -315,9 +321,14 @@ export function TemplateBuilder({
   return (
     <form
       aria-label={editing ? "Edit Instagram template" : "New Instagram template"}
-      className="grid gap-6 rounded-lg border p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]"
+      className={cn(SURFACE, "grid gap-5 p-4 md:p-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]")}
       onSubmit={(event) => void submit(event)}
     >
+      <div className={cn(PANEL_HEADER, "lg:col-span-2")}>
+        <h2 className={SECTION_HEADING}>
+          {editing ? "Edit Instagram template" : "New Instagram template"}
+        </h2>
+      </div>
       <div className="flex min-w-0 flex-col gap-4">
         {notice && <ConnectionNotice notice={notice} />}
         <div className="flex flex-col gap-1.5">
@@ -332,14 +343,15 @@ export function TemplateBuilder({
         </div>
         <fieldset className="flex flex-col gap-2">
           <legend className="mb-1 text-sm font-medium">Kind</legend>
-          <div className="flex flex-wrap gap-4">
+          <div className="grid gap-2 sm:grid-cols-2">
             {(Object.keys(KIND_LABELS) as TemplateKind[]).map((kind) => (
-              <label key={kind} className="flex items-center gap-2 text-sm">
+              <label key={kind} className={OPTION}>
                 <input
                   type="radio"
                   name={`${id}-kind`}
                   checked={content.kind === kind}
                   onChange={() => setContent((c) => switchKind(c, kind))}
+                  className="size-4 shrink-0 accent-primary"
                 />
                 {KIND_LABELS[kind]}
               </label>
@@ -351,10 +363,9 @@ export function TemplateBuilder({
           <>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor={`${id}-text`}>Message</Label>
-              <textarea
+              <Textarea
                 id={`${id}-text`}
                 rows={4}
-                className={FIELD}
                 value={content.text}
                 aria-invalid={content.text.length > TEMPLATE_LIMITS.text || undefined}
                 onChange={(e) => setContent({ ...content, text: e.target.value })}
@@ -420,16 +431,16 @@ export function TemplateBuilder({
           </div>
         )}
         {issues.length > 0 && (
-          <div role="note" aria-label="Still to do" className="rounded-md border border-dashed p-3">
-            <p className="text-sm font-medium">Still to do before saving</p>
-            <ul className="mt-1 list-disc pl-5 text-sm text-muted-foreground">
+          <div role="note" aria-label="Still to do" className={CHECKLIST}>
+            <p className="font-medium text-amber-ink">Still to do before saving</p>
+            <ul className="mt-1 list-disc pl-5 text-ink-2">
               {[...new Set(issues.map((issue) => issue.message))].map((message) => (
                 <li key={message}>{message}</li>
               ))}
             </ul>
           </div>
         )}
-        <div className="flex gap-2">
+        <div className={FORM_ACTIONS}>
           <Button type="submit" disabled={pending || issues.length > 0}>
             {pending ? "Saving…" : "Save template"}
           </Button>
@@ -438,8 +449,8 @@ export function TemplateBuilder({
           </Button>
         </div>
       </div>
-      <div className="flex min-w-0 flex-col gap-2">
-        <h3 className="text-sm font-medium">Preview</h3>
+      <div className={PREVIEW_WELL}>
+        <h3 className="text-sm font-medium text-ink">Preview</h3>
         <TemplatePreview content={content} />
         <p className="text-xs text-muted-foreground">
           Instagram shows buttons and cards in its phone and tablet apps, not on instagram.com.

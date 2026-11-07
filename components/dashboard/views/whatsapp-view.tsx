@@ -1,6 +1,6 @@
 "use client";
 
-import { FileText } from "lucide-react";
+import { FileText, MessageCircle } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { useOrg } from "@/lib/analytics/org-context";
 import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
 import type { Notice } from "@/lib/connections/types";
 import { ConnectionNotice } from "../connections/connection-notice";
+import { ChannelCard, SectionHeader } from "../library";
 import { Breadcrumbs, PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
 import { ConnectWhatsApp, useEmbeddedSignup } from "../whatsapp/connect-whatsapp";
@@ -43,25 +44,26 @@ export function WhatsAppView() {
       <PageHeader
         title="WhatsApp settings"
         description="Connect your WhatsApp Business number and follow its setup."
-      >
-        <div className="flex flex-wrap gap-2 pt-2">
+        actions={
           <Button asChild variant="outline" size="sm">
             <Link href="/whatsapp/templates">
               <FileText aria-hidden="true" />
               Templates
             </Link>
           </Button>
-        </div>
-      </PageHeader>
+        }
+      />
       {notice && (
         <div ref={noticeRef} tabIndex={-1} className="outline-none">
           <ConnectionNotice notice={notice} />
         </div>
       )}
-      <section aria-labelledby="whatsapp-connect" className="flex flex-col gap-3">
-        <h2 id="whatsapp-connect" className="text-lg font-semibold">
-          Connect WhatsApp
-        </h2>
+      <ChannelCard
+        id="whatsapp-connect"
+        icon={MessageCircle}
+        title="Connect WhatsApp"
+        description="A WhatsApp Business number, for your inbox and templates."
+      >
         {isAdmin ? (
           <ConnectWhatsApp signup={signup} />
         ) : (
@@ -69,11 +71,9 @@ export function WhatsAppView() {
             Only organization admins can connect WhatsApp.
           </p>
         )}
-      </section>
+      </ChannelCard>
       <section aria-labelledby="whatsapp-accounts" className="flex flex-col gap-3">
-        <h2 id="whatsapp-accounts" className="text-lg font-semibold">
-          Connected accounts
-        </h2>
+        <SectionHeader id="whatsapp-accounts" title="Connected accounts" />
         <QueryBoundary resetKey="whatsapp-accounts" title="WhatsApp accounts">
           <WhatsAppAccounts isAdmin={isAdmin} signup={signup} onNotice={onNotice} />
         </QueryBoundary>

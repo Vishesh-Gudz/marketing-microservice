@@ -17,17 +17,17 @@ import {
   signupErrorNotice,
 } from "@/lib/whatsapp/messages";
 import type { SetupStatus, WhatsAppAccount, WhatsAppNumber } from "@/lib/whatsapp/types";
+import { cn } from "@/lib/utils";
 import { formatInstant } from "../freshness-note";
+import { CARD, CARD_ACTIONS, StatusTag, type StatusTone } from "../library";
 import type { EmbeddedSignup } from "./connect-whatsapp";
 import { DisconnectWhatsApp } from "./disconnect-whatsapp";
 
-const BADGE_VARIANT: Readonly<
-  Record<SetupStatus, "default" | "secondary" | "destructive" | "outline">
-> = {
-  connected: "default",
-  action_required: "secondary",
-  reauthorization_required: "destructive",
-  disconnected: "outline",
+const STATUS_TONE: Readonly<Record<SetupStatus, StatusTone>> = {
+  connected: "ok",
+  action_required: "warning",
+  reauthorization_required: "danger",
+  disconnected: "neutral",
 };
 
 /** Admin-only: resumes the missing setup steps (v1/whatsapp:retrySetup); one call at a time. */
@@ -102,26 +102,29 @@ function AccountCard({
   const canDisconnect = account.status === "active";
   const businessApp = account.onboardingType === "coexistence";
   return (
-    <li aria-labelledby={headingId} className="flex flex-col gap-3 rounded-lg border p-4">
+    <li aria-labelledby={headingId} className={CARD}>
       <div className="flex flex-wrap items-center gap-2">
-        <h3 id={headingId} className="font-medium">
+        <h3 id={headingId} className="font-medium text-ink">
           {name}
         </h3>
-        <Badge variant={BADGE_VARIANT[account.setupStatus]}>
+        <StatusTag tone={STATUS_TONE[account.setupStatus]}>
           {SETUP_STATUS_LABELS[account.setupStatus]}
-        </Badge>
+        </StatusTag>
         {businessApp && <Badge variant="outline">WhatsApp Business app</Badge>}
       </div>
       <p className="text-sm text-muted-foreground">
         WhatsApp Business account {account.wabaId} · connected{" "}
         {formatInstant(account.connectedAt, timezone)}
       </p>
-      {explanation && <p className="text-sm">{explanation}</p>}
+      {explanation && <p className="text-sm text-ink">{explanation}</p>}
       {account.numbers.length > 0 && (
-        <ul aria-label={`Phone numbers of ${name}`} className="flex flex-col gap-1 text-sm">
+        <ul
+          aria-label={`Phone numbers of ${name}`}
+          className="flex flex-col divide-y divide-line rounded-[10px] border border-line text-sm"
+        >
           {account.numbers.map((number) => (
-            <li key={number.id} className="flex flex-wrap gap-x-2">
-              <span className="font-medium">
+            <li key={number.id} className="flex flex-wrap gap-x-3 gap-y-0.5 px-3 py-2">
+              <span className="font-medium text-ink tabular-nums">
                 {number.displayPhoneNumber ?? `Number ${number.phoneNumberId}`}
               </span>
               <span className="text-muted-foreground">
@@ -134,7 +137,7 @@ function AccountCard({
         </ul>
       )}
       {isAdmin && (canRetry || canDisconnect) && (
-        <div className="flex flex-wrap items-start gap-2">
+        <div className={cn(CARD_ACTIONS, "items-start")}>
           {canRetry && <RetrySetupButton accountId={account.id} onNotice={onNotice} />}
           {account.setupStatus === "reauthorization_required" && (
             <Button
@@ -183,7 +186,7 @@ export function WhatsAppAccounts({
   }
   if (accounts.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">
+      <p className="rounded-[14px] border border-dashed border-line-strong bg-paper p-6 text-center text-sm text-muted-foreground">
         No WhatsApp account is connected yet.
         {isAdmin ? " Use Connect WhatsApp to add your WhatsApp Business number." : ""}
       </p>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useAction } from "convex/react";
+import { Camera, Megaphone, Play } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/convex/_generated/api";
@@ -18,6 +19,7 @@ import { AdConnection } from "../connections/ad-connection";
 import { ConnectionNotice } from "../connections/connection-notice";
 import { InstagramConnection } from "../connections/instagram-connection";
 import { YouTubeConnection } from "../connections/youtube-connection";
+import { ChannelCard } from "../library";
 import { PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
 
@@ -98,12 +100,14 @@ export function ConnectionsView() {
       {notice && <ConnectionNotice notice={notice} />}
       {AD_CONNECTION_PROVIDERS.map((provider) => {
         const { name } = PROVIDERS[provider];
-        const headingId = `connections-${provider}`;
         return (
-          <section key={provider} aria-labelledby={headingId} className="flex flex-col gap-4">
-            <h2 id={headingId} className="text-lg font-semibold">
-              {name}
-            </h2>
+          <ChannelCard
+            key={provider}
+            id={`connections-${provider}`}
+            icon={Megaphone}
+            title={name}
+            description="Ad accounts and campaigns for Overview and the analytics pages."
+          >
             <QueryBoundary resetKey={provider} title={name}>
               <AdConnection
                 provider={provider}
@@ -112,29 +116,33 @@ export function ConnectionsView() {
                 }
               />
             </QueryBoundary>
-          </section>
+          </ChannelCard>
         );
       })}
-      <section aria-labelledby="connections-youtube" className="flex flex-col gap-4">
-        <h2 id="connections-youtube" className="text-lg font-semibold">
-          YouTube
-        </h2>
+      <ChannelCard
+        id="connections-youtube"
+        icon={Play}
+        title="YouTube"
+        description="Your channel's daily metrics and videos for the Organic page."
+      >
         <QueryBoundary resetKey="youtube" title="YouTube">
           <YouTubeConnection
             preferredConnectionId={result.kind === "connected" ? result.connectionId : undefined}
           />
         </QueryBoundary>
-      </section>
-      <section aria-labelledby="connections-instagram" className="flex flex-col gap-4">
-        <h2 id="connections-instagram" className="text-lg font-semibold">
-          Instagram
-        </h2>
+      </ChannelCard>
+      <ChannelCard
+        id="connections-instagram"
+        icon={Camera}
+        title="Instagram"
+        description="Your Instagram professional account, for direct messages."
+      >
         <QueryBoundary resetKey="instagram" title="Instagram">
           <InstagramConnection
             preferredConnectionId={result.kind === "connected" ? result.connectionId : undefined}
           />
         </QueryBoundary>
-      </section>
+      </ChannelCard>
     </div>
   );
 }

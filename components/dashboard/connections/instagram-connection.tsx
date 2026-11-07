@@ -21,6 +21,7 @@ import { PROVIDERS } from "@/lib/connections/providers";
 import type { Notice } from "@/lib/connections/types";
 import { EmptyState } from "../empty-state";
 import { formatInstant } from "../freshness-note";
+import { CARD_SECTIONS, SUB_HEADING } from "../library";
 import { ConnectButton } from "./connect-button";
 import { ConnectionNotice } from "./connection-notice";
 import { DisconnectButton } from "./disconnect-button";
@@ -76,7 +77,7 @@ function DiscoveredAccount({ connection }: { connection: Connection }) {
   const accounts = discovered?.filter((row) => row.platform === "instagram");
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
-      <h3 id={headingId} className="text-base font-semibold">
+      <h3 id={headingId} className={SUB_HEADING}>
         Account to link
       </h3>
       {notice && <ConnectionNotice notice={notice} />}
@@ -98,7 +99,7 @@ function DiscoveredAccount({ connection }: { connection: Connection }) {
           {accounts.map((account) => (
             <li
               key={account.externalId}
-              className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-3"
+              className="flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-line p-3"
               data-external-id={account.externalId}
             >
               <div className="flex flex-col">
@@ -132,7 +133,7 @@ function LinkedAccounts({ accounts }: { accounts: readonly SocialAccount[] }) {
   const headingId = "instagram-linked-account";
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
-      <h3 id={headingId} className="text-base font-semibold">
+      <h3 id={headingId} className={SUB_HEADING}>
         Linked account
       </h3>
       {accounts.length === 0 ? (
@@ -144,7 +145,7 @@ function LinkedAccounts({ accounts }: { accounts: readonly SocialAccount[] }) {
           {accounts.map((account) => (
             <li
               key={account.id}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-line p-3"
               data-account-id={account.id}
             >
               <div className="flex flex-col gap-0.5 text-sm">
@@ -214,8 +215,8 @@ export function InstagramConnection({
       : null;
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-3 rounded-lg border p-4">
+    <div className={CARD_SECTIONS}>
+      <div className="flex flex-col gap-3">
         {connection === undefined ? (
           <p className="text-sm">{info.name} is not connected.</p>
         ) : (

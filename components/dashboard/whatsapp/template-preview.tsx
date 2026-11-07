@@ -21,7 +21,7 @@ export function TemplatePreview({
 }) {
   return (
     <figure aria-label={label} className="flex w-full max-w-sm flex-col gap-1">
-      <div className="rounded-lg rounded-tl-none bg-muted px-3 py-2 text-sm shadow-xs">
+      <div className="rounded-[12px] rounded-tl-[4px] border border-line bg-paper px-3 py-2 text-sm text-ink shadow-soft">
         {header && <p className="mb-1 font-semibold break-words">{header}</p>}
         <p className="break-words whitespace-pre-wrap">
           {body || <span className="text-muted-foreground italic">The message body</span>}
@@ -33,7 +33,7 @@ export function TemplatePreview({
           {buttons.map((button, i) => (
             <li
               key={`${button.type}-${i}`}
-              className="flex items-center justify-center gap-1.5 rounded-lg bg-muted px-3 py-1.5 text-sm font-medium text-primary"
+              className="flex items-center justify-center gap-1.5 rounded-[10px] border border-line bg-paper px-3 py-1.5 text-sm font-medium text-blue-deep shadow-soft"
             >
               {button.type === "URL" ? (
                 <ExternalLink aria-hidden="true" className="size-3.5" />

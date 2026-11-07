@@ -31,7 +31,8 @@ import {
 } from "@/lib/connections/youtube";
 import { EmptyState } from "../empty-state";
 import { formatInstant } from "../freshness-note";
-import { ConnectButton } from "./connect-button";
+import { CARD_SECTIONS, SUB_HEADING } from "../library";
+import { ConnectButton, CONNECTION_SELECT } from "./connect-button";
 import { ConnectionNotice } from "./connection-notice";
 import { DisconnectButton } from "./disconnect-button";
 
@@ -75,7 +76,7 @@ function DiscoveredChannel({ connection }: { connection: Connection }) {
   const channels = discovered?.filter((row) => row.platform === "youtube");
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
-      <h3 id={headingId} className="text-base font-semibold">
+      <h3 id={headingId} className={SUB_HEADING}>
         Channel to sync
       </h3>
       {notice && <ConnectionNotice notice={notice} />}
@@ -93,7 +94,7 @@ function DiscoveredChannel({ connection }: { connection: Connection }) {
           {channels.map((channel) => (
             <li
               key={channel.externalId}
-              className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-3"
+              className="flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-line p-3"
               data-external-id={channel.externalId}
             >
               <div className="flex flex-col">
@@ -130,7 +131,7 @@ function LinkedChannels({ channels }: { channels: readonly SocialAccount[] }) {
   const headingId = "youtube-linked-channels";
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
-      <h3 id={headingId} className="text-base font-semibold">
+      <h3 id={headingId} className={SUB_HEADING}>
         Linked channel
       </h3>
       {channels.length === 0 ? (
@@ -142,7 +143,7 @@ function LinkedChannels({ channels }: { channels: readonly SocialAccount[] }) {
           {channels.map((channel) => (
             <li
               key={channel.id}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-line p-3"
               data-channel-id={channel.id}
             >
               <div className="flex flex-col gap-0.5 text-sm">
@@ -220,8 +221,8 @@ export function YouTubeConnection({
     connection?.status === "active" ? discoveryErrorNotice(connection.lastError, "youtube") : null;
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-3 rounded-lg border p-4">
+    <div className={CARD_SECTIONS}>
+      <div className="flex flex-col gap-3">
         {progress && (
           <div role="status" data-testid="youtube-deletion-status">
             <ConnectionNotice notice={progress} />
@@ -247,7 +248,7 @@ export function YouTubeConnection({
               <label className="flex flex-col gap-1 text-sm">
                 <span className="font-medium">YouTube connection</span>
                 <select
-                  className="h-9 w-fit max-w-full rounded-md border bg-background px-2"
+                  className={CONNECTION_SELECT}
                   value={connection.id}
                   onChange={(event) => setChosenId(event.target.value)}
                 >

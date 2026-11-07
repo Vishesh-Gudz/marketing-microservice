@@ -14,7 +14,8 @@ import { adConnections, pickConnection } from "@/lib/connections/navigation";
 import { PROVIDERS, type AdConnectionProvider } from "@/lib/connections/providers";
 import type { Notice } from "@/lib/connections/types";
 import { formatInstant } from "../freshness-note";
-import { ConnectButton } from "./connect-button";
+import { CARD_SECTIONS } from "../library";
+import { ConnectButton, CONNECTION_SELECT } from "./connect-button";
 import { ConnectionNotice } from "./connection-notice";
 import { DisconnectButton } from "./disconnect-button";
 import { DiscoveredAccounts } from "./discovered-accounts";
@@ -56,11 +57,11 @@ export function AdConnection({
     connection?.status === "active" ? discoveryErrorNotice(connection.lastError, provider) : null;
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-3 rounded-lg border p-4">
+    <div className={CARD_SECTIONS}>
+      <div className="flex flex-col gap-3">
         {disconnected && <ConnectionNotice notice={disconnected} />}
         {connection === undefined ? (
-          <p className="text-sm">{info.name} is not connected.</p>
+          <p className="text-sm text-ink">{info.name} is not connected.</p>
         ) : (
           <>
             <ConnectionNotice notice={connectionStatusNotice(connection, provider)} />
@@ -68,7 +69,7 @@ export function AdConnection({
               <label className="flex flex-col gap-1 text-sm">
                 <span className="font-medium">{info.platform} connection</span>
                 <select
-                  className="h-9 w-fit max-w-full rounded-md border bg-background px-2"
+                  className={CONNECTION_SELECT}
                   value={connection.id}
                   onChange={(event) => setChosenId(event.target.value)}
                 >

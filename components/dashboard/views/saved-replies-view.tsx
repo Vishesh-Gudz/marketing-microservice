@@ -5,6 +5,7 @@ import { Plus, X } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,12 +31,23 @@ import {
 import { cn } from "@/lib/utils";
 import { ConnectionNotice } from "../connections/connection-notice";
 import { EmptyState } from "../empty-state";
+import {
+  CARD,
+  CARD_ACTIONS,
+  CHIP,
+  ConfirmPanel,
+  FORM_ACTIONS,
+  GALLERY,
+  GROUP_HEADING,
+  PANEL,
+  PANEL_HEADER,
+  SectionHeader,
+} from "../library";
+import { CHANNEL_ICON } from "../messaging/thread-list";
 import { Breadcrumbs, PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
-import { fieldClassName } from "@/components/ui/textarea";
-
-// Shared field look (components/ui/textarea.tsx).
-const FIELD = fieldClassName;
+import { SECTION_HEADING } from "../surface";
+import { Textarea } from "@/components/ui/textarea";
 
 type Draft = {
   id?: string;
@@ -128,9 +140,14 @@ function SavedReplyForm({
   return (
     <form
       aria-label={draft.id === undefined ? "New saved reply" : "Edit saved reply"}
-      className="flex flex-col gap-4 rounded-lg border p-4"
+      className={PANEL}
       onSubmit={(event) => void submit(event)}
     >
+      <div className={PANEL_HEADER}>
+        <h2 className={SECTION_HEADING}>
+          {draft.id === undefined ? "New saved reply" : "Edit saved reply"}
+        </h2>
+      </div>
       {notice && <ConnectionNotice notice={notice} />}
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={`${id}-title`}>Title</Label>
@@ -144,31 +161,37 @@ function SavedReplyForm({
       </div>
       <fieldset className="flex flex-col gap-1.5">
         <legend className="mb-1 text-sm font-medium">Offer it in</legend>
-        <div className="flex flex-wrap gap-4">
-          {(["whatsapp", "instagram"] as const).map((channel) => (
-            <label key={channel} className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={draft.channels.includes(channel)}
-                onChange={(e) =>
-                  set({
-                    channels: e.target.checked
-                      ? [...draft.channels, channel]
-                      : draft.channels.filter((c) => c !== channel),
-                  })
-                }
-              />
-              {CHANNEL_LABELS[channel]}
-            </label>
-          ))}
+        <div className="flex flex-wrap gap-2">
+          {(["whatsapp", "instagram"] as const).map((channel) => {
+            const Icon = CHANNEL_ICON[channel];
+            return (
+              <label
+                key={channel}
+                className="flex cursor-pointer items-center gap-2 rounded-[10px] border border-line bg-paper px-3 py-2 text-sm text-ink transition-colors hover:border-line-strong has-[[data-state=checked]]:border-primary/40 has-[[data-state=checked]]:bg-blue-50/60"
+              >
+                <Checkbox
+                  checked={draft.channels.includes(channel)}
+                  onCheckedChange={(checked) =>
+                    set({
+                      channels:
+                        checked === true
+                          ? [...draft.channels, channel]
+                          : draft.channels.filter((c) => c !== channel),
+                    })
+                  }
+                />
+                <Icon aria-hidden="true" className="size-4 text-ink-2" />
+                {CHANNEL_LABELS[channel]}
+              </label>
+            );
+          })}
         </div>
       </fieldset>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={`${id}-text`}>Reply</Label>
-        <textarea
+        <Textarea
           id={`${id}-text`}
           rows={5}
-          className={FIELD}
           value={draft.text}
           aria-invalid={tooLong || undefined}
           onChange={(e) => set({ text: e.target.value })}
@@ -203,15 +226,12 @@ function SavedReplyForm({
           {draft.quickReplies.length > 0 && (
             <ul aria-label="Quick-reply buttons" className="flex flex-wrap gap-2">
               {draft.quickReplies.map((title) => (
-                <li
-                  key={title}
-                  className="flex items-center gap-1 rounded-full border px-3 py-1 text-sm"
-                >
-                  {title}
+                <li key={title} className={cn(CHIP, "py-1 pr-1 text-sm")}>
+                  <span className="truncate">{title}</span>
                   <button
                     type="button"
                     aria-label={`Remove ${title}`}
-                    className="rounded-full p-0.5 hover:bg-muted"
+                    className="rounded-full p-0.5 text-ink-2 hover:bg-canvas hover:text-ink"
                     onClick={() =>
                       set({ quickReplies: draft.quickReplies.filter((t) => t !== title) })
                     }
@@ -253,7 +273,7 @@ function SavedReplyForm({
           </div>
         </fieldset>
       )}
-      <div className="flex gap-2">
+      <div className={FORM_ACTIONS}>
         <Button type="submit" disabled={pending || !ready}>
           {pending ? "Saving…" : "Save"}
         </Button>
@@ -284,12 +304,12 @@ function DeleteSavedReply({
     );
   }
   return (
-    <span
-      role="group"
-      aria-label={`Delete ${reply.title}?`}
-      className="flex items-center gap-2 text-sm"
+    <ConfirmPanel
+      label={`Delete ${reply.title}?`}
+      title={`Delete “${reply.title}”?`}
+      pending={pending}
+      onCancel={() => setConfirming(false)}
     >
-      Delete “{reply.title}”?
       <Button
         type="button"
         size="sm"
@@ -323,7 +343,7 @@ function DeleteSavedReply({
       >
         Cancel
       </Button>
-    </span>
+    </ConfirmPanel>
   );
 }
 
@@ -331,26 +351,20 @@ function DeleteSavedReply({
 function StarterGallery({ onUse }: { onUse: (starter: SavedReplyStarter) => void }) {
   const groups = Object.keys(STARTER_GROUP_LABELS) as SavedReplyStarter["group"][];
   return (
-    <section aria-labelledby="saved-reply-starters" className="flex flex-col gap-3">
-      <h2 id="saved-reply-starters" className="text-lg font-semibold">
+    <section aria-labelledby="saved-reply-starters" className={GALLERY}>
+      <h2 id="saved-reply-starters" className={SECTION_HEADING}>
         Ready-made replies
       </h2>
       {groups.map((group) => (
         <div key={group} className="flex flex-col gap-2">
-          <h3 className="text-sm font-medium text-muted-foreground">
-            {STARTER_GROUP_LABELS[group]}
-          </h3>
+          <h3 className={GROUP_HEADING}>{STARTER_GROUP_LABELS[group]}</h3>
           <ul
             aria-label={STARTER_GROUP_LABELS[group]}
             className="grid gap-2 md:grid-cols-2 xl:grid-cols-3"
           >
             {SAVED_REPLY_STARTERS.filter((s) => s.group === group).map((starter) => (
-              <li
-                key={starter.id}
-                aria-label={starter.title}
-                className="flex flex-col gap-2 rounded-lg border p-3 text-sm"
-              >
-                <span className="font-medium">{starter.title}</span>
+              <li key={starter.id} aria-label={starter.title} className={cn(CARD, "gap-2 text-sm")}>
+                <span className="font-medium text-ink">{starter.title}</span>
                 <span className="text-muted-foreground">{starter.text}</span>
                 <Button
                   type="button"
@@ -424,9 +438,13 @@ function SavedReplies({ onNotice }: { onNotice: (notice: Notice | null) => void 
         <StarterGallery onUse={(starter) => open(fromStarter(starter))} />
       )}
       <section aria-labelledby="saved-reply-list" className="flex flex-col gap-3">
-        <h2 id="saved-reply-list" className="text-lg font-semibold">
-          Your saved replies
-        </h2>
+        <SectionHeader id="saved-reply-list" title="Your saved replies">
+          {replies.length > 0 && (
+            <span className="text-sm text-muted-foreground tabular-nums">
+              {replies.length === 1 ? "1 reply" : `${replies.length} replies`}
+            </span>
+          )}
+        </SectionHeader>
         {replies.length === 0 ? (
           <EmptyState title="No saved replies yet">
             {canEdit
@@ -436,31 +454,31 @@ function SavedReplies({ onNotice }: { onNotice: (notice: Notice | null) => void 
         ) : (
           <ul className="grid gap-3 md:grid-cols-2">
             {replies.map((reply) => (
-              <li
-                key={reply.id}
-                aria-label={reply.title}
-                className="flex flex-col gap-2 rounded-lg border p-4"
-              >
+              <li key={reply.id} aria-label={reply.title} className={CARD}>
                 <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="font-medium">{reply.title}</h3>
-                  {reply.channels.map((channel) => (
-                    <Badge key={channel} variant="outline">
-                      {CHANNEL_LABELS[channel]}
-                    </Badge>
-                  ))}
+                  <h3 className="mr-auto font-medium text-ink">{reply.title}</h3>
+                  {reply.channels.map((channel) => {
+                    const Icon = CHANNEL_ICON[channel];
+                    return (
+                      <Badge key={channel} variant="outline">
+                        <Icon aria-hidden="true" />
+                        {CHANNEL_LABELS[channel]}
+                      </Badge>
+                    );
+                  })}
                 </div>
-                <p className="text-sm break-words whitespace-pre-wrap">{reply.text}</p>
+                <p className="text-sm break-words whitespace-pre-wrap text-ink-2">{reply.text}</p>
                 {reply.quickReplies !== undefined && (
                   <ul aria-label="Quick-reply buttons" className="flex flex-wrap gap-1">
                     {reply.quickReplies.map((title) => (
-                      <li key={title} className="rounded-full border px-2 py-0.5 text-xs">
+                      <li key={title} className={CHIP}>
                         {title}
                       </li>
                     ))}
                   </ul>
                 )}
                 {canEdit && (
-                  <div className="flex flex-wrap gap-2">
+                  <div className={CARD_ACTIONS}>
                     <Button
                       type="button"
                       variant="outline"

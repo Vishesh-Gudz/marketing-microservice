@@ -179,6 +179,10 @@ export function useEmbeddedSignup(
   return { status, start, script };
 }
 
+/** One way to connect: its button and what it is for. */
+const OPTION_TILE =
+  "flex min-w-0 flex-col items-start gap-2 rounded-[12px] border border-line bg-canvas/50 p-4";
+
 const PROGRESS: Partial<Record<SignupStatus, string>> = {
   waiting: "Finish the steps in the Meta window. Keep this page open.",
   completing: "Connecting your WhatsApp number. This can take a few seconds.",
@@ -209,13 +213,13 @@ export function ConnectWhatsApp({ signup }: { signup: EmbeddedSignup }) {
   }
   if (status === "unavailable") return <ConnectionNotice notice={UNAVAILABLE_NOTICE} />;
   return (
-    <div className="flex flex-col items-start gap-2">
+    <div className="flex flex-col gap-3">
       {signup.script}
       {status === "sdk_failed" ? (
         <ConnectionNotice notice={SDK_FAILED_NOTICE} />
       ) : (
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-col items-start gap-1">
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className={OPTION_TILE}>
             <Button
               type="button"
               disabled={status !== "ready"}
@@ -227,7 +231,7 @@ export function ConnectWhatsApp({ signup }: { signup: EmbeddedSignup }) {
               A number that is not on WhatsApp yet, such as a new or virtual number.
             </p>
           </div>
-          <div className="flex flex-col items-start gap-1">
+          <div className={OPTION_TILE}>
             <Button
               type="button"
               variant="outline"

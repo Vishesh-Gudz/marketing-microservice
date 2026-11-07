@@ -25,8 +25,18 @@ import { ConnectionNotice } from "../connections/connection-notice";
 import { EmptyState } from "../empty-state";
 import { TemplateBuilder, type TemplateDraft } from "../instagram/template-builder";
 import { TemplatePreview } from "../instagram/template-preview";
+import {
+  CARD,
+  CARD_ACTIONS,
+  ConfirmPanel,
+  GALLERY,
+  GROUP_HEADING,
+  PREVIEW_INSET,
+  SectionHeader,
+} from "../library";
 import { Breadcrumbs, PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
+import { SECTION_HEADING } from "../surface";
 
 const EMPTY: TemplateDraft = {
   name: "",
@@ -60,12 +70,13 @@ function DeleteTemplate({
     );
   }
   return (
-    <span
-      role="group"
-      aria-label={`Delete ${template.name}?`}
-      className="flex flex-wrap items-center gap-2 text-sm"
+    <ConfirmPanel
+      label={`Delete ${template.name}?`}
+      title={`Delete “${template.name}”?`}
+      consequences={["Messages already sent with it stay as they were."]}
+      pending={pending}
+      onCancel={() => setConfirming(false)}
     >
-      Delete “{template.name}”?
       <Button
         type="button"
         size="sm"
@@ -99,7 +110,7 @@ function DeleteTemplate({
       >
         Cancel
       </Button>
-    </span>
+    </ConfirmPanel>
   );
 }
 
@@ -107,33 +118,29 @@ function DeleteTemplate({
 function StarterGallery({ onUse }: { onUse: (starter: InstagramTemplateStarter) => void }) {
   const groups = Object.keys(STARTER_GROUP_LABELS) as InstagramTemplateStarter["group"][];
   return (
-    <section aria-labelledby="instagram-template-starters" className="flex flex-col gap-4">
-      <h2 id="instagram-template-starters" className="text-lg font-semibold">
+    <section aria-labelledby="instagram-template-starters" className={GALLERY}>
+      <h2 id="instagram-template-starters" className={SECTION_HEADING}>
         Ready-made templates
       </h2>
       {groups.map((group) => (
         <div key={group} className="flex flex-col gap-2">
-          <h3 className="text-sm font-medium text-muted-foreground">
-            {STARTER_GROUP_LABELS[group]}
-          </h3>
+          <h3 className={GROUP_HEADING}>{STARTER_GROUP_LABELS[group]}</h3>
           <ul
             aria-label={STARTER_GROUP_LABELS[group]}
             className="grid gap-3 md:grid-cols-2 xl:grid-cols-3"
           >
             {INSTAGRAM_TEMPLATE_STARTERS.filter((s) => s.group === group).map((starter) => (
-              <li
-                key={starter.id}
-                aria-labelledby={`ig-starter-${starter.id}`}
-                className="flex min-w-0 flex-col gap-3 rounded-lg border p-4"
-              >
+              <li key={starter.id} aria-labelledby={`ig-starter-${starter.id}`} className={CARD}>
                 <div className="flex flex-wrap items-center gap-2">
-                  <h4 id={`ig-starter-${starter.id}`} className="font-medium">
+                  <h4 id={`ig-starter-${starter.id}`} className="mr-auto font-medium text-ink">
                     {starter.name}
                   </h4>
                   <Badge variant="outline">{KIND_LABELS[starter.content.kind]}</Badge>
                 </div>
                 <p className="text-sm text-muted-foreground">{starter.description}</p>
-                <TemplatePreview content={starter.content} label={`${starter.name} preview`} />
+                <div className={PREVIEW_INSET}>
+                  <TemplatePreview content={starter.content} label={`${starter.name} preview`} />
+                </div>
                 <Button
                   type="button"
                   size="sm"
@@ -169,7 +176,13 @@ function Templates({ onNotice }: { onNotice: (notice: Notice | null) => void }) 
   }, [editing]);
 
   if (templates === undefined) {
-    return <Skeleton className="h-40 w-full" role="status" aria-label="Loading templates" />;
+    return (
+      <Skeleton
+        className="h-40 w-full rounded-[14px]"
+        role="status"
+        aria-label="Loading templates"
+      />
+    );
   }
   const full = templates.length >= TEMPLATE_LIMITS.templates;
   return (
@@ -208,9 +221,13 @@ function Templates({ onNotice }: { onNotice: (notice: Notice | null) => void }) 
         <StarterGallery onUse={(starter) => open(fromStarter(starter))} />
       )}
       <section aria-labelledby="instagram-template-list" className="flex flex-col gap-3">
-        <h2 id="instagram-template-list" className="text-lg font-semibold">
-          Your templates
-        </h2>
+        <SectionHeader id="instagram-template-list" title="Your templates">
+          {templates.length > 0 && (
+            <span className="text-sm text-muted-foreground tabular-nums">
+              {templates.length} of {TEMPLATE_LIMITS.templates}
+            </span>
+          )}
+        </SectionHeader>
         {templates.length === 0 ? (
           <EmptyState title="No Instagram templates yet">
             {canEdit
@@ -220,18 +237,16 @@ function Templates({ onNotice }: { onNotice: (notice: Notice | null) => void }) 
         ) : (
           <ul className="grid gap-3 md:grid-cols-2">
             {templates.map((template) => (
-              <li
-                key={template.id}
-                aria-label={template.name}
-                className="flex min-w-0 flex-col gap-3 rounded-lg border p-4"
-              >
+              <li key={template.id} aria-label={template.name} className={CARD}>
                 <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="font-medium">{template.name}</h3>
+                  <h3 className="mr-auto font-medium text-ink">{template.name}</h3>
                   <Badge variant="outline">{KIND_LABELS[template.content.kind]}</Badge>
                 </div>
-                <TemplatePreview content={template.content} label={`${template.name} preview`} />
+                <div className={PREVIEW_INSET}>
+                  <TemplatePreview content={template.content} label={`${template.name} preview`} />
+                </div>
                 {canEdit && (
-                  <div className="flex flex-wrap gap-2">
+                  <div className={CARD_ACTIONS}>
                     <Button
                       type="button"
                       variant="outline"

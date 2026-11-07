@@ -20,7 +20,10 @@ import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
 import { syncStatusSummary } from "@/lib/connections/messages";
 import { accountAnalyticsHref } from "@/lib/connections/navigation";
 import { PROVIDERS, type AdConnectionProvider } from "@/lib/connections/providers";
+import { cn } from "@/lib/utils";
 import { EmptyState } from "../empty-state";
+import { INNER_TABLE, SUB_HEADING } from "../library";
+import { TABLE_EDGES } from "../surface";
 import { formatInstant } from "../freshness-note";
 
 const SUMMARY_BADGE = {
@@ -51,7 +54,7 @@ export function LinkedAccounts({ provider }: { provider: AdConnectionProvider })
 
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
-      <h3 id={headingId} className="text-base font-semibold">
+      <h3 id={headingId} className={SUB_HEADING}>
         Linked accounts
       </h3>
       {linked.length === 0 ? (
@@ -59,7 +62,7 @@ export function LinkedAccounts({ provider }: { provider: AdConnectionProvider })
           Connect {info.name} and link an account to start syncing.
         </EmptyState>
       ) : (
-        <div className="overflow-x-auto rounded-md border">
+        <div className={cn(INNER_TABLE, TABLE_EDGES)}>
           <Table>
             <TableCaption className="sr-only">
               Linked {info.name} accounts and sync status

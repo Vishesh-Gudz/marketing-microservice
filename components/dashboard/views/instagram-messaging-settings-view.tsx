@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Notice } from "@/lib/connections/types";
 import { ConnectionNotice } from "../connections/connection-notice";
 import { MessagingAccounts } from "../instagram/messaging-accounts";
+import { SectionHeader } from "../library";
 import { Breadcrumbs, PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
 
@@ -37,9 +38,7 @@ export function InstagramMessagingSettingsView() {
         </div>
       )}
       <section aria-labelledby="instagram-messaging-accounts" className="flex flex-col gap-3">
-        <h2 id="instagram-messaging-accounts" className="text-lg font-semibold">
-          Instagram accounts
-        </h2>
+        <SectionHeader id="instagram-messaging-accounts" title="Instagram accounts" />
         <QueryBoundary resetKey="instagram-messaging-accounts" title="Instagram accounts">
           <MessagingAccounts onNotice={onNotice} />
         </QueryBoundary>

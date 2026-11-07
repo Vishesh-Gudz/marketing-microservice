@@ -10,6 +10,7 @@ import {
   disconnectResultNotice,
   signupErrorNotice,
 } from "@/lib/whatsapp/messages";
+import { ConfirmPanel } from "../library";
 
 /**
  * Admin-only: disconnects one WhatsApp Business Account through v1/whatsapp:disconnectAccount
@@ -77,49 +78,39 @@ export function DisconnectWhatsApp({
   }
 
   return (
-    <div
-      role="group"
-      aria-labelledby={titleId}
-      className="flex w-full flex-col gap-3 rounded-md border border-destructive/40 p-3 text-sm"
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && !pending) setConfirming(false);
-      }}
+    <ConfirmPanel
+      titleId={titleId}
+      title={`Disconnect ${name}?`}
+      consequences={[
+        "Messages for its numbers stop reaching this app at once.",
+        "Conversations and messages so far are kept.",
+        "Meta is told to stop sending them here, and the stored access is deleted.",
+        ...(businessApp
+          ? [
+              <>
+                The number keeps working in the WhatsApp Business app. To release it from
+                Meta&apos;s Business Platform too: {BUSINESS_APP_DISCONNECT.charAt(0).toLowerCase()}
+                {BUSINESS_APP_DISCONNECT.slice(1)}.
+              </>,
+            ]
+          : []),
+        "Afterwards, use Connect WhatsApp to connect it again.",
+      ]}
+      pending={pending}
+      onCancel={() => setConfirming(false)}
     >
-      <p id={titleId} className="font-medium">
-        Disconnect {name}?
-      </p>
-      <ul className="list-disc pl-5 text-muted-foreground">
-        <li>Messages for its numbers stop reaching this app at once.</li>
-        <li>Conversations and messages so far are kept.</li>
-        <li>Meta is told to stop sending them here, and the stored access is deleted.</li>
-        {businessApp && (
-          <li>
-            The number keeps working in the WhatsApp Business app. To release it from Meta&apos;s
-            Business Platform too: {BUSINESS_APP_DISCONNECT.charAt(0).toLowerCase()}
-            {BUSINESS_APP_DISCONNECT.slice(1)}.
-          </li>
-        )}
-        <li>Afterwards, use Connect WhatsApp to connect it again.</li>
-      </ul>
-      <div className="flex gap-2">
-        <Button
-          type="button"
-          variant="destructive"
-          disabled={pending}
-          onClick={() => void confirm()}
-        >
-          {pending ? "Disconnecting…" : "Disconnect"}
-        </Button>
-        <Button
-          ref={cancelRef}
-          type="button"
-          variant="outline"
-          disabled={pending}
-          onClick={() => setConfirming(false)}
-        >
-          Cancel
-        </Button>
-      </div>
-    </div>
+      <Button type="button" variant="destructive" disabled={pending} onClick={() => void confirm()}>
+        {pending ? "Disconnecting…" : "Disconnect"}
+      </Button>
+      <Button
+        ref={cancelRef}
+        type="button"
+        variant="outline"
+        disabled={pending}
+        onClick={() => setConfirming(false)}
+      >
+        Cancel
+      </Button>
+    </ConfirmPanel>
   );
 }

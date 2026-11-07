@@ -8,6 +8,7 @@ import type { Connection } from "@/lib/analytics/types";
 import { disconnectActionNotice } from "@/lib/connections/messages";
 import { PROVIDERS, type ConnectionProvider } from "@/lib/connections/providers";
 import type { Notice } from "@/lib/connections/types";
+import { ConfirmPanel } from "../library";
 import { ConnectionNotice } from "./connection-notice";
 
 /**
@@ -86,47 +87,31 @@ export function DisconnectButton({
   }
 
   return (
-    <div
-      role="group"
-      aria-labelledby={titleId}
-      className="flex w-full flex-col gap-3 rounded-md border border-destructive/40 p-3 text-sm"
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && !pending) setConfirming(false);
-      }}
+    <ConfirmPanel
+      titleId={titleId}
+      title={`Disconnect ${name}?`}
+      consequences={
+        consequences ?? [
+          "Linked accounts stop syncing. Their data and history are kept.",
+          `The stored ${platform} access is deleted.`,
+          `Afterwards, connect again to sign in with any ${identity}.`,
+        ]
+      }
+      pending={pending}
+      onCancel={() => setConfirming(false)}
     >
-      <p id={titleId} className="font-medium">
-        Disconnect {name}?
-      </p>
-      <ul className="list-disc pl-5 text-muted-foreground">
-        {(
-          consequences ?? [
-            "Linked accounts stop syncing. Their data and history are kept.",
-            `The stored ${platform} access is deleted.`,
-            `Afterwards, connect again to sign in with any ${identity}.`,
-          ]
-        ).map((item) => (
-          <li key={item}>{item}</li>
-        ))}
-      </ul>
-      <div className="flex gap-2">
-        <Button
-          type="button"
-          variant="destructive"
-          disabled={pending}
-          onClick={() => void confirm()}
-        >
-          {pending ? "Disconnecting…" : confirmLabel}
-        </Button>
-        <Button
-          ref={cancelRef}
-          type="button"
-          variant="outline"
-          disabled={pending}
-          onClick={() => setConfirming(false)}
-        >
-          Cancel
-        </Button>
-      </div>
-    </div>
+      <Button type="button" variant="destructive" disabled={pending} onClick={() => void confirm()}>
+        {pending ? "Disconnecting…" : confirmLabel}
+      </Button>
+      <Button
+        ref={cancelRef}
+        type="button"
+        variant="outline"
+        disabled={pending}
+        onClick={() => setConfirming(false)}
+      >
+        Cancel
+      </Button>
+    </ConfirmPanel>
   );
 }

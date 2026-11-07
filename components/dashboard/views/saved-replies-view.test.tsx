@@ -141,4 +141,25 @@ describe("Saved replies page", () => {
     expect(remove).toHaveBeenCalledWith({ savedReplyId: "r1" });
     expect(screen.getByLabelText("Saved reply deleted")).toBeInTheDocument();
   });
+
+  it("offers the channels as checkboxes, and Escape closes a delete confirmation", () => {
+    const remove = mockMutation(REMOVE);
+    renderWithOrg(<SavedRepliesView />);
+    fireEvent.click(screen.getByRole("button", { name: "New saved reply" }));
+    const form = screen.getByRole("form", { name: "New saved reply" });
+    const instagram = within(form).getByRole("checkbox", { name: "Instagram" });
+    expect(instagram).toBeChecked();
+    fireEvent.click(instagram);
+    expect(instagram).not.toBeChecked();
+    expect(within(form).getByRole("checkbox", { name: "WhatsApp" })).toBeChecked();
+    fireEvent.click(within(form).getByRole("button", { name: "Cancel" }));
+
+    const card = screen.getByRole("listitem", { name: "Opening hours" });
+    fireEvent.click(within(card).getByRole("button", { name: "Delete" }));
+    fireEvent.keyDown(screen.getByRole("group", { name: "Delete Opening hours?" }), {
+      key: "Escape",
+    });
+    expect(screen.queryByRole("group", { name: "Delete Opening hours?" })).toBeNull();
+    expect(remove).not.toHaveBeenCalled();
+  });
 });

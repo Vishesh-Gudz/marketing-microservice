@@ -25,6 +25,15 @@ import {
 } from "@/lib/whatsapp/template-messages";
 import { ConnectionNotice } from "../connections/connection-notice";
 import { EmptyState } from "../empty-state";
+import {
+  CARD,
+  CARD_ACTIONS,
+  ConfirmPanel,
+  PREVIEW_INSET,
+  SectionHeader,
+  SEGMENT,
+  SEGMENTED,
+} from "../library";
 import { Breadcrumbs, PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
 import { TemplateBuilder } from "../whatsapp/template-builder";
@@ -36,7 +45,7 @@ type TemplateList = FunctionReturnType<typeof api.v1.whatsapp.listAccountTemplat
 type ManagedTemplate = TemplateList["templates"][number];
 
 // Shared field look (components/ui/textarea.tsx).
-const FIELD = cn(fieldClassName, "w-auto md:text-sm text-sm");
+const FIELD = cn(fieldClassName, "w-full max-w-md md:text-sm text-sm");
 
 /** Admin-only: deletes one template in one language after an explicit confirmation. */
 function DeleteTemplate({
@@ -95,43 +104,31 @@ function DeleteTemplate({
     );
   }
   return (
-    <div
-      role="group"
-      aria-labelledby={titleId}
-      className="flex w-full flex-col gap-2 rounded-md border border-destructive/40 p-3 text-sm"
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && !pending) setConfirming(false);
-      }}
+    <ConfirmPanel
+      titleId={titleId}
+      title={`Delete “${template.name}” (${languageLabel(template.language)})?`}
+      consequences={[
+        "It can no longer be sent; messages already sent are not affected.",
+        ...(template.status === "APPROVED"
+          ? ["Meta does not allow a new template with this name for 30 days."]
+          : []),
+      ]}
+      pending={pending}
+      onCancel={() => setConfirming(false)}
     >
-      <p id={titleId} className="font-medium">
-        Delete “{template.name}” ({languageLabel(template.language)})?
-      </p>
-      <ul className="list-disc pl-5 text-muted-foreground">
-        <li>It can no longer be sent; messages already sent are not affected.</li>
-        {template.status === "APPROVED" && (
-          <li>Meta does not allow a new template with this name for 30 days.</li>
-        )}
-      </ul>
-      <div className="flex gap-2">
-        <Button
-          type="button"
-          variant="destructive"
-          disabled={pending}
-          onClick={() => void confirm()}
-        >
-          {pending ? "Deleting…" : "Delete"}
-        </Button>
-        <Button
-          ref={cancelRef}
-          type="button"
-          variant="outline"
-          disabled={pending}
-          onClick={() => setConfirming(false)}
-        >
-          Cancel
-        </Button>
-      </div>
-    </div>
+      <Button type="button" variant="destructive" disabled={pending} onClick={() => void confirm()}>
+        {pending ? "Deleting…" : "Delete"}
+      </Button>
+      <Button
+        ref={cancelRef}
+        type="button"
+        variant="outline"
+        disabled={pending}
+        onClick={() => setConfirming(false)}
+      >
+        Cancel
+      </Button>
+    </ConfirmPanel>
   );
 }
 
@@ -156,26 +153,32 @@ function TemplateCard({
     template.status === "APPROVED" ? unsupportedText(template.unsupportedReason) : null;
   const { id } = template;
   return (
-    <li aria-labelledby={headingId} className="flex flex-col gap-3 rounded-lg border p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <h3 id={headingId} className="font-medium break-all">
-          {template.name}
-        </h3>
-        <Badge variant={status.tone}>{status.label}</Badge>
-        <Badge variant="outline">{CATEGORY_LABELS[template.category] ?? template.category}</Badge>
-        <span className="text-sm text-muted-foreground">{languageLabel(template.language)}</span>
+    <li aria-labelledby={headingId} className={CARD}>
+      <div className="flex flex-col gap-1.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 id={headingId} className="mr-auto font-mono text-sm font-medium break-all text-ink">
+            {template.name}
+          </h3>
+          <Badge variant={status.tone}>{status.label}</Badge>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <Badge variant="outline">{CATEGORY_LABELS[template.category] ?? template.category}</Badge>
+          <span>{languageLabel(template.language)}</span>
+        </div>
       </div>
-      <TemplatePreview
-        label={`${template.name} preview`}
-        {...(template.header !== undefined ? { header: template.header } : {})}
-        body={template.body}
-        {...(template.footer !== undefined ? { footer: template.footer } : {})}
-        buttons={template.buttons}
-      />
+      <div className={PREVIEW_INSET}>
+        <TemplatePreview
+          label={`${template.name} preview`}
+          {...(template.header !== undefined ? { header: template.header } : {})}
+          body={template.body}
+          {...(template.footer !== undefined ? { footer: template.footer } : {})}
+          buttons={template.buttons}
+        />
+      </div>
       {rejection && <p className="text-sm text-destructive">{rejection}</p>}
       {unsupported && <p className="text-sm text-muted-foreground">{unsupported}</p>}
       {isAdmin && id !== undefined && (
-        <div>
+        <div className={CARD_ACTIONS}>
           <DeleteTemplate
             accountId={accountId}
             template={{ ...template, id }}
@@ -267,30 +270,32 @@ function AccountTemplates({
         />
       )}
       <section aria-labelledby="template-list" className="flex flex-col gap-3">
-        <h2 id="template-list" className="text-lg font-semibold">
-          Templates
-        </h2>
-        <div role="group" aria-label="Status" className="flex flex-wrap gap-2">
-          {STATUS_FILTERS.map((f) => (
-            <Button
-              key={f.id}
-              type="button"
-              size="sm"
-              variant={filter === f.id ? "default" : "outline"}
-              aria-pressed={filter === f.id}
-              onClick={() => setFilter(f.id)}
-            >
-              {f.label}
-              {load.state === "loaded" && (
-                <span className="ml-1 opacity-70">
-                  {templates.filter((t) => matchesFilter(t.status, f.id)).length}
-                </span>
-              )}
-            </Button>
-          ))}
-        </div>
+        <SectionHeader id="template-list" title="Templates">
+          <div role="group" aria-label="Status" className={SEGMENTED}>
+            {STATUS_FILTERS.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                className={SEGMENT}
+                aria-pressed={filter === f.id}
+                onClick={() => setFilter(f.id)}
+              >
+                {f.label}
+                {load.state === "loaded" && (
+                  <span className="text-xs text-muted-foreground tabular-nums">
+                    {templates.filter((t) => matchesFilter(t.status, f.id)).length}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </SectionHeader>
         {load.state === "loading" && (
-          <Skeleton className="h-40 w-full" role="status" aria-label="Loading templates" />
+          <Skeleton
+            className="h-40 w-full rounded-[14px]"
+            role="status"
+            aria-label="Loading templates"
+          />
         )}
         {load.state === "failed" && <ConnectionNotice notice={load.notice} />}
         {load.state === "loaded" &&
@@ -411,16 +416,15 @@ export function WhatsAppTemplatesView() {
       <PageHeader
         title="WhatsApp templates"
         description="Messages Meta approved in advance: the only ones you can send when a customer has not written in the last 24 hours."
-      >
-        <div className="flex flex-wrap gap-2 pt-2">
+        actions={
           <Button asChild variant="outline" size="sm">
             <Link href="/whatsapp/settings">
               <Settings aria-hidden="true" />
               WhatsApp settings
             </Link>
           </Button>
-        </div>
-      </PageHeader>
+        }
+      />
       {notice && (
         <div ref={noticeRef} tabIndex={-1} className="outline-none">
           <ConnectionNotice notice={notice} />

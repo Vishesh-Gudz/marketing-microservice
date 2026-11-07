@@ -2,7 +2,6 @@
 
 import { useAction, useMutation } from "convex/react";
 import { useEffect, useId, useRef, useState } from "react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
@@ -22,11 +21,30 @@ import {
   SUGGESTED_ICE_BREAKERS,
 } from "@/lib/instagram/messages";
 import type { MessagingAvailability } from "@/lib/instagram/types";
+import { cn } from "@/lib/utils";
 import { EmptyState } from "../empty-state";
 import { formatInstant } from "../freshness-note";
+import { CHIP, ConfirmPanel, INSET, StatusTag, type StatusTone } from "../library";
+import { ContactMark } from "../messaging/thread-list";
+import { SURFACE } from "../surface";
 
 /** Linked social accounts read at once (as the Organic page). */
 const ACCOUNTS_PAGE = 100;
+
+/** How each state reads at a glance; the label always says it in words. */
+const AVAILABILITY_TONE: Readonly<Record<keyof typeof AVAILABILITY_TEXT, StatusTone>> = {
+  active: "ok",
+  action_required: "warning",
+  ready: "neutral",
+  disabled: "neutral",
+  unavailable: "neutral",
+  not_found: "neutral",
+  not_linked: "neutral",
+  connection_inactive: "warning",
+  scope_missing: "warning",
+  in_use: "warning",
+  purge_in_progress: "neutral",
+};
 
 type OnNotice = (notice: Notice | null) => void;
 
@@ -160,40 +178,30 @@ function TurnOff({
     );
   }
   return (
-    <div
-      role="group"
-      aria-labelledby={titleId}
-      className="flex w-full flex-col gap-3 rounded-md border border-destructive/40 p-3 text-sm"
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && !pending) setConfirming(false);
-      }}
+    <ConfirmPanel
+      titleId={titleId}
+      title={`Turn off direct messages for ${name}?`}
+      consequences={[
+        "New direct messages stop reaching this inbox at once, and no reply can be sent.",
+        "Conversations and messages so far are kept for 30 days, then deleted. Turning direct messages on again within those 30 days keeps them.",
+        "Another organization may then turn on direct messages for this account.",
+      ]}
+      pending={pending}
+      onCancel={() => setConfirming(false)}
     >
-      <p id={titleId} className="font-medium">
-        Turn off direct messages for {name}?
-      </p>
-      <ul className="list-disc pl-5 text-muted-foreground">
-        <li>New direct messages stop reaching this inbox at once, and no reply can be sent.</li>
-        <li>
-          Conversations and messages so far are kept for 30 days, then deleted. Turning direct
-          messages on again within those 30 days keeps them.
-        </li>
-        <li>Another organization may then turn on direct messages for this account.</li>
-      </ul>
-      <div className="flex gap-2">
-        <Button type="button" variant="destructive" disabled={pending} onClick={confirm}>
-          {pending ? "Turning off…" : "Turn off"}
-        </Button>
-        <Button
-          ref={cancelRef}
-          type="button"
-          variant="outline"
-          disabled={pending}
-          onClick={() => setConfirming(false)}
-        >
-          Cancel
-        </Button>
-      </div>
-    </div>
+      <Button type="button" variant="destructive" disabled={pending} onClick={confirm}>
+        {pending ? "Turning off…" : "Turn off"}
+      </Button>
+      <Button
+        ref={cancelRef}
+        type="button"
+        variant="outline"
+        disabled={pending}
+        onClick={() => setConfirming(false)}
+      >
+        Cancel
+      </Button>
+    </ConfirmPanel>
   );
 }
 
@@ -258,11 +266,8 @@ function IceBreakers({
     new Set(filled).size === filled.length;
 
   return (
-    <section
-      aria-labelledby={headingId}
-      className="flex w-full flex-col gap-2 rounded-md border p-3"
-    >
-      <h4 id={headingId} className="text-sm font-medium">
+    <section aria-labelledby={headingId} className={cn(INSET, "w-full")}>
+      <h4 id={headingId} className="text-sm font-medium text-ink">
         Ice breakers
       </h4>
       <p className="text-xs text-muted-foreground">
@@ -274,7 +279,7 @@ function IceBreakers({
           {current !== undefined && current.length > 0 ? (
             <ul aria-label="Current ice breakers" className="flex flex-wrap gap-2">
               {current.map((question) => (
-                <li key={question} className="rounded-full border px-3 py-1 text-sm">
+                <li key={question} className={cn(CHIP, "px-3 py-1 text-sm")}>
                   {question}
                 </li>
               ))}
@@ -415,12 +420,12 @@ function AccountRow({
     );
   }
   const state = AVAILABILITY_TEXT[availability.availability];
-  const on = availability.availability === "active";
   return (
     <li className="flex flex-col items-start gap-3 p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <h3 className="font-medium">{name}</h3>
-        <Badge variant={on ? "secondary" : "outline"}>{state.label}</Badge>
+      <div className="flex min-w-0 flex-wrap items-center gap-3">
+        <ContactMark label={name} channel="instagram" />
+        <h3 className="font-medium text-ink">{name}</h3>
+        <StatusTag tone={AVAILABILITY_TONE[availability.availability]}>{state.label}</StatusTag>
       </div>
       <p className="text-sm text-muted-foreground">
         {availability.availability === "action_required" && availability.accountId !== undefined
@@ -491,7 +496,10 @@ export function MessagingAccounts({ onNotice }: { onNotice: OnNotice }) {
   const setupReasons = new Map(messaging.map((account) => [account.id, account.setupReason]));
   const iceBreakers = new Map(messaging.map((account) => [account.id, account.iceBreakers]));
   return (
-    <ul aria-label="Instagram accounts" className="flex flex-col divide-y rounded-lg border">
+    <ul
+      aria-label="Instagram accounts"
+      className={cn(SURFACE, "flex flex-col divide-y divide-line")}
+    >
       {accounts.map((account) => (
         <AccountRow
           key={account.id}

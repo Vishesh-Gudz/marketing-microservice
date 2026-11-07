@@ -37,11 +37,29 @@ import {
   type TemplateStarter,
 } from "@/lib/whatsapp/template-starters";
 import { ConnectionNotice } from "../connections/connection-notice";
+import {
+  CARD,
+  CHECKLIST,
+  FORM_ACTIONS,
+  GALLERY,
+  INSET,
+  PANEL,
+  PANEL_HEADER,
+  PREVIEW_INSET,
+  PREVIEW_WELL,
+  SEGMENT,
+  SEGMENTED,
+} from "../library";
+import { SECTION_HEADING } from "../surface";
 import { TemplatePreview } from "./template-preview";
-import { fieldClassName } from "@/components/ui/textarea";
+import { fieldClassName, Textarea } from "@/components/ui/textarea";
 
 // Shared field look (components/ui/textarea.tsx).
 const FIELD = fieldClassName;
+
+/** A choice drawn as a card: the native radio, then its label and help. */
+const OPTION =
+  "flex cursor-pointer items-start gap-2.5 rounded-[10px] border border-line bg-paper p-3 text-sm transition-colors hover:border-line-strong has-[:checked]:border-primary/40 has-[:checked]:bg-blue-50/60";
 
 const BUTTON_TYPE_LABELS: Readonly<Record<BuilderButton["type"], string>> = {
   QUICK_REPLY: "Quick reply",
@@ -91,51 +109,48 @@ function StarterGallery({
   const [useCase, setUseCase] = useState<StarterUseCase | "all">("all");
   const shown = TEMPLATE_STARTERS.filter((s) => useCase === "all" || s.useCase === useCase);
   return (
-    <section aria-labelledby="starter-gallery" className="flex flex-col gap-4">
+    <section aria-labelledby="starter-gallery" className={GALLERY}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 id="starter-gallery" className="font-semibold">
+        <h3 id="starter-gallery" className={SECTION_HEADING}>
           Start from a ready-made template
         </h3>
         <Button type="button" variant="outline" size="sm" onClick={onScratch}>
           Start from scratch
         </Button>
       </div>
-      <div role="group" aria-label="Use case" className="flex flex-wrap gap-2">
+      <div role="group" aria-label="Use case" className={SEGMENTED}>
         {(["all", ...Object.keys(USE_CASE_LABELS)] as (StarterUseCase | "all")[]).map((id) => (
-          <Button
+          <button
             key={id}
             type="button"
-            size="sm"
-            variant={useCase === id ? "default" : "outline"}
+            className={SEGMENT}
             aria-pressed={useCase === id}
             onClick={() => setUseCase(id)}
           >
             {id === "all" ? "All" : USE_CASE_LABELS[id]}
-          </Button>
+          </button>
         ))}
       </div>
       <ul aria-label="Ready-made templates" className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {shown.map((starter) => (
-          <li
-            key={starter.id}
-            aria-labelledby={`starter-${starter.id}`}
-            className="flex flex-col gap-3 rounded-lg border p-4"
-          >
+          <li key={starter.id} aria-labelledby={`starter-${starter.id}`} className={CARD}>
             <div className="flex flex-wrap items-center gap-2">
-              <h4 id={`starter-${starter.id}`} className="font-medium">
+              <h4 id={`starter-${starter.id}`} className="mr-auto font-medium text-ink">
                 {starter.title}
               </h4>
               <Badge variant="outline">{CATEGORY_LABELS[starter.category]}</Badge>
             </div>
             <p className="text-sm text-muted-foreground">{starter.description}</p>
-            <TemplatePreview
-              label={`${starter.title} preview`}
-              {...(starter.header !== undefined
-                ? { header: fillStarter(starter.header, starter) }
-                : {})}
-              body={fillStarter(starter.body, starter)}
-              buttons={starter.buttons}
-            />
+            <div className={PREVIEW_INSET}>
+              <TemplatePreview
+                label={`${starter.title} preview`}
+                {...(starter.header !== undefined
+                  ? { header: fillStarter(starter.header, starter) }
+                  : {})}
+                body={fillStarter(starter.body, starter)}
+                buttons={starter.buttons}
+              />
+            </div>
             <Button
               type="button"
               size="sm"
@@ -170,12 +185,9 @@ function ButtonEditor({
   const id = useId();
   const kind = BUTTON_TYPE_LABELS[button.type];
   return (
-    <li
-      aria-label={`Button ${index + 1}: ${kind}`}
-      className="flex flex-col gap-2 rounded-md border p-3"
-    >
+    <li aria-label={`Button ${index + 1}: ${kind}`} className={INSET}>
       <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-medium">{kind}</span>
+        <span className="text-sm font-medium text-ink">{kind}</span>
         <Button type="button" variant="ghost" size="sm" onClick={onRemove}>
           Remove
         </Button>
@@ -321,22 +333,24 @@ function TemplateForm({
 
         <fieldset className="flex flex-col gap-2">
           <legend className="mb-1 text-sm font-medium">Category</legend>
-          {(["UTILITY", "MARKETING"] as const).map((category) => (
-            <label key={category} className="flex items-start gap-2 text-sm">
-              <input
-                type="radio"
-                name={`${id}-category`}
-                value={category}
-                checked={state.category === category}
-                onChange={() => set({ category })}
-                className="mt-1"
-              />
-              <span>
-                <span className="font-medium">{CATEGORY_LABELS[category]}</span>
-                <span className="block text-muted-foreground">{CATEGORY_HELP[category]}</span>
-              </span>
-            </label>
-          ))}
+          <div className="grid gap-2 sm:grid-cols-2">
+            {(["UTILITY", "MARKETING"] as const).map((category) => (
+              <label key={category} className={OPTION}>
+                <input
+                  type="radio"
+                  name={`${id}-category`}
+                  value={category}
+                  checked={state.category === category}
+                  onChange={() => set({ category })}
+                  className="mt-0.5 size-4 shrink-0 accent-primary"
+                />
+                <span>
+                  <span className="font-medium text-ink">{CATEGORY_LABELS[category]}</span>
+                  <span className="block text-muted-foreground">{CATEGORY_HELP[category]}</span>
+                </span>
+              </label>
+            ))}
+          </div>
           <p className="text-xs text-muted-foreground">
             Meta decides the final category during review, and prices messages by it.
           </p>
@@ -368,10 +382,9 @@ function TemplateForm({
             </div>
           }
         >
-          <textarea
+          <Textarea
             id={`${id}-body`}
             rows={6}
-            className={FIELD}
             value={state.body}
             aria-describedby={`${id}-body-count`}
             onChange={(e) => set({ body: e.target.value })}
@@ -499,20 +512,16 @@ function TemplateForm({
         )}
 
         {issues.length > 0 && (
-          <div
-            role="note"
-            aria-label="Still to do"
-            className="rounded-md border border-dashed p-3 text-sm"
-          >
-            <p className="font-medium">Before submitting</p>
-            <ul className="mt-1 list-disc pl-5 text-muted-foreground">
+          <div role="note" aria-label="Still to do" className={CHECKLIST}>
+            <p className="font-medium text-amber-ink">Before submitting</p>
+            <ul className="mt-1 list-disc pl-5 text-ink-2">
               {[...new Set(issues.map((issue) => issue.message))].map((message) => (
                 <li key={message}>{message}</li>
               ))}
             </ul>
           </div>
         )}
-        <div className="flex flex-wrap gap-2">
+        <div className={FORM_ACTIONS}>
           <Button type="submit" disabled={pending || issues.length > 0}>
             {pending ? "Submitting…" : "Submit for review"}
           </Button>
@@ -521,8 +530,8 @@ function TemplateForm({
           </Button>
         </div>
       </div>
-      <aside aria-label="Preview" className="flex flex-col gap-2 lg:sticky lg:top-4 lg:self-start">
-        <p className="text-sm font-medium">Preview</p>
+      <aside aria-label="Preview" className={PREVIEW_WELL}>
+        <p className="text-sm font-medium text-ink">Preview</p>
         <TemplatePreview
           {...(state.header.trim() !== ""
             ? { header: withSamples(state.header, "header", state.samples) }
@@ -551,9 +560,9 @@ export function TemplateBuilder({
 }) {
   const [draft, setDraft] = useState<BuilderState | null>(null);
   return (
-    <section aria-labelledby="new-template" className="flex flex-col gap-4 rounded-lg border p-4">
-      <div className="flex items-center justify-between gap-2">
-        <h2 id="new-template" className="text-lg font-semibold">
+    <section aria-labelledby="new-template" className={PANEL}>
+      <div className={PANEL_HEADER}>
+        <h2 id="new-template" className={SECTION_HEADING}>
           New template
         </h2>
         <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
