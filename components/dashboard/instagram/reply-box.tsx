@@ -123,7 +123,7 @@ export function ReplyBox({
               promotional message.
             </p>
           )}
-          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start">
+          <div className="flex flex-wrap items-start gap-2">
             <SavedReplyPicker
               channel="instagram"
               {...(contactName !== undefined ? { contactName } : {})}

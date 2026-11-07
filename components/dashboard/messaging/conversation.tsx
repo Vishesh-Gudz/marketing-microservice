@@ -22,18 +22,25 @@ import { useNow } from "@/lib/whatsapp/inbox";
 import { formatInstant } from "../freshness-note";
 import { SECTION_HEADING } from "../surface";
 import { useBackToList } from "./inbox-context";
+import { CONVERSATION_PANE_SIZE } from "./pane";
 import { ContactMark, TONE_CLASS, type ReplyTone } from "./thread-list";
 
-// The open conversation (Kinso K3), shared by WhatsApp and Instagram: a header bar with the
+// The open conversation (Kinso K3-K4), shared by WhatsApp and Instagram: a header bar with the
 // reply-window chip, the history filling the pane with day breaks, the composer pinned at the
-// bottom as a card, and the details beside it (≥1536 px) or in a sheet. Each channel's view keeps
-// its own queries, reply rules and send logic, and only fills these frames.
+// bottom as a card, and the details beside it (≥1536 px) or in a sheet (from the bottom on
+// phones). Each channel's view keeps its own queries, reply rules and send logic, and only fills
+// these frames.
+
+/** Which side the details sheet opens from: the bottom on phones, the right from 768 px. */
+function sheetSide(): "bottom" | "right" {
+  return window.matchMedia?.("(min-width: 768px)").matches ? "right" : "bottom";
+}
 
 /**
- * The conversation pane. Inside the inbox workspace it fills the pane's height (the history
- * scrolls on its own); on phones the page scrolls and the header stays at the top. The back
- * arrow (below 1024 px, where the list is not beside it) returns to the list the conversation
- * was opened from.
+ * The conversation pane. It fills the inbox workspace's pane, and on phones and tablets the
+ * screen between the top bar and the dock (CONVERSATION_PANE_SIZE): the history scrolls on its
+ * own and the composer stays at the bottom. The back arrow (below 1024 px, where the list is not
+ * beside it) returns to the list the conversation was opened from.
  */
 export function ConversationPane({
   channel,
@@ -56,12 +63,18 @@ export function ConversationPane({
 }) {
   const back = useBackToList(channel);
   const [detailsOpen, setDetailsOpen] = useState(true);
-  const [sheetOpen, setSheetOpen] = useState(false);
+  const [sheet, setSheet] = useState<{ open: boolean; side: "bottom" | "right" }>({
+    open: false,
+    side: "right",
+  });
   const detailsId = useId();
   return (
-    <div data-conversation-pane="" className="relative flex flex-col lg:h-full lg:flex-row">
+    <div
+      data-conversation-pane=""
+      className={cn("relative flex flex-col lg:flex-row", CONVERSATION_PANE_SIZE)}
+    >
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="sticky top-14 z-30 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-paper/90 px-4 py-3 backdrop-blur md:px-6 lg:static lg:z-auto lg:bg-paper lg:backdrop-blur-none">
+        <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-paper px-4 py-3 md:px-6">
           <Link
             href={back.href}
             aria-label={`Back to ${back.label}`}
@@ -78,47 +91,46 @@ export function ConversationPane({
               <span className="truncate">{description}</span>
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {status}
-            {/* ≥1536 px: shows or hides the details column. */}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="hidden 2xl:inline-flex"
-              aria-expanded={detailsOpen}
-              aria-controls={detailsId}
-              onClick={() => setDetailsOpen((open) => !open)}
-            >
-              <PanelRight aria-hidden="true" />
-              Details
-            </Button>
-            {/* Below: opens the details in a sheet. */}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="2xl:hidden"
-              aria-haspopup="dialog"
-              onClick={() => setSheetOpen(true)}
-            >
-              <PanelRight aria-hidden="true" />
-              Details
-            </Button>
-          </div>
+          {/* Phones: the chip takes its own line under the name. */}
+          <div className="flex shrink-0 max-sm:order-last max-sm:basis-full">{status}</div>
+          {/* ≥1536 px: shows or hides the details column. */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="hidden shrink-0 2xl:inline-flex"
+            aria-expanded={detailsOpen}
+            aria-controls={detailsId}
+            onClick={() => setDetailsOpen((open) => !open)}
+          >
+            <PanelRight aria-hidden="true" />
+            Details
+          </Button>
+          {/* Below: opens the details in a sheet (its label only for screen readers on phones). */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0 max-sm:size-9 max-sm:px-0 2xl:hidden"
+            aria-haspopup="dialog"
+            onClick={() => setSheet({ open: true, side: sheetSide() })}
+          >
+            <PanelRight aria-hidden="true" />
+            <span className="max-sm:sr-only">Details</span>
+          </Button>
         </header>
         <section
           aria-label="Conversation"
           // Focusable so keyboard users can scroll the history.
           tabIndex={0}
           data-thread-scroller=""
-          className="relative max-h-[min(40rem,calc(100dvh-16rem))] min-h-64 overflow-y-auto bg-canvas/50 px-4 py-5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset md:px-6 lg:max-h-none lg:min-h-0 lg:flex-1"
+          className="relative min-h-0 flex-1 overflow-y-auto bg-canvas/50 px-4 py-5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset md:px-6"
         >
           <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-end">
             {history}
           </div>
         </section>
-        <div className="relative shrink-0 bg-canvas/50 px-3 pb-3 md:px-6 md:pb-4 lg:max-h-[min(34rem,62%)] lg:overflow-y-auto">
+        <div className="relative max-h-[60%] shrink-0 overflow-y-auto bg-canvas/50 px-3 pb-3 md:px-6 md:pb-4 lg:max-h-[min(34rem,62%)]">
           <div className="mx-auto w-full max-w-3xl rounded-[14px] border border-line bg-paper p-3 shadow-soft">
             {reply}
           </div>
@@ -135,8 +147,16 @@ export function ConversationPane({
         <h2 className={SECTION_HEADING}>Details</h2>
         {details}
       </aside>
-      <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-        <SheetContent side="right" className="w-[min(22rem,100vw)] gap-0 overflow-y-auto p-0">
+      <Sheet open={sheet.open} onOpenChange={(open) => setSheet((s) => ({ ...s, open }))}>
+        <SheetContent
+          side={sheet.side}
+          className={cn(
+            "gap-0 overflow-y-auto p-0",
+            sheet.side === "right"
+              ? "w-[min(22rem,100vw)]"
+              : "max-h-[85dvh] rounded-t-[16px] pb-[env(safe-area-inset-bottom)]",
+          )}
+        >
           <SheetHeader className="border-b border-line px-5 py-4">
             <SheetTitle>Details</SheetTitle>
             <SheetDescription className="sr-only">
@@ -157,7 +177,7 @@ export function ConversationPaneSkeleton() {
       data-conversation-pane=""
       role="status"
       aria-label="Loading conversation"
-      className="flex flex-col lg:h-full"
+      className={cn("flex flex-col", CONVERSATION_PANE_SIZE)}
     >
       <div className="flex items-center gap-3 border-b border-line px-4 py-3 md:px-6">
         <Skeleton className="size-10 rounded-full" />
@@ -166,7 +186,7 @@ export function ConversationPaneSkeleton() {
           <Skeleton className="h-3 w-56 max-w-full" />
         </div>
       </div>
-      <div className="flex min-h-64 flex-1 flex-col bg-canvas/50 px-4 py-5 md:px-6">
+      <div className="flex min-h-0 flex-1 flex-col bg-canvas/50 px-4 py-5 md:px-6">
         <div className="mx-auto mt-auto flex w-full max-w-3xl flex-col gap-3">
           <BubbleSkeletons />
         </div>
@@ -419,6 +439,10 @@ export function ReplyHeading({ id }: { id: string }) {
   );
 }
 
+/** A link inside a composer notice (dark on the amber tint: 4.5:1 or more). */
+export const NOTICE_LINK =
+  "self-start font-medium text-ink underline underline-offset-4 hover:text-blue-deep";
+
 /**
  * A notice at the top of the composer when no text reply can be sent: the window has closed
  * (neutral) or the account cannot send (a warning). `action` is the way forward.
@@ -451,7 +475,9 @@ export function ComposerNotice({
         <Icon aria-hidden="true" className="size-4 shrink-0" />
         {title}
       </p>
-      <div className="text-muted-foreground">{children}</div>
+      <div className={tone === "unavailable" ? "text-ink-2" : "text-muted-foreground"}>
+        {children}
+      </div>
       {action}
     </div>
   );

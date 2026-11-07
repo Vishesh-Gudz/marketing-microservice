@@ -31,6 +31,7 @@ import {
   MessageList,
   MessageMeta,
   MessagesSkeleton,
+  NOTICE_LINK,
   MessageTimeline,
   ReplyHeading,
   ReplyWindowChip,
@@ -213,10 +214,7 @@ function Composer({
           tone="unavailable"
           title={refusal.title}
           action={
-            <Link
-              href="/whatsapp/settings"
-              className="self-start text-blue-deep underline-offset-4 hover:underline"
-            >
+            <Link href="/whatsapp/settings" className={NOTICE_LINK}>
               Open the WhatsApp settings
             </Link>
           }

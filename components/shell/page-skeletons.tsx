@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { RouteProgress } from "@/components/brand/gudz-loader";
+import { CONVERSATION_PANE_SIZE } from "@/components/dashboard/messaging/pane";
 import { Skeleton } from "@/components/ui/skeleton";
 
 // Route loading states (`loading.tsx`), shaped like the page that is coming so nothing jumps
@@ -84,7 +85,7 @@ export function ConversationSkeleton() {
       aria-label="Loading page"
       aria-busy="true"
       data-conversation-pane=""
-      className="flex flex-col lg:h-full"
+      className={`flex flex-col ${CONVERSATION_PANE_SIZE}`}
     >
       <RouteProgress />
       <div className="flex items-center gap-3 border-b border-line px-4 py-3 md:px-6">
@@ -94,7 +95,7 @@ export function ConversationSkeleton() {
           <Skeleton className="h-3 w-56 max-w-full" />
         </div>
       </div>
-      <div className="flex min-h-64 flex-1 flex-col bg-canvas/50 px-4 py-5 md:px-6">
+      <div className="flex min-h-0 flex-1 flex-col bg-canvas/50 px-4 py-5 md:px-6">
         <div className="mx-auto mt-auto flex w-full max-w-3xl flex-col gap-3">
           <Skeleton className="h-12 w-3/5 rounded-[16px]" />
           <Skeleton className="ml-auto h-12 w-1/2 rounded-[16px]" />

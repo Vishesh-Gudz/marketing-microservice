@@ -317,14 +317,15 @@ export const AVAILABILITY: Record<string, unknown> = {
 /**
  * Every messaging query of these fixtures at once: threads, both conversations, saved replies,
  * Instagram templates, WhatsApp accounts and Instagram DM availability. Only for messaging
- * pages: it also answers the social accounts list.
+ * pages: it also answers the social accounts list. `whatsapp` changes the open WhatsApp
+ * conversation (a closed window, a number that cannot send).
  */
-export async function withMessagingData(page: Page) {
+export async function withMessagingData(page: Page, whatsapp: Record<string, unknown> = {}) {
   await answerQueries(page, {
     "v1/inbox:listThreads": () => page1(THREADS),
     "v1/whatsapp:listConversations": () => page1([WHATSAPP_CONVERSATION]),
     "v1/instagramMessaging:listConversations": () => page1([INSTAGRAM_CONVERSATION]),
-    "v1/whatsapp:getConversation": () => WHATSAPP_CONVERSATION,
+    "v1/whatsapp:getConversation": () => ({ ...WHATSAPP_CONVERSATION, ...whatsapp }),
     "v1/whatsapp:listMessages": () => page1(WHATSAPP_MESSAGES),
     "v1/instagramMessaging:getConversation": () => INSTAGRAM_CONVERSATION,
     "v1/instagramMessaging:listMessages": () => page1(INSTAGRAM_MESSAGES),

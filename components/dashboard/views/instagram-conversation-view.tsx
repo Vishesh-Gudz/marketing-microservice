@@ -37,6 +37,7 @@ import {
   MessageList,
   MessageMeta,
   MessagesSkeleton,
+  NOTICE_LINK,
   MessageTimeline,
   ReplyHeading,
   ReplyWindowChip,
@@ -257,10 +258,7 @@ function Composer({ conversation }: { conversation: InstagramConversation }) {
           {...(unavailable
             ? {
                 action: (
-                  <Link
-                    href="/instagram/messages/settings"
-                    className="self-start text-blue-deep underline-offset-4 hover:underline"
-                  >
+                  <Link href="/instagram/messages/settings" className={NOTICE_LINK}>
                     Open the Instagram DM settings
                   </Link>
                 ),

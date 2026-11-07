@@ -2,7 +2,7 @@ import type { Page } from "@playwright/test";
 import { at, THREADS, withConversations } from "./fixtures";
 import { expect, settled, test, volatile } from "./support";
 
-// The inbox and conversation pages (revamp Phase 9, Kinso K2-K3). The seeded organization has no
+// The inbox and conversation pages (revamp Phase 9, Kinso K2-K4). The seeded organization has no
 // conversation, so these tests answer the messaging queries on the Convex socket with made-up
 // threads (fake names and 555 numbers). Nothing is written to the backend and nothing is sent.
 
@@ -13,9 +13,21 @@ async function noSidewaysScroll(page: Page) {
   expect(overflow).toBeLessThanOrEqual(0);
 }
 
-for (const width of [1440, 375] as const) {
+/** Phones, a tablet, small and large laptops (Kinso K4): the heights their screens usually have. */
+const SCREENS = [
+  { width: 1440, height: 900 },
+  { width: 1280, height: 800 },
+  { width: 1024, height: 768 },
+  { width: 768, height: 1024 },
+  { width: 375, height: 812 },
+] as const;
+
+/** The phone dock's height (below 1024 px it covers the bottom of the screen). */
+const DOCK = 65;
+
+for (const { width, height } of SCREENS) {
   test.describe(`at ${width}px`, () => {
-    test.use({ viewport: { width, height: width === 1440 ? 900 : 812 } });
+    test.use({ viewport: { width, height } });
 
     test("the inbox lists one line per contact, without wrapping", async ({ page }) => {
       await withConversations(page);
@@ -47,38 +59,77 @@ for (const width of [1440, 375] as const) {
       await expect(history.getByText("Thank you!")).toBeVisible();
       const gap = await history.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
       expect(gap).toBeLessThanOrEqual(2);
-      // The reply box sits right under the history.
+      // The reply box sits right under the history, and stays on screen: the pane fills the
+      // screen (above the dock below 1024 px), the history scrolls, the page itself does not.
       const reply = page.getByRole("region", { name: "Reply" });
       const historyBox = (await history.boundingBox())!;
       const replyBox = (await reply.boundingBox())!;
       expect(replyBox.y).toBeGreaterThan(historyBox.y + historyBox.height - 1);
-      if (width === 1440) {
-        // The pane fills the screen: the composer is pinned at its bottom and the page itself
-        // does not scroll; the list is beside it, so there is no back arrow.
-        expect(replyBox.y + replyBox.height).toBeLessThanOrEqual(900);
-        const pageScroll = await page.evaluate(
-          () => document.documentElement.scrollHeight - window.innerHeight,
-        );
-        expect(pageScroll).toBeLessThanOrEqual(0);
-        await expect(page.getByRole("link", { name: "Back to WhatsApp" })).toBeHidden();
-      } else {
-        await expect(page.getByRole("link", { name: "Back to WhatsApp" })).toBeVisible();
-      }
+      expect(replyBox.y + replyBox.height).toBeLessThanOrEqual(height - (width < 1024 ? DOCK : 0));
+      expect(historyBox.height).toBeGreaterThan(200);
+      const pageScroll = await page.evaluate(
+        () => document.documentElement.scrollHeight - window.innerHeight,
+      );
+      expect(pageScroll).toBeLessThanOrEqual(0);
+      // The back arrow only where the list is not beside the conversation.
+      const back = page.getByRole("link", { name: "Back to WhatsApp" });
+      if (width >= 1024) await expect(back).toBeHidden();
+      else await expect(back).toBeVisible();
       // Below 1536 px the details open in a sheet instead of a column.
       await expect(page.getByRole("complementary", { name: "Conversation details" })).toBeHidden();
       await noSidewaysScroll(page);
       await expect(page).toHaveScreenshot(`whatsapp-conversation-${width}.png`, {
-        fullPage: true,
         mask: volatile(page),
       });
       await page.getByRole("button", { name: "Details" }).click();
       const sheet = page.getByRole("dialog", { name: "Details" });
       await expect(sheet.getByRole("link", { name: "WhatsApp templates" })).toBeVisible();
+      // From the bottom on phones, from the right from 768 px.
+      const sheetBox = (await sheet.boundingBox())!;
+      if (width < 768) {
+        expect(sheetBox.y).toBeGreaterThan(height / 4);
+        expect(sheetBox.width).toBeGreaterThan(width - 2);
+      } else {
+        expect(sheetBox.x).toBeGreaterThan(width / 3);
+      }
       await page.keyboard.press("Escape");
       await expect(sheet).toBeHidden();
     });
   });
 }
+
+test.describe("phones", () => {
+  test.use({ viewport: { width: 375, height: 812 } });
+
+  test("an Instagram conversation keeps its history in view above the larger composer", async ({
+    page,
+  }) => {
+    await withConversations(page);
+    await page.goto("/instagram/messages/conversations/demo");
+    await settled(page);
+    const history = page.getByRole("region", { name: "Conversation", exact: true });
+    // The newest message (the customer tapped "Prices") is in view.
+    await expect(history.getByText("Prices", { exact: true }).last()).toBeVisible();
+    expect((await history.boundingBox())!.height).toBeGreaterThan(150);
+    await noSidewaysScroll(page);
+    await expect(page).toHaveScreenshot("instagram-conversation-375.png", {
+      mask: volatile(page),
+    });
+  });
+
+  test("the back arrow returns to the unified inbox a conversation was opened from", async ({
+    page,
+  }) => {
+    await withConversations(page);
+    await page.goto("/inbox");
+    await settled(page);
+    await page.getByRole("list", { name: "Conversations" }).getByRole("link").first().click();
+    await expect(page.getByRole("heading", { level: 1, name: "Meera Iyer" })).toBeVisible();
+    await page.getByRole("link", { name: "Back to Inbox" }).click();
+    await expect(page).toHaveURL(/\/inbox$/);
+    await expect(page.getByRole("list", { name: "Conversations" })).toBeVisible();
+  });
+});
 
 test.describe("large screens", () => {
   test.use({ viewport: { width: 1440, height: 900 } });

@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
-import { withMessagingData } from "./fixtures";
+import { at, withMessagingData } from "./fixtures";
 import { expect, firstLink, settled, test } from "./support";
 
 // Accessibility (axe: WCAG 2.2 A/AA plus axe's best practices). Each page or open state keeps
@@ -23,9 +23,17 @@ type Case = {
   gate?: boolean;
   /** Answer the messaging queries with the made-up data of fixtures.ts. */
   data?: boolean;
+  /** With `data`: changes to the open WhatsApp conversation. */
+  whatsapp?: Record<string, unknown>;
   /** Open a form, dialog or sheet before the check. */
   open?: (page: Page) => Promise<void>;
 };
+
+/** Opens a conversation's details sheet (from the right, or the bottom on phones). */
+async function openDetails(page: Page) {
+  await page.getByRole("button", { name: "Details" }).click();
+  await page.getByRole("dialog").waitFor();
+}
 
 const ROUTES: Case[] = [
   { name: "overview", path: "/" },
@@ -112,9 +120,28 @@ const STATES: Case[] = [
     name: "conversation-details-sheet",
     path: "/whatsapp/conversations/demo",
     data: true,
+    open: openDetails,
+  },
+  {
+    name: "whatsapp-conversation-closed",
+    path: "/whatsapp/conversations/demo",
+    data: true,
+    whatsapp: { serviceWindowExpiresAt: at(-30) },
+  },
+  {
+    // The second fixture number is not registered yet: replies unavailable (D-M3).
+    name: "whatsapp-conversation-unavailable",
+    path: "/whatsapp/conversations/demo",
+    data: true,
+    whatsapp: { phoneNumberId: "100000000000012" },
+  },
+  {
+    name: "conversation-saved-replies",
+    path: "/whatsapp/conversations/demo",
+    data: true,
     open: async (page) => {
-      await page.getByRole("button", { name: "Details" }).click();
-      await page.getByRole("dialog").waitFor();
+      await page.getByRole("button", { name: "Saved replies" }).click();
+      await page.getByRole("list", { name: "Saved replies for this channel" }).waitFor();
     },
   },
   {
@@ -131,6 +158,17 @@ const PHONE: Case[] = [
   { name: "overview", path: "/" },
   { name: "inbox-threads", path: "/inbox", data: true },
   { name: "whatsapp-conversation", path: "/whatsapp/conversations/demo", data: true },
+  {
+    name: "instagram-conversation",
+    path: "/instagram/messages/conversations/demo",
+    data: true,
+  },
+  {
+    name: "conversation-details-sheet",
+    path: "/whatsapp/conversations/demo",
+    data: true,
+    open: openDetails,
+  },
   { name: "instagram-templates-list", path: "/instagram/messages/templates", data: true },
   {
     name: "menu-sheet",
@@ -171,7 +209,7 @@ async function summary(page: Page): Promise<string> {
 }
 
 async function check(page: Page, c: Case, file: string) {
-  if (c.data) await withMessagingData(page);
+  if (c.data) await withMessagingData(page, c.whatsapp);
   const path = typeof c.path === "string" ? c.path : await c.path(page);
   await page.goto(path);
   if (c.name.endsWith("not-found")) {
@@ -192,6 +230,18 @@ for (const c of [...ROUTES, ...STATES]) {
     await check(page, c, `${c.name}.axe.txt`);
   });
 }
+
+test.describe("wide", () => {
+  test.use({ viewport: { width: 1920, height: 1080 } });
+  // The details column beside the conversation (≥1536 px).
+  test("axe at 1920 px: whatsapp-conversation", async ({ page }) => {
+    await check(
+      page,
+      { name: "whatsapp-conversation", path: "/whatsapp/conversations/demo", data: true },
+      "whatsapp-conversation-1920.axe.txt",
+    );
+  });
+});
 
 test.describe("phone", () => {
   test.use({ viewport: { width: 375, height: 812 } });
