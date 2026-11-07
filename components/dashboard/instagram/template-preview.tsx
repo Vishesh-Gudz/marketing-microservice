@@ -55,7 +55,12 @@ export function TemplatePreview({
   }
   return (
     <figure aria-label={label} className={cn("flex w-full max-w-full", className)}>
-      <ul aria-label="Cards" className="flex gap-2 overflow-x-auto pb-1">
+      {/* Several cards scroll sideways; the list takes the focus so a keyboard can scroll it. */}
+      <ul
+        aria-label="Cards"
+        tabIndex={content.cards.length > 1 ? 0 : undefined}
+        className="flex gap-2 overflow-x-auto rounded-[12px] pb-1 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
         {content.cards.map((card, i) => {
           const host = card.imageUrl ? urlHost(card.imageUrl) : undefined;
           return (

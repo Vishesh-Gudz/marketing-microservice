@@ -31,8 +31,10 @@ export function Sidebar() {
   );
   return (
     // The outer column runs the full page height (its canvas and hairline reach the bottom of
-    // long pages); the inner panel is one screen tall and stays in place.
-    <div
+    // long pages); the inner panel is one screen tall and stays in place. It is a landmark, so
+    // the brand and the organization control are inside one too.
+    <aside
+      aria-label="Sidebar"
       data-testid="sidebar"
       data-collapsed={collapsed || undefined}
       className={cn(
@@ -63,6 +65,6 @@ export function Sidebar() {
           )}
         </div>
       </div>
-    </div>
+    </aside>
   );
 }

@@ -103,13 +103,13 @@ export function ClerkCardPlaceholder() {
 /** Shown on Clerk pages when this build does not sign in with Clerk. */
 export function ClerkUnavailable() {
   return AUTH_MODE === "dev" ? (
-    <EmptyState title="Sign-in is not used in local development">
+    <EmptyState level={1} title="Sign-in is not used in local development">
       This build signs in with the local dev token. Run <code>npm run dev:auth setup</code> (see
       docs/setup.md), or remove <code>NEXT_PUBLIC_DEV_AUTH_TOKEN</code> and set the Clerk keys to
       sign in with Clerk.
     </EmptyState>
   ) : (
-    <EmptyState title="Sign-in is not configured">
+    <EmptyState level={1} title="Sign-in is not configured">
       This deployment has no Clerk publishable key, so nobody can sign in.
     </EmptyState>
   );

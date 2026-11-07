@@ -186,7 +186,11 @@ export function SocialPostsTable({
                     {post.latest?.capturedDate ?? "—"}
                   </TableCell>
                   <TableCell className="align-top">
-                    <InstagramLink permalink={post.permalink} className="whitespace-nowrap" />
+                    <InstagramLink
+                      permalink={post.permalink}
+                      subject={`${humanize(post.type)} post of ${formatInstant(post.publishedAt, org.timezone)}`}
+                      className="whitespace-nowrap"
+                    />
                   </TableCell>
                 </TableRow>
               ))}

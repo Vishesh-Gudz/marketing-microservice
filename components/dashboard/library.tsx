@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { SECTION_HEADING, SURFACE } from "./surface";
@@ -138,6 +138,23 @@ export function ChannelCard({
       <div className="flex min-w-0 flex-col p-4 md:p-5">{children}</div>
     </section>
   );
+}
+
+/**
+ * Focus for an inline confirmation: the safe choice (Cancel) when it opens, and back to the
+ * button that opened it when it closes. Attach `triggerRef` to that button and `cancelRef` to
+ * Cancel.
+ */
+export function useConfirmFocus(confirming: boolean) {
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const opened = useRef(false);
+  useEffect(() => {
+    if (confirming) cancelRef.current?.focus();
+    else if (opened.current) triggerRef.current?.focus();
+    opened.current = confirming;
+  }, [confirming]);
+  return { triggerRef, cancelRef };
 }
 
 /**

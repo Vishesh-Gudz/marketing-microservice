@@ -251,6 +251,36 @@ describe("WhatsApp conversation", () => {
     expect(screen.getByRole("status", { name: "Loading conversation" })).toBeInTheDocument();
   });
 
+  it("reads out a message that arrives while open, never the ones already there or your own", () => {
+    queryResults.set(GET, conversation());
+    queryResults.set(MESSAGES, page([message({ id: "m1", text: "Hello" })]));
+    const { rerender } = renderWithOrg(<WhatsAppConversationView conversationId="conv1" />);
+    const live = screen.getByTestId("new-message");
+    expect(live).toHaveAttribute("aria-live", "polite");
+    expect(live).toHaveTextContent("");
+    queryResults.set(
+      MESSAGES,
+      page([
+        message({ id: "m2", text: "Is it in stock?", at: "2026-10-24T11:40:00.000Z" }),
+        message({ id: "m1", text: "Hello" }),
+      ]),
+    );
+    rerender(<WhatsAppConversationView conversationId="conv1" />);
+    expect(screen.getByTestId("new-message")).toHaveTextContent(
+      "New message from Ana: Is it in stock?",
+    );
+    queryResults.set(
+      MESSAGES,
+      page([
+        message({ id: "m3", direction: "outbound", text: "Yes", status: "sent" }),
+        message({ id: "m2", text: "Is it in stock?", at: "2026-10-24T11:40:00.000Z" }),
+        message({ id: "m1", text: "Hello" }),
+      ]),
+    );
+    rerender(<WhatsAppConversationView conversationId="conv1" />);
+    expect(screen.getByTestId("new-message")).toHaveTextContent("");
+  });
+
   it("says so when a conversation has no messages", () => {
     queryResults.set(GET, conversation());
     queryResults.set(MESSAGES, page([]));

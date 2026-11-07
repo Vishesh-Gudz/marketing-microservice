@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * A page or section with nothing to show yet. The title is a heading (level 2 by default; pass
+ * A page or section with nothing to show yet. The title is a heading (level 2 by default; pass `level={1}` when it is the whole page, or
  * `level={3}` inside a section that already has an h2) so screen readers can jump to it.
  */
 export function EmptyState({
@@ -16,9 +16,9 @@ export function EmptyState({
   children?: ReactNode;
   action?: ReactNode;
   className?: string;
-  level?: 2 | 3;
+  level?: 1 | 2 | 3;
 }) {
-  const Heading = level === 3 ? "h3" : "h2";
+  const Heading = level === 1 ? "h1" : level === 3 ? "h3" : "h2";
   return (
     <div
       className={cn(

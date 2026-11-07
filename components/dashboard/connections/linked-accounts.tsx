@@ -53,7 +53,11 @@ export function LinkedAccounts({ provider }: { provider: AdConnectionProvider })
   const linked = accounts.filter((a) => a.platform === provider && a.linked && !a.isManager);
 
   return (
-    <section aria-labelledby={headingId} className="flex flex-col gap-3">
+    <section
+      // Named with the provider: Google Ads and Meta Ads both have this section.
+      aria-label={`${info.name}: linked accounts`}
+      className="flex flex-col gap-3"
+    >
       <h3 id={headingId} className={SUB_HEADING}>
         Linked accounts
       </h3>

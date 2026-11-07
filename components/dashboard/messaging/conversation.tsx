@@ -2,7 +2,7 @@
 
 import { ArrowRight } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { SECTION_HEADING, SURFACE } from "../surface";
 
@@ -43,18 +43,41 @@ export function ConversationLayout({
 
 /**
  * The messages, oldest at the top. Opens scrolled to the newest message and follows new ones;
- * loading older messages does not jump back to the bottom.
+ * loading older messages does not jump back to the bottom. A message that arrives while the
+ * conversation is open is read out by screen readers (`announcement`, polite); the messages
+ * already there when it opens, and the business's own replies, are not.
  */
-export function MessageList({ newestId, children }: { newestId: string; children: ReactNode }) {
+export function MessageList({
+  newestId,
+  announcement,
+  children,
+}: {
+  newestId: string;
+  /** What to announce if `newestId` is a message that just arrived (undefined: say nothing). */
+  announcement?: string;
+  children: ReactNode;
+}) {
   const ref = useRef<HTMLOListElement>(null);
+  const [seenId, setSeenId] = useState(newestId);
+  const [live, setLive] = useState("");
+  // A newer message than the last one seen: announce it (state adjusted while rendering).
+  if (newestId !== seenId) {
+    setSeenId(newestId);
+    setLive(announcement ?? "");
+  }
   useEffect(() => {
     const scroller = ref.current?.closest<HTMLElement>("[data-thread-scroller]");
     if (scroller) scroller.scrollTop = scroller.scrollHeight;
   }, [newestId]);
   return (
-    <ol ref={ref} aria-label="Messages" className="flex flex-col gap-4">
-      {children}
-    </ol>
+    <>
+      <ol ref={ref} aria-label="Messages" className="flex flex-col gap-4">
+        {children}
+      </ol>
+      <div aria-live="polite" aria-atomic="true" className="sr-only" data-testid="new-message">
+        {live}
+      </div>
+    </>
   );
 }
 
@@ -99,7 +122,11 @@ export function Bubble({
           : "rounded-bl-[4px] border border-line bg-paper text-ink",
       )}
     >
-      {label !== undefined && <p className="mb-1 text-xs opacity-80">{label}</p>}
+      {label !== undefined && (
+        <p className={cn("mb-1 text-xs", outbound ? "font-medium" : "text-muted-foreground")}>
+          {label}
+        </p>
+      )}
       <p className={cn("break-words whitespace-pre-wrap", placeholder && "italic")}>{children}</p>
     </div>
   );

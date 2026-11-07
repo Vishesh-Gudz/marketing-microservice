@@ -33,6 +33,7 @@ import {
   GROUP_HEADING,
   PREVIEW_INSET,
   SectionHeader,
+  useConfirmFocus,
 } from "../library";
 import { Breadcrumbs, PageHeader } from "../page-header";
 import { QueryBoundary } from "../query-boundary";
@@ -62,9 +63,16 @@ function DeleteTemplate({
   const remove = useMutation(api.v1.instagramTemplates.remove);
   const [confirming, setConfirming] = useState(false);
   const [pending, setPending] = useState(false);
+  const { triggerRef, cancelRef } = useConfirmFocus(confirming);
   if (!confirming) {
     return (
-      <Button type="button" variant="outline" size="sm" onClick={() => setConfirming(true)}>
+      <Button
+        ref={triggerRef}
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => setConfirming(true)}
+      >
         Delete
       </Button>
     );
@@ -102,6 +110,7 @@ function DeleteTemplate({
         {pending ? "Deleting…" : "Delete"}
       </Button>
       <Button
+        ref={cancelRef}
         type="button"
         size="sm"
         variant="outline"

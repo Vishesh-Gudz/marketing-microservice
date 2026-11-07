@@ -109,6 +109,7 @@ function Thread({ conversation }: { conversation: WhatsAppConversation }) {
   if (results.length === 0) return <EmptyState title="No messages in this conversation yet" />;
   // The API lists newest first; a thread reads from the top down.
   const oldestFirst = [...results].reverse();
+  const newest = results[0]!;
   return (
     <div className="flex flex-col gap-3">
       {status !== "Exhausted" && (
@@ -122,7 +123,14 @@ function Thread({ conversation }: { conversation: WhatsAppConversation }) {
           {status === "LoadingMore" ? "Loading…" : "Show older messages"}
         </Button>
       )}
-      <MessageList newestId={results[0]!.id}>
+      <MessageList
+        newestId={newest.id}
+        announcement={
+          newest.direction === "inbound"
+            ? `New message from ${contact}: ${messageContent(newest).text}`
+            : undefined
+        }
+      >
         {oldestFirst.map((message) => (
           <MessageBubble key={message.id} message={message} contact={contact} />
         ))}

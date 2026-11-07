@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { expect, settled, test, volatile } from "./support";
+import { expect, firstLink, settled, test, volatile } from "./support";
 
 /**
  * Opening a form focuses a field and scrolls it into view; a full-page shot then draws the
@@ -24,17 +24,6 @@ const VIEWPORTS = [
 ] as const;
 
 type Shot = { name: string; path: string | ((page: Page) => Promise<string>); gate?: boolean };
-
-/** Follow the first link matching `selector` on `from` (seeded ids are not known up front). */
-function firstLink(from: string, selector: string) {
-  return async (page: Page) => {
-    await page.goto(from);
-    await settled(page);
-    const href = await page.locator(selector).first().getAttribute("href");
-    if (!href) throw new Error(`No link ${selector} on ${from}; is the seed loaded?`);
-    return href;
-  };
-}
 
 const ROUTES: Shot[] = [
   { name: "overview", path: "/" },

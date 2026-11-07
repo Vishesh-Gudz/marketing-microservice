@@ -131,7 +131,11 @@ export function DiscoveredAccounts({
   );
 
   return (
-    <section aria-labelledby={headingId} className="flex flex-col gap-3">
+    <section
+      // Named with the provider: Google Ads and Meta Ads both have this section.
+      aria-label={`${info.name}: choose the account to sync`}
+      className="flex flex-col gap-3"
+    >
       <h3 id={headingId} className={SUB_HEADING}>
         Choose the account to sync
       </h3>

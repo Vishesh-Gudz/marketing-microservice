@@ -8,9 +8,12 @@ import { cn } from "@/lib/utils";
  */
 export function InstagramLink({
   permalink,
+  subject,
   className,
 }: {
   permalink: string | undefined;
+  /** Which post, for the link's accessible name when several are listed ("Reel post of …"). */
+  subject?: string;
   className?: string;
 }) {
   const href = safeInstagramPermalink(permalink);
@@ -27,7 +30,9 @@ export function InstagramLink({
     >
       View on Instagram
       <ExternalLink className="size-3.5" aria-hidden="true" />
-      <span className="sr-only"> (opens in a new tab)</span>
+      <span className="sr-only">
+        {subject !== undefined ? `: ${subject}` : ""} (opens in a new tab)
+      </span>
     </a>
   );
 }

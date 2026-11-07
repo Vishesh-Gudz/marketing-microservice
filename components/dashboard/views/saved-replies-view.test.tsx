@@ -156,10 +156,12 @@ describe("Saved replies page", () => {
 
     const card = screen.getByRole("listitem", { name: "Opening hours" });
     fireEvent.click(within(card).getByRole("button", { name: "Delete" }));
-    fireEvent.keyDown(screen.getByRole("group", { name: "Delete Opening hours?" }), {
-      key: "Escape",
-    });
+    const question = screen.getByRole("group", { name: "Delete Opening hours?" });
+    // The safe choice takes the focus, and the focus returns to Delete afterwards.
+    expect(within(question).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    fireEvent.keyDown(question, { key: "Escape" });
     expect(screen.queryByRole("group", { name: "Delete Opening hours?" })).toBeNull();
+    expect(within(card).getByRole("button", { name: "Delete" })).toHaveFocus();
     expect(remove).not.toHaveBeenCalled();
   });
 });

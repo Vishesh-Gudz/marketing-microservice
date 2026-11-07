@@ -42,6 +42,7 @@ import {
   PANEL,
   PANEL_HEADER,
   SectionHeader,
+  useConfirmFocus,
 } from "../library";
 import { CHANNEL_ICON } from "../messaging/thread-list";
 import { Breadcrumbs, PageHeader } from "../page-header";
@@ -296,9 +297,16 @@ function DeleteSavedReply({
   const remove = useMutation(api.v1.savedReplies.remove);
   const [confirming, setConfirming] = useState(false);
   const [pending, setPending] = useState(false);
+  const { triggerRef, cancelRef } = useConfirmFocus(confirming);
   if (!confirming) {
     return (
-      <Button type="button" variant="outline" size="sm" onClick={() => setConfirming(true)}>
+      <Button
+        ref={triggerRef}
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => setConfirming(true)}
+      >
         Delete
       </Button>
     );
@@ -335,6 +343,7 @@ function DeleteSavedReply({
         {pending ? "Deleting…" : "Delete"}
       </Button>
       <Button
+        ref={cancelRef}
         type="button"
         size="sm"
         variant="outline"

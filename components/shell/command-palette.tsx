@@ -151,7 +151,10 @@ function PaletteBody({ onDone }: { onDone: () => void }) {
           Esc
         </kbd>
       </div>
-      <div className="max-h-[min(60vh,26rem)] overflow-y-auto p-2">
+      {/* Scrolls without being a tab stop: the combobox keeps the focus, the arrow keys move
+          through every option and scroll the active one into view (the WAI-ARIA combobox
+          pattern). The a11y spec excludes it from axe's "scrollable region" rule for that. */}
+      <div data-palette-results="" className="max-h-[min(60vh,26rem)] overflow-y-auto p-2">
         <div id={listId} role="listbox" aria-label="Pages">
           {groups.map((group) => (
             <div

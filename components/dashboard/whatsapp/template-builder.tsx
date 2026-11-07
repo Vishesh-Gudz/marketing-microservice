@@ -427,9 +427,9 @@ function TemplateForm({
         </Field>
 
         <section aria-labelledby={`${id}-buttons`} className="flex flex-col gap-3">
-          <h4 id={`${id}-buttons`} className="text-sm font-medium">
+          <h3 id={`${id}-buttons`} className="text-sm font-medium">
             Buttons (optional)
-          </h4>
+          </h3>
           {state.buttons.length > 0 && (
             <ul className="flex flex-col gap-2">
               {state.buttons.map((button, index) => (
@@ -483,9 +483,9 @@ function TemplateForm({
 
         {samples.length > 0 && (
           <section aria-labelledby={`${id}-samples`} className="flex flex-col gap-3">
-            <h4 id={`${id}-samples`} className="text-sm font-medium">
+            <h3 id={`${id}-samples`} className="text-sm font-medium">
               Sample values
-            </h4>
+            </h3>
             <p className="text-xs text-muted-foreground">
               Meta reviews the template with these examples; customers see your real values.
             </p>

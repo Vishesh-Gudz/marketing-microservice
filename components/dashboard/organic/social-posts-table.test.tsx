@@ -48,6 +48,10 @@ describe("SocialPostsTable", () => {
     expect(within(row).getByText("15.50%")).toBeInTheDocument(); // API engagement rate
     expect(within(row).getByText("2026-09-28")).toBeInTheDocument(); // capture day
     const link = within(row).getByRole("link", { name: /View on Instagram/ });
+    // Each row's link names its post, so a list of links reads apart.
+    expect(link).toHaveAccessibleName(
+      /^View on Instagram: Image post of .+ \(opens in a new tab\)$/,
+    );
     expect(link).toHaveAttribute("href", "https://www.instagram.com/p/mock17900000000000001/");
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", "noopener noreferrer");

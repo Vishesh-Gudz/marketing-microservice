@@ -1,142 +1,18 @@
 import type { Page } from "@playwright/test";
 import { answerQueries } from "./socket";
-import { expect, NOW, settled, test, volatile } from "./support";
+import {
+  AVAILABILITY,
+  INSTAGRAM_TEMPLATES,
+  SAVED_REPLIES,
+  SOCIAL_ACCOUNTS,
+  WHATSAPP_ACCOUNTS,
+} from "./fixtures";
+import { expect, settled, test, volatile } from "./support";
 
 // The library and settings pages (revamp Phase 10). The seeded organization has no saved reply,
 // Instagram template or messaging account, so these tests answer those queries on the Convex
 // socket with made-up ones (fake names and 555 numbers). Nothing is written to the backend, and
 // no button that saves, deletes, sends or connects is confirmed.
-
-const at = (minutes: number) => new Date(NOW.getTime() + minutes * 60_000).toISOString();
-const DAY = 24 * 60;
-
-const SAVED_REPLIES = [
-  {
-    id: "r1",
-    title: "Opening hours",
-    text: "We're open 10 am to 8 pm, Monday to Saturday. On Sundays we open at noon.",
-    channels: ["whatsapp", "instagram"],
-    updatedAt: at(-3 * DAY),
-  },
-  {
-    id: "r2",
-    title: "Welcome",
-    text: "Hi {{customer_name}}, thanks for reaching out! How can we help you today?",
-    channels: ["instagram"],
-    quickReplies: ["Prices", "Order status", "Talk to us"],
-    updatedAt: at(-2 * DAY),
-  },
-  {
-    id: "r3",
-    title: "Delivery areas",
-    text: "We deliver across the city within 2 days. Delivery is free above $40.",
-    channels: ["whatsapp"],
-    updatedAt: at(-DAY),
-  },
-];
-
-const INSTAGRAM_TEMPLATES = [
-  {
-    id: "t1",
-    name: "Welcome menu",
-    content: {
-      kind: "buttons",
-      text: "Hi {{customer_name}}, what can we do for you?",
-      buttons: [
-        { type: "reply", title: "Prices" },
-        { type: "url", title: "Shop", url: "https://shop.example.com" },
-      ],
-    },
-    updatedAt: at(-2 * DAY),
-  },
-  {
-    id: "t2",
-    name: "New arrivals",
-    content: {
-      kind: "cards",
-      cards: [
-        {
-          title: "Linen tote",
-          subtitle: "Sand and olive",
-          imageUrl: "https://shop.example.com/tote.jpg",
-          buttons: [{ type: "url", title: "View", url: "https://shop.example.com/tote" }],
-        },
-        { title: "Canvas cap", subtitle: "One size", buttons: [] },
-      ],
-    },
-    updatedAt: at(-DAY),
-  },
-];
-
-const WHATSAPP_ACCOUNTS = [
-  {
-    id: "acc1",
-    connectionId: "conn1",
-    wabaId: "100000000000010",
-    onboardingType: "cloud_api",
-    status: "active",
-    setupStatus: "connected",
-    connectedAt: at(-10 * DAY),
-    numbers: [
-      {
-        id: "num1",
-        phoneNumberId: "100000000000011",
-        displayPhoneNumber: "+1 555 010 0001",
-        status: "active",
-        registered: true,
-        businessApp: false,
-      },
-      {
-        id: "num2",
-        phoneNumberId: "100000000000012",
-        displayPhoneNumber: "+1 555 010 0002",
-        status: "active",
-        registered: false,
-        businessApp: false,
-      },
-    ],
-  },
-  {
-    id: "acc2",
-    connectionId: "conn2",
-    wabaId: "100000000000020",
-    onboardingType: "coexistence",
-    status: "active",
-    setupStatus: "action_required",
-    nextStep: "register",
-    connectedAt: at(-2 * DAY),
-    numbers: [
-      {
-        id: "num3",
-        phoneNumberId: "100000000000021",
-        displayPhoneNumber: "+1 555 010 0003",
-        status: "active",
-        registered: false,
-        businessApp: true,
-        imported: true,
-      },
-    ],
-  },
-];
-
-const SOCIAL_ACCOUNTS = [
-  { id: "s1", username: "gudz.store" },
-  { id: "s2", username: "gudz.outlet" },
-].map((account, i) => ({
-  ...account,
-  platform: "instagram",
-  externalId: `1784140000000000${i}`,
-  name: account.username,
-  accountType: "business",
-  status: "active",
-  linked: true,
-  connectionId: `c-${account.id}`,
-}));
-
-const AVAILABILITY: Record<string, unknown> = {
-  s1: { availability: "active", accountId: "m1" },
-  s2: { availability: "ready" },
-};
 
 async function noSidewaysScroll(page: Page) {
   const overflow = await page.evaluate(

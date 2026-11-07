@@ -1,10 +1,12 @@
 import type { Page } from "@playwright/test";
-import { expect, settled, test } from "./support";
+import { expect, settled, test, volatile } from "./support";
 
-// The app shell (revamp Phase 4): no sideways scrolling at any width, the ⌘K page search,
-// the collapsible sidebar and the phone dock.
+// The app shell (revamp Phase 4; widths widened in Phase 12): no sideways scrolling from a phone
+// to a 1920 px screen, the content's reading width on wide screens, the ⌘K page search, the
+// collapsible sidebar and the phone dock.
 
 const WIDTHS = [
+  { width: 1920, height: 1080 },
   { width: 1440, height: 900 },
   { width: 1280, height: 800 },
   { width: 1024, height: 768 },
@@ -12,7 +14,17 @@ const WIDTHS = [
   { width: 375, height: 812 },
 ] as const;
 
-const PAGES = ["/", "/campaigns", "/inbox", "/whatsapp/templates", "/connections"];
+const PAGES = [
+  "/",
+  "/campaigns",
+  "/breakdowns?tab=placement",
+  "/accounts",
+  "/social",
+  "/inbox",
+  "/whatsapp/templates",
+  "/connections",
+  "/organization",
+];
 
 /** How far the page scrolls sideways (0 when everything fits). */
 function sidewaysScroll(page: Page) {
@@ -33,6 +45,22 @@ for (const viewport of WIDTHS) {
     });
   });
 }
+
+test.describe("wide screens", () => {
+  test.use({ viewport: { width: 1920, height: 1080 } });
+
+  test("the content keeps its reading width, centred beside the sidebar", async ({ page }) => {
+    await page.goto("/campaigns");
+    await settled(page);
+    const main = (await page.locator("#main-content").boundingBox())!;
+    const column = (await page.locator("#main-content > div").first().boundingBox())!;
+    expect(column.width).toBeLessThanOrEqual(1280);
+    const left = column.x - main.x;
+    const right = main.x + main.width - (column.x + column.width);
+    expect(Math.abs(left - right)).toBeLessThanOrEqual(2);
+    await expect(page).toHaveScreenshot("campaigns-1920.png", { mask: volatile(page) });
+  });
+});
 
 test.describe("large screens", () => {
   test.use({ viewport: { width: 1440, height: 900 } });

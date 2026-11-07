@@ -69,6 +69,17 @@ export async function settled(page: Page, { gate = true }: { gate?: boolean } = 
   await page.evaluate(() => document.fonts.ready);
 }
 
+/** Follow the first link matching `selector` on `from` (seeded ids are not known up front). */
+export function firstLink(from: string, selector: string) {
+  return async (page: Page): Promise<string> => {
+    await page.goto(from);
+    await settled(page);
+    const href = await page.locator(selector).first().getAttribute("href");
+    if (!href) throw new Error(`No link ${selector} on ${from}; is the seed loaded?`);
+    return href;
+  };
+}
+
 /**
  * Masked in every screenshot:
  * - text that changes with background syncs (freshness notes, "last synced");
