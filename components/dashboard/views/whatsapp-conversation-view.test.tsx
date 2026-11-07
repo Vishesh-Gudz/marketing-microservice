@@ -17,7 +17,7 @@ vi.mock("next/navigation", async () => (await import("@/tests/unit/dashboard-har
 
 import WhatsAppConversationPage, {
   metadata,
-} from "@/app/(dashboard)/whatsapp/conversations/[conversationId]/page";
+} from "@/app/(dashboard)/(inbox)/whatsapp/conversations/[conversationId]/page";
 import { formatInstant } from "../freshness-note";
 import { WhatsAppConversationView } from "./whatsapp-conversation-view";
 

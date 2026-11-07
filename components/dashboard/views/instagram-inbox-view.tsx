@@ -8,10 +8,15 @@ import { api } from "@/convex/_generated/api";
 import { useOrg } from "@/lib/analytics/org-context";
 import { accountLabel, contactLabel } from "@/lib/instagram/messages";
 import { isReplyWindowOpen, useNow } from "@/lib/whatsapp/inbox";
+import { shortTime } from "@/lib/inbox/short-time";
 import { EmptyState } from "../empty-state";
 import { formatInstant } from "../freshness-note";
-import { ThreadList, ThreadListSkeleton } from "../messaging/thread-list";
-import { PageHeader } from "../page-header";
+import {
+  ListColumnHeader,
+  ListHeaderAction,
+  ThreadList,
+  ThreadListSkeleton,
+} from "../messaging/thread-list";
 import { QueryBoundary } from "../query-boundary";
 
 /** Conversations loaded per page, newest activity first. */
@@ -40,7 +45,7 @@ function ConversationList() {
   if (status === "LoadingFirstPage") return <ThreadListSkeleton />;
   if (results.length === 0) {
     return (
-      <EmptyState title="No conversations yet" action={<SettingsLink />}>
+      <EmptyState title="No conversations yet" action={<SettingsLink />} className="mx-3">
         Direct messages your customers send to your Instagram account appear here once direct
         messages are on for it. Turn them on in the Instagram DM settings.
       </EmptyState>
@@ -63,7 +68,8 @@ function ConversationList() {
                 ? { tone: "open" as const, label: "Reply window open" }
                 : { tone: "closed" as const, label: "Reply window closed" },
           at: conversation.lastMessageAt,
-          atText: formatInstant(conversation.lastMessageAt, timezone),
+          atText: shortTime(conversation.lastMessageAt, now, timezone),
+          atTitle: formatInstant(conversation.lastMessageAt, timezone),
         };
       })}
       canLoadMore={status !== "Exhausted"}
@@ -74,26 +80,30 @@ function ConversationList() {
 }
 
 /**
- * Instagram direct messages (ADR 0017, IM5): the org's conversations, most recent activity
- * first, each opening its thread. Every member may read; replying comes from the thread.
+ * Instagram direct messages (ADR 0017, IM5), as the inbox workspace's list column: the org's
+ * conversations, most recent activity first, each opening its thread beside the list. Every member may read; replying comes from the thread.
  * Turning direct messages on and off is on /instagram/messages/settings.
  */
-export function InstagramInboxView() {
+export function InstagramInboxView({ headingLevel = 1 }: { headingLevel?: 1 | 2 }) {
   return (
-    <div className="flex flex-col gap-6">
-      <PageHeader
+    <div className="flex flex-col">
+      <ListColumnHeader
         title="Instagram DMs"
-        description="Direct messages from your customers on your Instagram accounts."
+        description="Direct messages on your Instagram accounts."
+        headingLevel={headingLevel}
         actions={
-          <div className="flex flex-wrap gap-2">
-            <Button asChild variant="outline" size="sm">
-              <Link href="/instagram/messages/templates">
-                <FileText aria-hidden="true" />
-                Templates
-              </Link>
-            </Button>
-            <SettingsLink />
-          </div>
+          <>
+            <ListHeaderAction
+              href="/instagram/messages/templates"
+              label="Templates"
+              icon={FileText}
+            />
+            <ListHeaderAction
+              href="/instagram/messages/settings"
+              label="Instagram DM settings"
+              icon={Settings}
+            />
+          </>
         }
       />
       <QueryBoundary resetKey="instagram-conversations" title="Instagram conversations">

@@ -12,7 +12,7 @@ import {
 vi.mock("convex/react", async () => (await import("@/tests/unit/dashboard-harness")).convexReact);
 vi.mock("next/navigation", async () => (await import("@/tests/unit/dashboard-harness")).navigation);
 
-import InstagramMessagesPage, { metadata } from "@/app/(dashboard)/instagram/messages/page";
+import InstagramMessagesPage, { metadata } from "@/app/(dashboard)/(inbox)/instagram/messages/page";
 import { InstagramInboxView } from "./instagram-inbox-view";
 
 // The Instagram DM inbox (ADR 0017, IM5) through the dashboard harness: the org's
@@ -52,7 +52,12 @@ describe("Instagram DM inbox", () => {
   it("is the /instagram/messages route and pages through the conversations", () => {
     expect(metadata.title).toBe("Instagram DMs");
     queryResults.set(LIST, page([]));
+    // The page is the pane beside the workspace's list, before a conversation is chosen.
     renderWithOrg(<InstagramMessagesPage />);
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Choose a conversation" }),
+    ).toBeInTheDocument();
+    renderWithOrg(<InstagramInboxView />);
     expect(screen.getByRole("heading", { level: 1, name: "Instagram DMs" })).toBeInTheDocument();
     expect(lastArgs(LIST)).toEqual({ paginationOpts: { numItems: 25, cursor: null } });
   });

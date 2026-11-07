@@ -40,7 +40,7 @@ for (const width of [1440, 375] as const) {
       await page.goto("/whatsapp/conversations/demo");
       await settled(page);
       await expect(page.getByRole("heading", { level: 1, name: "Meera Iyer" })).toBeVisible();
-      const history = page.getByRole("region", { name: "Conversation" });
+      const history = page.getByRole("region", { name: "Conversation", exact: true });
       await expect(history.getByText("Thank you!")).toBeVisible();
       const gap = await history.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
       expect(gap).toBeLessThanOrEqual(2);
@@ -51,8 +51,9 @@ for (const width of [1440, 375] as const) {
       expect(replyBox.y).toBeGreaterThan(historyBox.y + historyBox.height - 1);
       const details = page.getByRole("complementary", { name: "Conversation details" });
       const detailsBox = (await details.boundingBox())!;
-      if (width === 1440) expect(detailsBox.x).toBeGreaterThan(historyBox.x + historyBox.width);
-      else expect(detailsBox.y).toBeGreaterThan(replyBox.y);
+      // In the workspace the pane is narrower than the screen: the details sit beside the
+      // history only when the pane itself is wide (a container query), so below it here.
+      expect(detailsBox.y).toBeGreaterThan(replyBox.y);
       await noSidewaysScroll(page);
       await expect(page).toHaveScreenshot(`whatsapp-conversation-${width}.png`, {
         fullPage: true,

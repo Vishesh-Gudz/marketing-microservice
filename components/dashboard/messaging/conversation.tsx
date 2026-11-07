@@ -11,7 +11,8 @@ import { SECTION_HEADING, SURFACE } from "../surface";
 
 /**
  * The conversation (message history that scrolls on its own, the reply area right under it) and
- * the details panel beside it from xl up, below it on smaller screens.
+ * the details panel beside it when its pane is at least 56rem wide (a container query), below it
+ * otherwise.
  */
 export function ConversationLayout({
   history,
@@ -23,7 +24,7 @@ export function ConversationLayout({
   details: ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-4 xl:grid xl:grid-cols-[minmax(0,1fr)_17rem] xl:items-start">
+    <div className="flex flex-col gap-4 @4xl:grid @4xl:grid-cols-[minmax(0,1fr)_17rem] @4xl:items-start">
       <div className={cn(SURFACE, "flex min-w-0 flex-col overflow-hidden")}>
         <section
           aria-label="Conversation"

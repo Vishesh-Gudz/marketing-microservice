@@ -44,11 +44,13 @@ export function AppShell({ children }: { children: ReactNode }) {
           <main
             id="main-content"
             tabIndex={-1}
-            className="min-w-0 flex-1 p-4 pb-24 outline-none md:p-6 md:pb-24 lg:pb-8"
+            className="min-w-0 flex-1 p-4 pb-24 outline-none md:p-6 md:pb-24 lg:pb-8 has-[[data-inbox-workspace]]:p-0 has-[[data-inbox-workspace]]:pb-20 lg:has-[[data-inbox-workspace]]:pb-0"
           >
             {gate.status === "ready" ? (
               <OrgProvider org={gate.org}>
-                <div className="mx-auto flex max-w-7xl flex-col gap-4">{children}</div>
+                <div className="mx-auto flex max-w-7xl flex-col gap-4 has-[[data-inbox-workspace]]:max-w-none">
+                  {children}
+                </div>
               </OrgProvider>
             ) : (
               <div className="mx-auto max-w-7xl">

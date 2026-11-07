@@ -12,7 +12,7 @@ import {
 vi.mock("convex/react", async () => (await import("@/tests/unit/dashboard-harness")).convexReact);
 vi.mock("next/navigation", async () => (await import("@/tests/unit/dashboard-harness")).navigation);
 
-import InboxPage, { metadata } from "@/app/(dashboard)/inbox/page";
+import InboxPage, { metadata } from "@/app/(dashboard)/(inbox)/inbox/page";
 import { InboxView } from "./inbox-view";
 
 // The unified inbox (ADR 0018, IM7.4) through the dashboard harness: every channel's
@@ -53,11 +53,20 @@ afterEach(() => {
 const rows = () => within(screen.getByRole("list", { name: "Conversations" })).getAllByRole("link");
 
 describe("unified inbox", () => {
-  it("is the /inbox route and pages through every channel by default", () => {
+  it("is the /inbox route: the list (in the workspace) pages through every channel", () => {
     expect(metadata.title).toBe("Inbox");
-    queryResults.set(LIST, page([]));
+    // The page itself is the pane beside the list, before a conversation is chosen.
     renderWithOrg(<InboxPage />);
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Choose a conversation" }),
+    ).toBeInTheDocument();
+    queryResults.set(LIST, page([]));
+    renderWithOrg(<InboxView />);
     expect(screen.getByRole("heading", { level: 1, name: "Inbox" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Saved replies" })).toHaveAttribute(
+      "href",
+      "/inbox/saved-replies",
+    );
     expect(lastArgs(LIST)).toEqual({ paginationOpts: { numItems: 25, cursor: null } });
   });
 
@@ -127,41 +136,20 @@ describe("unified inbox", () => {
     expect(screen.queryByText("Reply window open")).toBeNull();
   });
 
-  it("filters by channel, and keeps a filter selected", async () => {
+  it("is a level-2 heading while a conversation is open beside it", () => {
     queryResults.set(LIST, page([thread()]));
-    renderWithOrg(<InboxView />);
-    const group = screen.getByRole("group", { name: "Channel" });
-    const option = (name: string) => within(group).getByRole("radio", { name });
-
-    await act(async () => fireEvent.click(option("WhatsApp")));
-    expect(lastArgs(LIST)).toMatchObject({ channel: "whatsapp" });
-    await act(async () => fireEvent.click(option("Instagram")));
-    expect(lastArgs(LIST)).toMatchObject({ channel: "instagram" });
-    expect(option("Instagram")).toHaveAttribute("aria-checked", "true");
-    // Clicking the selected item again does not clear the choice.
-    await act(async () => fireEvent.click(option("Instagram")));
-    expect(option("Instagram")).toHaveAttribute("aria-checked", "true");
-    await act(async () => fireEvent.click(option("All")));
-    expect(lastArgs(LIST)).not.toHaveProperty("channel");
+    renderWithOrg(<InboxView headingLevel={2} />);
+    expect(screen.getByRole("heading", { level: 2, name: "Inbox" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
   });
 
-  it("explains an empty channel, loads more on request, and shows a failure as an error", async () => {
+  it("loads more on request, and shows a failure as an error", async () => {
     queryResults.set(LIST, page([thread()], false));
     renderWithOrg(<InboxView />);
     await act(async () =>
       fireEvent.click(screen.getByRole("button", { name: "Show more conversations" })),
     );
     expect(loadMoreMock).toHaveBeenCalledWith(25);
-
-    queryResults.set(LIST, page([]));
-    await act(async () =>
-      fireEvent.click(
-        within(screen.getByRole("group", { name: "Channel" })).getByRole("radio", {
-          name: "Instagram",
-        }),
-      ),
-    );
-    expect(screen.getByText(/Conversations from Instagram appear here/)).toBeInTheDocument();
 
     vi.spyOn(console, "error").mockImplementation(() => {});
     queryResults.set(LIST, () => {

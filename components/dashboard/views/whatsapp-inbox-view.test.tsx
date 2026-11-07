@@ -14,7 +14,7 @@ import {
 vi.mock("convex/react", async () => (await import("@/tests/unit/dashboard-harness")).convexReact);
 vi.mock("next/navigation", async () => (await import("@/tests/unit/dashboard-harness")).navigation);
 
-import WhatsAppPage, { metadata } from "@/app/(dashboard)/whatsapp/page";
+import WhatsAppPage, { metadata } from "@/app/(dashboard)/(inbox)/whatsapp/page";
 import { formatInstant } from "../freshness-note";
 import { WhatsAppInboxView } from "./whatsapp-inbox-view";
 
@@ -53,8 +53,17 @@ describe("WhatsApp inbox", () => {
   it("is the /whatsapp route, titled WhatsApp, with a link to the settings", () => {
     expect(metadata.title).toBe("WhatsApp");
     queryResults.set(LIST, { page: [], isDone: true, continueCursor: "" });
+    // The page is the pane beside the workspace's list, before a conversation is chosen.
     renderWithOrg(<WhatsAppPage />);
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Choose a conversation" }),
+    ).toBeInTheDocument();
+    renderWithOrg(<WhatsAppInboxView />);
     expect(screen.getByRole("heading", { level: 1, name: "WhatsApp" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Templates" })).toHaveAttribute(
+      "href",
+      "/whatsapp/templates",
+    );
     for (const link of screen.getAllByRole("link", { name: "WhatsApp settings" })) {
       expect(link).toHaveAttribute("href", "/whatsapp/settings");
     }
@@ -99,7 +108,10 @@ describe("WhatsApp inbox", () => {
     expect(first).toHaveTextContent("Ana");
     expect(first).toHaveTextContent("To +1 555-000-0001");
     expect(first).toHaveTextContent("Reply window open");
-    expect(first).toHaveTextContent(formatInstant("2026-10-24T11:30:00.000Z", ORG.timezone));
+    // A short time in the row ("30m"), the full date and time on hover.
+    const time = within(first).getByText("30m");
+    expect(time).toHaveAttribute("datetime", "2026-10-24T11:30:00.000Z");
+    expect(time).toHaveAttribute("title", formatInstant("2026-10-24T11:30:00.000Z", ORG.timezone));
 
     const second = within(items[1]!).getByRole("link");
     expect(second).toHaveAttribute("href", "/whatsapp/conversations/conv2");

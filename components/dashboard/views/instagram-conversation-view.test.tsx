@@ -19,7 +19,7 @@ vi.mock("next/navigation", async () => (await import("@/tests/unit/dashboard-har
 
 import InstagramConversationPage, {
   metadata,
-} from "@/app/(dashboard)/instagram/messages/conversations/[conversationId]/page";
+} from "@/app/(dashboard)/(inbox)/instagram/messages/conversations/[conversationId]/page";
 import { InstagramConversationView } from "./instagram-conversation-view";
 
 // One Instagram conversation (ADR 0017, IM5) through the dashboard harness: the thread, each
