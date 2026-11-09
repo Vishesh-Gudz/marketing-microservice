@@ -1,6 +1,7 @@
 import { OrganizationProfile } from "@clerk/nextjs";
 import type { Metadata } from "next";
 import { EmptyState } from "@/components/dashboard/empty-state";
+import { ReportingSettings } from "@/components/dashboard/organization/reporting-settings";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { CLERK_ENABLED } from "@/lib/auth/config";
 import { ORGANIZATION_PATH } from "@/lib/auth/mode";
@@ -18,6 +19,7 @@ const PROFILE_APPEARANCE = {
   },
 };
 
+// The reporting currency and time zone (C1) come first: they are this app's own settings.
 // D9: members, invitations and roles are managed with Clerk's embedded organization profile.
 // Clerk enforces who may invite or change roles; the backend reads the resulting role from
 // every token (org:admin, org:editor, org:viewer).
@@ -26,8 +28,9 @@ export default function OrganizationPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Organization"
-        description="Your organization's details, members, invitations and roles."
+        description="Your organization's reporting currency and time zone, members, invitations and roles."
       />
+      <ReportingSettings />
       {CLERK_ENABLED ? (
         <OrganizationProfile
           path={ORGANIZATION_PATH}

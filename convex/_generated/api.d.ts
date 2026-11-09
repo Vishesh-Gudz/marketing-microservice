@@ -10,6 +10,7 @@
 
 import type * as admin_fxRates from "../admin/fxRates.js";
 import type * as admin_integrationApps from "../admin/integrationApps.js";
+import type * as admin_orgDefaults from "../admin/orgDefaults.js";
 import type * as analytics_actions from "../analytics/actions.js";
 import type * as analytics_aggregate from "../analytics/aggregate.js";
 import type * as analytics_comparison from "../analytics/comparison.js";
@@ -260,6 +261,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   "admin/fxRates": typeof admin_fxRates;
   "admin/integrationApps": typeof admin_integrationApps;
+  "admin/orgDefaults": typeof admin_orgDefaults;
   "analytics/actions": typeof analytics_actions;
   "analytics/aggregate": typeof analytics_aggregate;
   "analytics/comparison": typeof analytics_comparison;

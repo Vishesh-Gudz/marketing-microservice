@@ -202,6 +202,12 @@ async function main() {
     await mintToken({ org, role: "admin", sub: "dev-seed", name: "Dev Organization" }),
   );
   await client.mutation(anyApi.v1.orgs.ensure, {});
+  // Real organizations start on INR and Asia/Kolkata (C1). The made-up accounts here use USD, IDR
+  // and JPY, and every screenshot and e2e run is recorded on USD and UTC: pin the dev org there.
+  await client.mutation(anyApi.v1.orgs.updateSettings, {
+    reportingCurrency: "USD",
+    timezone: "UTC",
+  });
   console.log(`Seeding org "${org}"…`);
 
   const connections = await client.query(anyApi.v1.connections.list, {});

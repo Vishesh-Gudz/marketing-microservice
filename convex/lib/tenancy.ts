@@ -40,7 +40,15 @@ export type TenantOptions = {
   minRole?: Role;
 };
 
-export const ORG_DEFAULTS = { reportingCurrency: "USD", timezone: "UTC" } as const;
+/**
+ * Settings of a newly provisioned organization (C1, 2026-11-09: the customers are in India).
+ * Admins change them with `v1/orgs:updateSettings` (the Organization page's Reporting card).
+ * Organizations created before on USD/UTC are switched once by `admin/orgDefaults`.
+ */
+export const ORG_DEFAULTS = { reportingCurrency: "INR", timezone: "Asia/Kolkata" } as const;
+
+/** The defaults before C1, kept to recognise organizations nobody has configured. */
+export const PREVIOUS_ORG_DEFAULTS = { reportingCurrency: "USD", timezone: "UTC" } as const;
 
 // ---------------------------------------------------------------------------
 // Resolution steps

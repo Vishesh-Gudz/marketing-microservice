@@ -109,7 +109,7 @@ Details: [sync.md](sync.md).
 ## Dashboard demo data (Phase 7)
 
 ```bash
-npm run dev:seed             # connects the mock providers, links 4 accounts, runs initial syncs
+npm run dev:seed             # pins the dev org to USD/UTC, connects the mock providers, links 4 accounts, runs initial syncs
 npm run dev:seed -- --resync # re-run a lookback sync for the seeded accounts
 ```
 

@@ -116,8 +116,14 @@ export function OrgBadge({ state }: { state: OrgGateState }) {
           <Badge variant="secondary" className={ORG_TAG}>
             {state.org.role}
           </Badge>
-          <Badge variant="outline" title="Reporting currency" className={ORG_TAG}>
-            {state.org.reportingCurrency}
+          <Badge variant="outline" className={ORG_TAG} asChild>
+            <Link
+              href="/organization#reporting"
+              title="Reporting currency: change it on the Organization page"
+              aria-label={`Reporting currency ${state.org.reportingCurrency}: change it on the Organization page`}
+            >
+              {state.org.reportingCurrency}
+            </Link>
           </Badge>
         </span>
       );

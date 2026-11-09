@@ -31,11 +31,17 @@ afterEach(() => {
 
 async function orgOf(t: Backend, who: IdentityInput = {}) {
   await setupSyncOrg(t, who);
-  return (await t.run(async (ctx) =>
+  const orgId = (await t.run(async (ctx) =>
     (await ctx.db.query("organizations").collect()).find(
       (o) => o.issuer === (who.issuer ?? "https://erp.example.test"),
     ),
   ))!._id;
+  // These expectations are written for a USD/UTC organization (the defaults before C1; new
+  // organizations now start on INR and Asia/Kolkata).
+  await t.run(async (ctx) => {
+    await ctx.db.patch(orgId, { reportingCurrency: "USD", timezone: "UTC" });
+  });
+  return orgId;
 }
 
 type AccountSeed = {

@@ -100,6 +100,9 @@ export const SYSTEM_INSTAGRAM_MESSAGING_SUBJECT = "system:instagram-messaging";
 /** Actor for audit entries written by Meta's Instagram deauthorize / data-deletion callbacks. */
 export const SYSTEM_INSTAGRAM_DATA_DELETION_SUBJECT = "system:instagram-data-deletion";
 
+/** Actor for audit entries written by the one-time switch to the INR/IST defaults (C1). */
+export const SYSTEM_ORG_DEFAULTS_SUBJECT = "system:org-defaults";
+
 /** Actor used for audit entries written by the YouTube retention jobs (ADR 0016). */
 export const SYSTEM_YOUTUBE_RETENTION_SUBJECT = "system:youtube-retention";
 

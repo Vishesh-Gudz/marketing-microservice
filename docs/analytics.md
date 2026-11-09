@@ -230,7 +230,13 @@ conversionActionExternalId, attributionWindow, attributionBasis, isPrimary)`. **
 
 ## Currency (FX)
 
-- Reporting currency: `organizations.reportingCurrency` (`v1/orgs:updateSettings`).
+- Reporting currency: `organizations.reportingCurrency` (`v1/orgs:updateSettings`; admins change it,
+  with the time zone, on the Organization page's Reporting card). New organizations start on
+  **INR** and **Asia/Kolkata** (`ORG_DEFAULTS`, C1, 2026-11-09). Organizations created before on
+  USD/UTC and never configured are switched once by the internal
+  `admin/orgDefaults:switchUntouched` (`{"dryRun":true}` first; audited as `org.settings.updated`
+  by `system:org-defaults`). The local dev seed pins the dev organization to USD/UTC, the values
+  its made-up accounts and every screenshot were recorded with.
 - Rates: the global `fxRates` reference table, **units of quote per 1 USD** (USD pivot), exact
   decimal strings with at most 12 fractional digits. Written only by internal
   `admin/fxRates:upsert` (`npx convex run admin/fxRates:upsert '{"rates":[{"quote":"EUR",

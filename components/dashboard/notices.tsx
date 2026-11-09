@@ -4,9 +4,11 @@ import { AlertTriangle, CheckCircle2, Info, XCircle } from "lucide-react";
 import Link from "next/link";
 import { createContext, Fragment, useContext, type ReactNode } from "react";
 import { api } from "@/convex/_generated/api";
+import { useOptionalOrg } from "@/lib/analytics/org-context";
 import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
 import type { Connection, Coverage, Fx } from "@/lib/analytics/types";
 import { AD_CONNECTION_PROVIDERS, PROVIDERS as AD_PROVIDERS } from "@/lib/connections/providers";
+import { soleAccountCurrency } from "@/lib/org/reporting";
 import { cn } from "@/lib/utils";
 
 // Gudz status tones: tinted surface + hairline in the tone, coloured icon, ink text (4.5:1+).
@@ -89,6 +91,31 @@ export function connectionsNeedingReauth(connections: readonly Connection[]): Co
   return connections.filter((c) => c.status === "needs_reauth");
 }
 
+/**
+ * C1: when every linked ad account reports in one currency other than the reporting one, the
+ * way out of missing exchange rates is to report in that currency: say so, with the way there
+ * (admins change it on the Organization page). Nothing outside the dashboard (no organization).
+ */
+function SoleCurrencyHint({ reportingCurrency }: { reportingCurrency: string }) {
+  const org = useOptionalOrg();
+  const { data: accounts } = useAnalyticsQuery(api.v1.adAccounts.list, org === null ? "skip" : {});
+  const currency = soleAccountCurrency(accounts);
+  if (org === null || currency === undefined || currency === reportingCurrency) return null;
+  return (
+    <p className="mt-1">
+      Your ad accounts all report in {currency}.{" "}
+      {org.role === "admin" ? (
+        <Link href="/organization#reporting" className="font-medium underline underline-offset-4">
+          Use {currency} as the reporting currency
+        </Link>
+      ) : (
+        <>Ask an admin to use {currency} as the reporting currency</>
+      )}{" "}
+      to see totals without exchange rates.
+    </p>
+  );
+}
+
 /** Reporting-currency conversion status (D11). */
 export function FxNotice({ fx }: { fx: Fx }) {
   if (fx.status === "not_needed") return null;
@@ -108,6 +135,7 @@ export function FxNotice({ fx }: { fx: Fx }) {
       Some amounts cannot be converted to {fx.reportingCurrency}
       {missing ? `: exchange rates are missing for ${missing}` : ""}. Those totals are shown per
       currency and are never added together.
+      <SoleCurrencyHint reportingCurrency={fx.reportingCurrency} />
     </Notice>
   );
 }

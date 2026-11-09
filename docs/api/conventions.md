@@ -108,6 +108,9 @@ to `convex/v2/`. The contract is formally frozen in Phase 13.
 | `v1/orgs:updateSettings` | `orgAdminMutation`              | `{ displayName?, reportingCurrency?, timezone? }` | `OrgDto`                   |
 | `v1/audit:list`          | `orgQuery` (`minRole: "admin"`) | `{ paginationOpts }`                              | `Paginated<AuditEntryDto>` |
 
+A new organization starts with `reportingCurrency: "INR"` and `timezone: "Asia/Kolkata"` (C1;
+before 2026-11-09 the defaults were USD and UTC). The contract is unchanged.
+
 Phase 6 analytics (`v1/analytics:overview`, `timeSeries`, `performance`, `breakdown`, `actions`;
 all `orgQuery`, viewer) are documented in [../analytics.md](../analytics.md). Phase 7 added one
 optional argument, `entity`, and one optional response field, `entity`, to `v1/analytics:overview`

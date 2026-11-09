@@ -24,14 +24,14 @@ describe("audit log", () => {
     const t = await setup();
     const admin = as(t, { sub: "alice" });
     await admin.mutation(api.v1.orgs.ensure, {});
-    await admin.mutation(api.v1.orgs.updateSettings, { timezone: "Asia/Kolkata" });
+    await admin.mutation(api.v1.orgs.updateSettings, { timezone: "Europe/Berlin" });
 
     const { page } = await admin.query(api.v1.audit.list, firstPage);
     expect(page.map((e) => e.action)).toEqual(["org.settings.updated", "org.provisioned"]);
     expect(page[0]).toMatchObject({
       subject: "alice",
       targetType: "organization",
-      changes: { timezone: { from: "UTC", to: "Asia/Kolkata" } },
+      changes: { timezone: { from: "Asia/Kolkata", to: "Europe/Berlin" } },
     });
     expect(Object.keys(page[0]!)).not.toContain("orgId");
   });
@@ -39,7 +39,8 @@ describe("audit log", () => {
   it("does not write an entry when settings are unchanged", async () => {
     const t = await setup();
     const admin = as(t);
-    await admin.mutation(api.v1.orgs.updateSettings, { timezone: "UTC" });
+    // The default of a new organization (C1).
+    await admin.mutation(api.v1.orgs.updateSettings, { timezone: "Asia/Kolkata" });
     const { page } = await admin.query(api.v1.audit.list, firstPage);
     expect(page.map((e) => e.action)).toEqual(["org.provisioned"]);
   });

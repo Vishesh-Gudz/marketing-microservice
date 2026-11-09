@@ -64,5 +64,21 @@ for (const role of ROLES) {
       await expect(page).toHaveTitle("Organization · Gudz Marketing");
       await expect(page.locator("main")).toContainText(/Organization/);
     });
+
+    test("reporting settings: only admins change them (C1)", async ({ page }) => {
+      await page.goto("/organization#reporting");
+      await settled(page);
+      const card = page.getByRole("region", { name: "Reporting" });
+      await expect(card).toBeVisible();
+      // The seed pins the dev organization to USD and UTC. Nothing is saved here.
+      if (admin) {
+        await expect(card.getByRole("combobox", { name: "Reporting currency" })).toHaveValue("USD");
+        await expect(card.getByRole("combobox", { name: "Time zone" })).toHaveValue("UTC");
+        await expect(card.getByRole("button", { name: "Save" })).toBeDisabled();
+      } else {
+        await expect(card.getByRole("combobox")).toHaveCount(0);
+        await expect(card).toContainText("Only admins can change these.");
+      }
+    });
   });
 }

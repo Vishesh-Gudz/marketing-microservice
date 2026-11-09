@@ -257,6 +257,18 @@ test.describe("wide", () => {
   });
 });
 
+test.describe("viewer", () => {
+  test.use({ role: "viewer" });
+  // The Reporting card without its form (C1).
+  test("axe as a viewer: organization", async ({ page }) => {
+    await check(
+      page,
+      { name: "organization", path: "/organization" },
+      "organization-viewer.axe.txt",
+    );
+  });
+});
+
 test.describe("phone", () => {
   test.use({ viewport: { width: 375, height: 812 } });
   for (const c of PHONE) {

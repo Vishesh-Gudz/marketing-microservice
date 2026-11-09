@@ -72,12 +72,12 @@ describe("Clerk organizations as tenants", () => {
     expect(globex.id).not.toBe(acme.id);
     expect(globex).toMatchObject({
       displayName: "Globex",
-      reportingCurrency: "USD",
+      reportingCurrency: "INR",
       role: "viewer",
     });
     expect(await as(t, GLOBEX_VIEWER).query(api.v1.orgs.me, {})).toMatchObject({
       id: globex.id,
-      reportingCurrency: "USD",
+      reportingCurrency: "INR",
     });
     expect(await as(t, ACME_ADMIN).query(api.v1.orgs.me, {})).toMatchObject({
       id: acme.id,

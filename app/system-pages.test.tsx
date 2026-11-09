@@ -1,5 +1,9 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { renderWithOrg } from "@/tests/unit/dashboard-harness";
+
+vi.mock("convex/react", async () => (await import("@/tests/unit/dashboard-harness")).convexReact);
+
 import DashboardError from "./(dashboard)/error";
 import DashboardNotFound from "./(dashboard)/not-found";
 import OrganizationPage, { metadata } from "./(dashboard)/organization/[[...organization]]/page";
@@ -38,8 +42,10 @@ describe("system pages", () => {
 
   it("the organization page is titled even without Clerk (dev token builds)", () => {
     expect(metadata.title).toBe("Organization");
-    render(<OrganizationPage />);
+    // Inside the dashboard (OrgGate): the Reporting card reads the organization (C1).
+    renderWithOrg(<OrganizationPage />);
     expect(screen.getByRole("heading", { level: 1, name: "Organization" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Reporting" })).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { level: 2, name: "Organization settings" }),
     ).toBeInTheDocument();

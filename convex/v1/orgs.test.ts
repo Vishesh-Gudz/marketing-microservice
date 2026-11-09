@@ -94,8 +94,9 @@ describe("provisioning", () => {
       externalOrgId: "42",
       issuer: ISSUER_ERP,
       displayName: "Acme Retail",
-      reportingCurrency: "USD",
-      timezone: "UTC",
+      // C1: new organizations start on India's currency and time zone.
+      reportingCurrency: "INR",
+      timezone: "Asia/Kolkata",
       role: "admin",
     });
     expect(second.role).toBe("viewer");

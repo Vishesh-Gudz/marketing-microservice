@@ -22,6 +22,11 @@ export function useOrg(): Org {
   return org;
 }
 
+/** The organization, or null outside OrgGate (for parts also rendered on their own). */
+export function useOptionalOrg(): Org | null {
+  return useContext(OrgContext);
+}
+
 /** Today in the org timezone; re-checked every minute so presets roll over at midnight. */
 export function useOrgToday(): string {
   const { timezone } = useOrg();

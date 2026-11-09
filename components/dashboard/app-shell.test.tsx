@@ -42,8 +42,13 @@ describe("AppShell / OrgGate", () => {
     expect(await screen.findByText("content")).toBeInTheDocument();
     expect(screen.getByTestId("org-badge")).toHaveTextContent("Dev Organization");
     expect(screen.getByTestId("org-badge")).toHaveTextContent("admin");
-    // The reporting currency is shown in the header.
+    // The reporting currency is shown in the header, and leads to where it is changed (C1).
     expect(screen.getByTestId("org-badge")).toHaveTextContent("USD");
+    expect(
+      screen.getByRole("link", {
+        name: "Reporting currency USD: change it on the Organization page",
+      }),
+    ).toHaveAttribute("href", "/organization#reporting");
     expect(ensureMock).toHaveBeenCalledOnce();
     expect(ensureMock).toHaveBeenCalledWith({});
   });
