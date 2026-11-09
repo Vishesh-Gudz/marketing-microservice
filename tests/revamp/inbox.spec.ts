@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { at, THREADS, withConversations } from "./fixtures";
+import { INSTAGRAM_CLOSED, THREADS, WHATSAPP_CLOSED, withConversations } from "./fixtures";
 import { expect, settled, test, volatile } from "./support";
 
 // The inbox and conversation pages (revamp Phase 9, Kinso K2-K4). The seeded organization has no
@@ -117,6 +117,26 @@ test.describe("phones", () => {
     });
   });
 
+  test("a closed WhatsApp window keeps a locked message box above the dock (L1)", async ({
+    page,
+  }) => {
+    await withConversations(page, WHATSAPP_CLOSED);
+    await page.goto("/whatsapp/conversations/demo");
+    await settled(page);
+    const reply = page.getByRole("region", { name: "Reply" });
+    await expect(reply.getByText("The 24-hour reply window is closed")).toBeVisible();
+    await expect(reply.getByText(/You can type here again as soon as they write/)).toBeVisible();
+    await expect(reply.getByRole("textbox")).toHaveCount(0);
+    const template = reply.getByRole("button", { name: "Choose a template" });
+    await expect(template).toBeVisible();
+    const box = (await template.boundingBox())!;
+    expect(box.y + box.height).toBeLessThanOrEqual(812 - DOCK);
+    await noSidewaysScroll(page);
+    await expect(page).toHaveScreenshot("whatsapp-conversation-closed-375.png", {
+      mask: volatile(page),
+    });
+  });
+
   test("the back arrow returns to the unified inbox a conversation was opened from", async ({
     page,
   }) => {
@@ -163,18 +183,43 @@ test.describe("large screens", () => {
     });
   });
 
-  test("a closed WhatsApp window offers a template first", async ({ page }) => {
-    await withConversations(page, { serviceWindowExpiresAt: at(-30) });
+  test("a closed WhatsApp window locks the message box and offers a template", async ({ page }) => {
+    await withConversations(page, WHATSAPP_CLOSED);
     await page.goto("/whatsapp/conversations/demo");
     await settled(page);
     await expect(
       page.locator("[data-conversation-pane] header").getByText("Templates only"),
     ).toBeVisible();
     const reply = page.getByRole("region", { name: "Reply" });
+    // L1: a locked box in place of the field says why, and that typing comes back by itself.
     await expect(reply.getByText("The 24-hour reply window is closed")).toBeVisible();
+    await expect(
+      reply.getByText(
+        /^Meera Iyer last wrote yesterday at .+\. You can type here again as soon as they write\. Until then, WhatsApp allows only approved templates\.$/,
+      ),
+    ).toBeVisible();
     await expect(reply.getByRole("textbox", { name: "Message" })).toHaveCount(0);
     await expect(reply.getByRole("button", { name: "Choose a template" })).toBeVisible();
     await expect(page).toHaveScreenshot("whatsapp-conversation-closed-1440.png", {
+      mask: volatile(page),
+    });
+  });
+
+  test("a closed Instagram window locks the message box (L1)", async ({ page }) => {
+    await withConversations(page, {}, INSTAGRAM_CLOSED);
+    await page.goto("/instagram/messages/conversations/demo");
+    await settled(page);
+    await expect(
+      page.locator("[data-conversation-pane] header").getByText("Reply window closed"),
+    ).toBeVisible();
+    const reply = page.getByRole("region", { name: "Reply" });
+    await expect(reply.getByText("The 24-hour reply window is closed")).toBeVisible();
+    await expect(
+      reply.getByText(/^@vikram\.designs last wrote yesterday at .+ You can type here again/),
+    ).toBeVisible();
+    await expect(reply.getByRole("textbox")).toHaveCount(0);
+    await expect(reply.getByRole("button")).toHaveCount(0);
+    await expect(page).toHaveScreenshot("instagram-conversation-closed-1440.png", {
       mask: volatile(page),
     });
   });

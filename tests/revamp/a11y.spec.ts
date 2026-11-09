@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
-import { at, withMessagingData } from "./fixtures";
+import { INSTAGRAM_CLOSED, WHATSAPP_CLOSED, withMessagingData } from "./fixtures";
 import { expect, firstLink, settled, test } from "./support";
 
 // Accessibility (axe: WCAG 2.2 A/AA plus axe's best practices). Each page or open state keeps
@@ -25,6 +25,8 @@ type Case = {
   data?: boolean;
   /** With `data`: changes to the open WhatsApp conversation. */
   whatsapp?: Record<string, unknown>;
+  /** With `data`: changes to the open Instagram conversation. */
+  instagram?: Record<string, unknown>;
   /** Open a form, dialog or sheet before the check. */
   open?: (page: Page) => Promise<void>;
 };
@@ -126,7 +128,13 @@ const STATES: Case[] = [
     name: "whatsapp-conversation-closed",
     path: "/whatsapp/conversations/demo",
     data: true,
-    whatsapp: { serviceWindowExpiresAt: at(-30) },
+    whatsapp: WHATSAPP_CLOSED,
+  },
+  {
+    name: "instagram-conversation-closed",
+    path: "/instagram/messages/conversations/demo",
+    data: true,
+    instagram: INSTAGRAM_CLOSED,
   },
   {
     // The second fixture number is not registered yet: replies unavailable (D-M3).
@@ -169,6 +177,12 @@ const PHONE: Case[] = [
     data: true,
     open: openDetails,
   },
+  {
+    name: "whatsapp-conversation-closed",
+    path: "/whatsapp/conversations/demo",
+    data: true,
+    whatsapp: WHATSAPP_CLOSED,
+  },
   { name: "instagram-templates-list", path: "/instagram/messages/templates", data: true },
   {
     name: "menu-sheet",
@@ -209,7 +223,7 @@ async function summary(page: Page): Promise<string> {
 }
 
 async function check(page: Page, c: Case, file: string) {
-  if (c.data) await withMessagingData(page, c.whatsapp);
+  if (c.data) await withMessagingData(page, c.whatsapp, c.instagram);
   const path = typeof c.path === "string" ? c.path : await c.path(page);
   await page.goto(path);
   if (c.name.endsWith("not-found")) {

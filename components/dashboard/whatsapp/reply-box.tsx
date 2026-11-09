@@ -11,7 +11,12 @@ import { cn } from "@/lib/utils";
 import { MAX_REPLY_CHARS, newClientMessageId } from "@/lib/whatsapp/inbox";
 import { sendErrorNotice } from "@/lib/whatsapp/messages";
 import { ConnectionNotice } from "../connections/connection-notice";
-import { COMPOSER_FIELD } from "../messaging/conversation";
+import {
+  COMPOSER_FIELD,
+  LockTitle,
+  LockedComposer,
+  type ReplyLock,
+} from "../messaging/conversation";
 import { SavedReplyPicker } from "../messaging/saved-reply-picker";
 
 /**
@@ -22,17 +27,21 @@ import { SavedReplyPicker } from "../messaging/saved-reply-picker";
  *
  * `closed` (D-M5): the window closed (or the number cannot send) while the box was open. The box
  * stays mounted, so a typed draft is kept, read-only, until it is discarded or the window opens
- * again; nothing can be sent from it meanwhile. With no draft it shows nothing.
+ * again; nothing can be sent from it meanwhile. With no draft it shows the locked composer
+ * (`lock`, L1) or, without one (the number cannot send: the view shows why), nothing.
  */
 export function ReplyBox({
   conversationId,
   contactName,
   closed = false,
+  lock,
 }: {
   conversationId: string;
   /** For saved replies (ADR 0021): fills in `{{customer_name}}`. */
   contactName?: string;
   closed?: boolean;
+  /** Why replying is paused (the window closed): shown in place of the field while `closed`. */
+  lock?: ReplyLock | undefined;
 }) {
   const sendText = useMutation(api.v1.whatsapp.sendText);
   const [text, setText] = useState("");
@@ -63,15 +72,18 @@ export function ReplyBox({
     }
   }
 
-  if (closed && text === "") return null;
+  if (closed && text === "") return lock !== undefined ? <LockedComposer lock={lock} /> : null;
 
   return (
     <form className="flex flex-col gap-2" onSubmit={(event) => void submit(event)}>
       {notice && <ConnectionNotice notice={notice} />}
       {closed ? (
-        <p className="text-xs text-muted-foreground">
-          Your unsent draft is kept here. It can be sent if the customer writes again.
-        </p>
+        <>
+          {lock !== undefined && <LockTitle title={lock.title} />}
+          <p className="text-xs text-muted-foreground">
+            Your unsent draft is kept here. It can be sent if the customer writes again.
+          </p>
+        </>
       ) : (
         <SavedReplyPicker
           channel="whatsapp"

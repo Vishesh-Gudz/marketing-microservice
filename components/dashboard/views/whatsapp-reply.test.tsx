@@ -119,16 +119,39 @@ describe("who may reply", () => {
     expect(screen.getByRole("button", { name: "Choose a template" })).toBeInTheDocument();
   });
 
-  it("offers only templates once the reply window has closed", () => {
-    show({ serviceWindowExpiresAt: "2026-10-24T11:59:00.000Z" });
+  it("locks the reply box and offers only templates once the reply window has closed (L1)", () => {
+    show({
+      lastInboundAt: "2026-10-22T09:00:00.000Z",
+      serviceWindowExpiresAt: "2026-10-23T09:00:00.000Z",
+    });
     expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
-    expect(screen.getByText("The 24-hour reply window is closed")).toBeInTheDocument();
+    const reply = screen.getByRole("region", { name: "Reply" });
+    expect(within(reply).getByText("The 24-hour reply window is closed")).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "The customer last wrote more than 24 hours ago: only approved templates can be sent.",
+      within(reply).getByText(
+        /^Ana last wrote on Thursday at .+\. You can type here again as soon as they write\. Until then, WhatsApp allows only approved templates\.$/,
       ),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Choose a template" })).toBeInTheDocument();
+    expect(within(reply).getByRole("button", { name: "Choose a template" })).toBeInTheDocument();
+  });
+
+  it("falls back to the general words when the API has no time of the last message", () => {
+    show({ lastInboundAt: undefined, serviceWindowExpiresAt: "2026-10-23T09:00:00.000Z" });
+    expect(
+      screen.getByText(/^The customer last wrote more than 24 hours ago\. You can type here again/),
+    ).toBeInTheDocument();
+  });
+
+  it("unlocks by itself when the customer writes again (L1)", () => {
+    const closed = { serviceWindowExpiresAt: "2026-10-24T11:59:00.000Z" };
+    const { rerender } = show(closed);
+    expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
+    // A new message from the customer moves the window forward on the live conversation.
+    queryResults.set("v1/whatsapp:getConversation", conversation());
+    rerender(<WhatsAppConversationView conversationId="conv1" />);
+    expect(messageBox()).toBeInTheDocument();
+    expect(screen.queryByText("The 24-hour reply window is closed")).toBeNull();
+    expect(screen.queryByText(/You can type here again/)).toBeNull();
   });
 });
 
@@ -145,6 +168,9 @@ describe("a draft when the reply window closes (D-M5)", () => {
     expect(messageBox()).toHaveValue("Your order ships today");
     expect(messageBox()).toHaveAttribute("readonly");
     expect(screen.getByText(/Your unsent draft is kept here/)).toBeInTheDocument();
+    // The lock's title line sits above the kept draft; its sentence waits for the empty box.
+    expect(screen.getByText("The 24-hour reply window is closed")).toBeInTheDocument();
+    expect(screen.queryByText(/You can type here again/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
     await act(async () => {
       fireEvent.submit(messageBox().closest("form")!);
@@ -154,6 +180,7 @@ describe("a draft when the reply window closes (D-M5)", () => {
     expect(screen.getByRole("button", { name: "Choose a template" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Discard draft" }));
     expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
+    expect(screen.getByText(/You can type here again as soon as they write/)).toBeInTheDocument();
   });
 
   it("offers the kept draft for sending again when the customer writes", async () => {
@@ -219,6 +246,8 @@ describe("a number that cannot send (D-M3)", () => {
     expect(screen.getByText(title)).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Choose a template" })).toBeNull();
+    // Waiting would not help here, so no locked box promises that typing comes back.
+    expect(screen.queryByText(/You can type here/)).toBeNull();
     expect(screen.getByRole("link", { name: "Open the WhatsApp settings" })).toHaveAttribute(
       "href",
       "/whatsapp/settings",

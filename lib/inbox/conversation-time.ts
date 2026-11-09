@@ -40,6 +40,19 @@ export function clockTime(iso: string, timeZone: string): string {
 }
 
 /**
+ * When the customer last wrote, for the middle of a sentence (L1): "today at 2:30 PM",
+ * "yesterday at 2:30 PM", "on Tuesday at 2:30 PM" within the last week, "on Nov 3 at 2:30 PM"
+ * (with the year before this one) further back. A time in the future (clock skew) reads "today".
+ */
+export function lastWrote(iso: string, now: number, timeZone: string): string {
+  const days = daysBetween(dayKey(Date.parse(iso), timeZone), dayKey(now, timeZone));
+  const time = clockTime(iso, timeZone);
+  if (days <= 0) return `today at ${time}`;
+  if (days === 1) return `yesterday at ${time}`;
+  return `on ${dayLabel(iso, now, timeZone)} at ${time}`;
+}
+
+/**
  * How long is left before `expiresAt`, rounded down: "2d left" from two days, "21h left" from
  * an hour, "35m left" below (at least "1m left"). Undefined once it has passed.
  */

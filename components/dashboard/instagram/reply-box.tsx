@@ -15,7 +15,12 @@ import { LIMITS } from "@/lib/messaging/saved-replies";
 import { cn } from "@/lib/utils";
 import { newClientMessageId } from "@/lib/whatsapp/inbox";
 import { ConnectionNotice } from "../connections/connection-notice";
-import { COMPOSER_FIELD } from "../messaging/conversation";
+import {
+  COMPOSER_FIELD,
+  LockTitle,
+  LockedComposer,
+  type ReplyLock,
+} from "../messaging/conversation";
 import { SavedReplyPicker } from "../messaging/saved-reply-picker";
 import { TemplatePicker } from "./template-picker";
 
@@ -33,7 +38,8 @@ import { TemplatePicker } from "./template-picker";
  *
  * `closed` (D-M5): no reply can be sent any more (the window closed, or the account cannot
  * send). The box stays mounted, so a typed draft is kept, read-only, until it is discarded or a
- * reply is allowed again. With no draft it shows nothing.
+ * reply is allowed again. With no draft it shows the locked composer (`lock`, L1) or, without
+ * one (the account cannot send: the view shows why), nothing.
  */
 export function ReplyBox({
   accountId,
@@ -41,12 +47,15 @@ export function ReplyBox({
   contactName,
   humanAgent = false,
   closed = false,
+  lock,
 }: {
   accountId: string;
   conversationId: string;
   contactName?: string;
   humanAgent?: boolean;
   closed?: boolean;
+  /** Why replying is paused (the window closed): shown in place of the field while `closed`. */
+  lock?: ReplyLock | undefined;
 }) {
   const sendText = useMutation(api.v1.instagramMessaging.sendText);
   const [text, setText] = useState("");
@@ -105,15 +114,20 @@ export function ReplyBox({
     }
   }
 
-  if (closed && text === "" && quickReplies.length === 0) return null;
+  if (closed && text === "" && quickReplies.length === 0) {
+    return lock !== undefined ? <LockedComposer lock={lock} /> : null;
+  }
 
   return (
     <form className="flex flex-col gap-2" onSubmit={(event) => void submit(event)}>
       {notice && <ConnectionNotice notice={notice} />}
       {closed ? (
-        <p className="text-xs text-muted-foreground">
-          Your unsent draft is kept here. It can be sent if the customer writes again.
-        </p>
+        <>
+          {lock !== undefined && <LockTitle title={lock.title} />}
+          <p className="text-xs text-muted-foreground">
+            Your unsent draft is kept here. It can be sent if the customer writes again.
+          </p>
+        </>
       ) : (
         <>
           {humanAgent && (

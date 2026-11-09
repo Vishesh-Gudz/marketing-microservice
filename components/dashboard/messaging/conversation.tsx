@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, Clock, PanelRight, TriangleAlert } from "lucide-react";
+import { ArrowLeft, ArrowRight, Lock, PanelRight, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { ChannelLogo } from "@/components/brand/channel-logo";
@@ -444,41 +444,56 @@ export const NOTICE_LINK =
   "self-start font-medium text-ink underline underline-offset-4 hover:text-blue-deep";
 
 /**
- * A notice at the top of the composer when no text reply can be sent: the window has closed
- * (neutral) or the account cannot send (a warning). `action` is the way forward.
+ * A warning at the top of the composer when the account or number cannot send at all; the fix
+ * is in the settings, so `action` links there.
  */
 export function ComposerNotice({
-  tone,
   title,
   children,
   action,
 }: {
-  tone: "closed" | "unavailable";
   title: string;
   children: ReactNode;
   action?: ReactNode;
 }) {
-  const Icon = tone === "unavailable" ? TriangleAlert : Clock;
   return (
-    <div
-      className={cn(
-        "flex flex-col gap-1.5 rounded-[10px] px-3 py-2.5 text-sm",
-        tone === "unavailable" ? "bg-amber-tint" : "bg-canvas",
-      )}
-    >
-      <p
-        className={cn(
-          "flex items-center gap-2 font-medium",
-          tone === "unavailable" ? "text-amber-ink" : "text-ink",
-        )}
-      >
-        <Icon aria-hidden="true" className="size-4 shrink-0" />
+    <div className="flex flex-col gap-1.5 rounded-[10px] bg-amber-tint px-3 py-2.5 text-sm">
+      <p className="flex items-center gap-2 font-medium text-amber-ink">
+        <TriangleAlert aria-hidden="true" className="size-4 shrink-0" />
         {title}
       </p>
-      <div className={tone === "unavailable" ? "text-ink-2" : "text-muted-foreground"}>
-        {children}
-      </div>
+      <div className="text-ink-2">{children}</div>
       {action}
+    </div>
+  );
+}
+
+/** Why replying is paused, and when typing opens again (L1). */
+export type ReplyLock = { title: string; detail?: string };
+
+/** The locked composer's first line: a lock and why. Also shown above a kept draft (D-M5). */
+export function LockTitle({ title }: { title: string }) {
+  return (
+    <p className="flex items-center gap-2 text-sm font-medium text-ink">
+      <Lock aria-hidden="true" className="size-4 shrink-0" />
+      {title}
+    </p>
+  );
+}
+
+/**
+ * The reply area while replying is paused (L1): a panel the size and shape of the message
+ * field, with a lock, saying why and when typing opens again, so the box reads as paused rather
+ * than missing. Text, not a disabled field: it is read in order under the "Reply" heading and
+ * stays readable. It turns back into the field by itself when the reply window opens.
+ */
+export function LockedComposer({ lock }: { lock: ReplyLock }) {
+  return (
+    <div className="flex min-h-20 flex-col gap-1.5 rounded-[10px] border border-dashed border-line bg-canvas px-3 py-2.5">
+      <LockTitle title={lock.title} />
+      {lock.detail !== undefined && (
+        <p className="text-sm text-pretty text-muted-foreground">{lock.detail}</p>
+      )}
     </div>
   );
 }

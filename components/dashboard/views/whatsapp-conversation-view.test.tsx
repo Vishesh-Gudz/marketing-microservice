@@ -142,21 +142,35 @@ describe("WhatsApp conversation", () => {
   it.each([
     [
       "the window has closed",
-      { serviceWindowExpiresAt: "2026-10-24T11:59:59.000Z" },
+      {
+        lastInboundAt: "2026-10-23T11:59:59.000Z",
+        serviceWindowExpiresAt: "2026-10-24T11:59:59.000Z",
+      },
       "The customer last wrote more than 24 hours ago: only approved templates can be sent.",
+      "The 24-hour reply window is closed",
+      `Ana last wrote yesterday at ${clockTime("2026-10-23T11:59:59.000Z", ORG.timezone)}. You can type here again as soon as they write. Until then, WhatsApp allows only approved templates.`,
     ],
     [
       "the customer has not written",
       { serviceWindowExpiresAt: undefined, lastInboundAt: undefined },
       "The customer has not written yet: only approved templates can be sent.",
+      "Waiting for the customer to write",
+      "You can type here once Ana writes to this number. Until then, WhatsApp allows only approved templates.",
     ],
-  ])("says templates only when %s", (_label, overrides, text) => {
-    queryResults.set(GET, conversation(overrides));
-    queryResults.set(MESSAGES, page([]));
-    renderWithOrg(<WhatsAppConversationView conversationId="conv1" />);
-    expect(screen.getByText("Templates only")).toBeInTheDocument();
-    expect(screen.getByText(text)).toBeInTheDocument();
-  });
+  ])(
+    "says templates only and locks the reply box when %s",
+    (_label, overrides, why, title, detail) => {
+      queryResults.set(GET, conversation(overrides));
+      queryResults.set(MESSAGES, page([]));
+      renderWithOrg(<WhatsAppConversationView conversationId="conv1" />);
+      expect(screen.getByText("Templates only")).toHaveAttribute("title", why);
+      const reply = screen.getByRole("region", { name: "Reply" });
+      expect(within(reply).getByText(title)).toBeInTheDocument();
+      expect(within(reply).getByText(detail)).toBeInTheDocument();
+      expect(within(reply).queryByRole("textbox")).toBeNull();
+      expect(within(reply).getByRole("button", { name: "Choose a template" })).toBeInTheDocument();
+    },
+  );
 
   it("shows the thread oldest at the top, with who wrote, when, and each reply's status", () => {
     queryResults.set(GET, conversation());

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { api } from "@/convex/_generated/api";
 import { useOrg } from "@/lib/analytics/org-context";
 import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
-import { timeLeft } from "@/lib/inbox/conversation-time";
+import { lastWrote, timeLeft } from "@/lib/inbox/conversation-time";
 import {
   accountLabel,
   contactLabel,
@@ -33,6 +33,7 @@ import {
   ConversationPane,
   ConversationPaneSkeleton,
   DetailsList,
+  LockedComposer,
   MessageItem,
   MessageList,
   MessageMeta,
@@ -41,11 +42,40 @@ import {
   MessageTimeline,
   ReplyHeading,
   ReplyWindowChip,
+  type ReplyLock,
 } from "../messaging/conversation";
 import { QueryBoundary } from "../query-boundary";
 
 /** Messages loaded per page; the thread shows the newest, oldest at the top. */
 const MESSAGES_PER_PAGE = 30;
+
+/**
+ * The locked composer's words (L1) when the customer's window has closed or never opened: why
+ * typing is paused and that it opens again as soon as they write (the conversation is live, so
+ * the field comes back by itself). The 7-day Human Agent limit is named only while that switch is
+ * on (the API then carries `humanAgentWindowExpiresAt`).
+ */
+function replyLock(conversation: InstagramConversation, now: number, timeZone: string): ReplyLock {
+  const contact = contactLabel(conversation);
+  if (conversation.replyWindowExpiresAt === undefined) {
+    return {
+      title: "Waiting for the customer to write",
+      detail: `You can type here once ${contact} messages this account. Instagram allows a reply only after they do.`,
+    };
+  }
+  const when =
+    conversation.lastInboundAt !== undefined
+      ? `${contact} last wrote ${lastWrote(conversation.lastInboundAt, now, timeZone)}.`
+      : "The customer last wrote more than 24 hours ago.";
+  const limit =
+    conversation.humanAgentWindowExpiresAt !== undefined
+      ? "Instagram allows replies only within 24 hours of the customer's last message, or 7 days for a human agent reply."
+      : "Instagram allows replies only within 24 hours of the customer's last message.";
+  return {
+    title: "The 24-hour reply window is closed",
+    detail: `${when} You can type here again as soon as they write. ${limit}`,
+  };
+}
 
 /**
  * Whether a reply can be sent right now and how (the server decides again): within the 24-hour
@@ -229,15 +259,15 @@ function Thread({ conversation }: { conversation: InstagramConversation }) {
 /**
  * Replying, for editors and admins, only when the server would accept a reply now: the account
  * can send (no `replyBlocker`) and the customer's 24-hour window is open (re-checked every 30
- * seconds; the server decides again). Viewers read only. The reply box stays in place when
- * replies stop, so a typed draft is kept (D-M5).
+ * seconds; the server decides again). Viewers read only. While the window is closed the reply
+ * box shows as locked (L1); it stays in place when replies stop, so a typed draft is kept (D-M5).
  */
 function Composer({ conversation }: { conversation: InstagramConversation }) {
-  const { role } = useOrg();
+  const { role, timezone } = useOrg();
   const now = useNow();
   const headingId = useId();
   if (role !== "admin" && role !== "editor") {
-    return <p className="text-sm text-muted-foreground">Only editors and admins can reply.</p>;
+    return <LockedComposer lock={{ title: "Only editors and admins can reply." }} />;
   }
   const reply = replyModeOf(conversation, now);
   const contactName = conversation.contactName ?? conversation.contactUsername;
@@ -245,25 +275,14 @@ function Composer({ conversation }: { conversation: InstagramConversation }) {
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
       <ReplyHeading id={headingId} />
-      {"blocked" in reply && (
+      {conversation.replyBlocker !== undefined && "blocked" in reply && (
         <ComposerNotice
-          tone={unavailable ? "unavailable" : "closed"}
-          title={
-            conversation.replyBlocker !== undefined
-              ? replyBlockerTitle(conversation.replyBlocker)
-              : conversation.replyWindowExpiresAt === undefined
-                ? "Waiting for the customer to write"
-                : "The 24-hour reply window is closed"
+          title={replyBlockerTitle(conversation.replyBlocker)}
+          action={
+            <Link href="/instagram/messages/settings" className={NOTICE_LINK}>
+              Open the Instagram DM settings
+            </Link>
           }
-          {...(unavailable
-            ? {
-                action: (
-                  <Link href="/instagram/messages/settings" className={NOTICE_LINK}>
-                    Open the Instagram DM settings
-                  </Link>
-                ),
-              }
-            : {})}
         >
           {reply.blocked}
         </ComposerNotice>
@@ -274,6 +293,9 @@ function Composer({ conversation }: { conversation: InstagramConversation }) {
         {...(contactName !== undefined ? { contactName } : {})}
         humanAgent={"mode" in reply && reply.mode === "human_agent"}
         closed={"blocked" in reply}
+        lock={
+          "blocked" in reply && !unavailable ? replyLock(conversation, now, timezone) : undefined
+        }
       />
     </section>
   );

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { api } from "@/convex/_generated/api";
 import { useOrg } from "@/lib/analytics/org-context";
 import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
-import { timeLeft } from "@/lib/inbox/conversation-time";
+import { lastWrote, timeLeft } from "@/lib/inbox/conversation-time";
 import {
   businessNumberLabel,
   contactLabel,
@@ -27,6 +27,7 @@ import {
   ConversationPane,
   ConversationPaneSkeleton,
   DetailsList,
+  LockedComposer,
   MessageItem,
   MessageList,
   MessageMeta,
@@ -35,6 +36,7 @@ import {
   MessageTimeline,
   ReplyHeading,
   ReplyWindowChip,
+  type ReplyLock,
 } from "../messaging/conversation";
 import { QueryBoundary } from "../query-boundary";
 import { ReplyBox } from "../whatsapp/reply-box";
@@ -48,6 +50,30 @@ function closedText(conversation: WhatsAppConversation): string {
   return conversation.serviceWindowExpiresAt === undefined
     ? "The customer has not written yet: only approved templates can be sent."
     : "The customer last wrote more than 24 hours ago: only approved templates can be sent.";
+}
+
+/**
+ * The locked composer's words (L1): why typing is paused, when it opens again (as soon as the
+ * customer writes; the conversation is live, so the field comes back by itself) and what can be
+ * sent meanwhile.
+ */
+function replyLock(conversation: WhatsAppConversation, now: number, timeZone: string): ReplyLock {
+  const contact = contactLabel(conversation);
+  const meanwhile = "Until then, WhatsApp allows only approved templates.";
+  if (conversation.serviceWindowExpiresAt === undefined) {
+    return {
+      title: "Waiting for the customer to write",
+      detail: `You can type here once ${contact} writes to this number. ${meanwhile}`,
+    };
+  }
+  const when =
+    conversation.lastInboundAt !== undefined
+      ? `${contact} last wrote ${lastWrote(conversation.lastInboundAt, now, timeZone)}.`
+      : "The customer last wrote more than 24 hours ago.";
+  return {
+    title: "The 24-hour reply window is closed",
+    detail: `${when} You can type here again as soon as they write. ${meanwhile}`,
+  };
 }
 
 /**
@@ -188,8 +214,8 @@ function Thread({ conversation }: { conversation: WhatsAppConversation }) {
 /**
  * Replying, for editors and admins: a text reply while the reply window is open (the server
  * decides again), and an approved template at any time. Viewers read only. When the number
- * cannot send (D-M3) neither is offered. The reply box stays in place when the window closes,
- * so a typed draft is kept (D-M5).
+ * cannot send (D-M3) neither is offered. While the window is closed the reply box shows as
+ * locked (L1); it stays in place, so a typed draft is kept (D-M5).
  */
 function Composer({
   conversation,
@@ -198,20 +224,19 @@ function Composer({
   conversation: WhatsAppConversation;
   blocker: NumberSendBlocker | undefined;
 }) {
-  const { role } = useOrg();
+  const { role, timezone } = useOrg();
   const now = useNow();
   const headingId = useId();
   if (role !== "admin" && role !== "editor") {
-    return <p className="text-sm text-muted-foreground">Only editors and admins can reply.</p>;
+    return <LockedComposer lock={{ title: "Only editors and admins can reply." }} />;
   }
   const open = isReplyWindowOpen(conversation.serviceWindowExpiresAt, now);
   const refusal = blocker !== undefined ? SEND_ERROR_MESSAGES[blocker]! : undefined;
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
       <ReplyHeading id={headingId} />
-      {refusal !== undefined ? (
+      {refusal !== undefined && (
         <ComposerNotice
-          tone="unavailable"
           title={refusal.title}
           action={
             <Link href="/whatsapp/settings" className={NOTICE_LINK}>
@@ -221,19 +246,6 @@ function Composer({
         >
           {refusal.message}
         </ComposerNotice>
-      ) : (
-        !open && (
-          <ComposerNotice
-            tone="closed"
-            title={
-              conversation.serviceWindowExpiresAt === undefined
-                ? "Waiting for the customer to write"
-                : "The 24-hour reply window is closed"
-            }
-          >
-            {closedText(conversation)}
-          </ComposerNotice>
-        )
       )}
       <ReplyBox
         conversationId={conversation.id}
@@ -241,6 +253,7 @@ function Composer({
           ? { contactName: conversation.contactName }
           : {})}
         closed={!open || refusal !== undefined}
+        lock={!open && refusal === undefined ? replyLock(conversation, now, timezone) : undefined}
       />
       {refusal === undefined && (
         <TemplatePicker conversationId={conversation.id} prominent={!open} />

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clockTime, continuesPrevious, dayLabel, timeLeft } from "./conversation-time";
+import { clockTime, continuesPrevious, dayLabel, lastWrote, timeLeft } from "./conversation-time";
 
 // Day breaks, clock times and reply-window countdowns inside a conversation, in the org's time
 // zone.
@@ -28,6 +28,24 @@ describe("clockTime", () => {
   it("shows the time of day in the organization's time zone", () => {
     expect(clockTime("2026-11-04T12:00:00.000Z", "UTC")).toBe("12:00 PM");
     expect(clockTime("2026-11-04T12:00:00.000Z", "Asia/Kolkata")).toBe("5:30 PM");
+  });
+});
+
+describe("lastWrote", () => {
+  it("says when, for the middle of a sentence", () => {
+    expect(lastWrote("2026-11-04T07:17:00.000Z", NOW, "UTC")).toBe("today at 7:17 AM");
+    expect(lastWrote("2026-11-03T09:04:00.000Z", NOW, "UTC")).toBe("yesterday at 9:04 AM");
+    expect(lastWrote("2026-11-02T18:30:00.000Z", NOW, "UTC")).toBe("on Monday at 6:30 PM");
+    expect(lastWrote("2026-10-21T09:00:00.000Z", NOW, "UTC")).toBe("on Oct 21 at 9:00 AM");
+    expect(lastWrote("2025-12-30T09:00:00.000Z", NOW, "UTC")).toBe("on Dec 30, 2025 at 9:00 AM");
+    // A clock a little ahead never says a day in the future.
+    expect(lastWrote("2026-11-05T09:00:00.000Z", NOW, "UTC")).toBe("today at 9:00 AM");
+  });
+
+  it("counts days and the clock in the organization's time zone", () => {
+    // 23:00 UTC on 3 Nov is 4:30 AM on 4 Nov in Kolkata.
+    expect(lastWrote("2026-11-03T23:00:00.000Z", NOW, "Asia/Kolkata")).toBe("today at 4:30 AM");
+    expect(lastWrote("2026-11-03T23:00:00.000Z", NOW, "UTC")).toBe("yesterday at 11:00 PM");
   });
 });
 

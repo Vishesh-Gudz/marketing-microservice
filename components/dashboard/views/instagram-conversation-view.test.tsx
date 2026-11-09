@@ -282,19 +282,39 @@ describe("who may reply, and when", () => {
   it.each([
     [
       "the window closed",
-      { replyWindowExpiresAt: "2026-10-30T11:59:00.000Z" },
-      "Instagram allows no reply until they write again.",
+      {
+        lastInboundAt: "2026-10-29T11:00:00.000Z",
+        replyWindowExpiresAt: "2026-10-30T11:00:00.000Z",
+      },
+      "The 24-hour reply window is closed",
+      /^@ana\.shop last wrote yesterday at .+\. You can type here again as soon as they write\. Instagram allows replies only within 24 hours of the customer's last message\.$/,
     ],
     [
       "the customer never wrote",
       { lastInboundAt: undefined, replyWindowExpiresAt: undefined },
-      "Instagram allows a reply only after they do.",
+      "Waiting for the customer to write",
+      /^You can type here once @ana\.shop messages this account\. Instagram allows a reply only after they do\.$/,
     ],
-  ])("offers no reply box when %s", (_case, overrides, text) => {
+  ])("locks the reply box when %s (L1)", (_case, overrides, title, detail) => {
     show(overrides);
     expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
     expect(screen.getByText("Reply window closed")).toBeInTheDocument();
-    expect(screen.getByText(new RegExp(text.replace(".", "\\.")))).toBeInTheDocument();
+    const reply = screen.getByRole("region", { name: "Reply" });
+    expect(within(reply).getByText(title)).toBeInTheDocument();
+    expect(within(reply).getByText(detail)).toBeInTheDocument();
+    // Instagram templates need an open window too: nothing else is offered.
+    expect(within(reply).queryByRole("button")).toBeNull();
+  });
+
+  it("names the 7-day human agent limit once that window has passed too", () => {
+    show({
+      lastInboundAt: "2026-10-22T11:00:00.000Z",
+      replyWindowExpiresAt: "2026-10-23T11:00:00.000Z",
+      humanAgentWindowExpiresAt: "2026-10-29T11:00:00.000Z",
+    });
+    expect(screen.getByText(/or 7 days for a human agent reply\.$/)).toHaveTextContent(
+      /^@ana\.shop last wrote on Oct 22 at /,
+    );
   });
 
   it.each([

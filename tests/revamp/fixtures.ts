@@ -123,6 +123,13 @@ export const INSTAGRAM_CONVERSATION = {
   replyWindowExpiresAt: at(24 * 60 - 55),
 };
 
+/**
+ * A reply window that closed an hour ago, the customer having last written 25 hours ago (L1):
+ * changes to the open WhatsApp and Instagram conversations.
+ */
+export const WHATSAPP_CLOSED = { lastInboundAt: at(-25 * 60), serviceWindowExpiresAt: at(-60) };
+export const INSTAGRAM_CLOSED = { lastInboundAt: at(-25 * 60), replyWindowExpiresAt: at(-60) };
+
 export const INSTAGRAM_MESSAGES = [
   {
     id: "i3",
@@ -158,10 +165,14 @@ export const INSTAGRAM_MESSAGES = [
 ];
 
 /**
- * The shown conversations, whatever id the page asks for; `whatsapp` changes the open WhatsApp
- * conversation (e.g. a closed reply window).
+ * The shown conversations, whatever id the page asks for; `whatsapp` and `instagram` change the
+ * open conversation of that channel (e.g. a closed reply window).
  */
-export async function withConversations(page: Page, whatsapp: Record<string, unknown> = {}) {
+export async function withConversations(
+  page: Page,
+  whatsapp: Record<string, unknown> = {},
+  instagram: Record<string, unknown> = {},
+) {
   await answerQueries(page, {
     "v1/inbox:listThreads": () => page1(THREADS),
     "v1/whatsapp:listConversations": () =>
@@ -179,7 +190,7 @@ export async function withConversations(page: Page, whatsapp: Record<string, unk
     "v1/instagramMessaging:listConversations": () => page1([INSTAGRAM_CONVERSATION]),
     "v1/whatsapp:getConversation": () => ({ ...WHATSAPP_CONVERSATION, ...whatsapp }),
     "v1/whatsapp:listMessages": () => page1(WHATSAPP_MESSAGES),
-    "v1/instagramMessaging:getConversation": () => INSTAGRAM_CONVERSATION,
+    "v1/instagramMessaging:getConversation": () => ({ ...INSTAGRAM_CONVERSATION, ...instagram }),
     "v1/instagramMessaging:listMessages": () => page1(INSTAGRAM_MESSAGES),
   });
 }
@@ -317,17 +328,21 @@ export const AVAILABILITY: Record<string, unknown> = {
 /**
  * Every messaging query of these fixtures at once: threads, both conversations, saved replies,
  * Instagram templates, WhatsApp accounts and Instagram DM availability. Only for messaging
- * pages: it also answers the social accounts list. `whatsapp` changes the open WhatsApp
- * conversation (a closed window, a number that cannot send).
+ * pages: it also answers the social accounts list. `whatsapp` and `instagram` change the open
+ * conversation of that channel (a closed window, a number that cannot send).
  */
-export async function withMessagingData(page: Page, whatsapp: Record<string, unknown> = {}) {
+export async function withMessagingData(
+  page: Page,
+  whatsapp: Record<string, unknown> = {},
+  instagram: Record<string, unknown> = {},
+) {
   await answerQueries(page, {
     "v1/inbox:listThreads": () => page1(THREADS),
     "v1/whatsapp:listConversations": () => page1([WHATSAPP_CONVERSATION]),
     "v1/instagramMessaging:listConversations": () => page1([INSTAGRAM_CONVERSATION]),
     "v1/whatsapp:getConversation": () => ({ ...WHATSAPP_CONVERSATION, ...whatsapp }),
     "v1/whatsapp:listMessages": () => page1(WHATSAPP_MESSAGES),
-    "v1/instagramMessaging:getConversation": () => INSTAGRAM_CONVERSATION,
+    "v1/instagramMessaging:getConversation": () => ({ ...INSTAGRAM_CONVERSATION, ...instagram }),
     "v1/instagramMessaging:listMessages": () => page1(INSTAGRAM_MESSAGES),
     "v1/savedReplies:list": () => SAVED_REPLIES,
     "v1/instagramTemplates:list": () => INSTAGRAM_TEMPLATES,
