@@ -481,5 +481,17 @@ exports[`schema inventory > declares the approved indexes 1`] = `
       "receivedAt",
     ],
   },
+  "youtubeVideoAnalytics": {
+    "by_org_account_window": [
+      "orgId",
+      "socialAccountId",
+      "window",
+    ],
+    "by_org_post_window": [
+      "orgId",
+      "postId",
+      "window",
+    ],
+  },
 }
 `;

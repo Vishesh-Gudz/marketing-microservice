@@ -68,6 +68,8 @@ export const PROVIDER_OPERATIONS = [
   "listSocialPosts",
   "fetchPostMetrics",
   "fetchAccountMetrics",
+  // YouTube per-video analytics (ADR 0016 Checkpoint 8; optional social operation)
+  "fetchVideoAnalytics",
 ] as const;
 export type ProviderOperation = (typeof PROVIDER_OPERATIONS)[number];
 

@@ -14,7 +14,7 @@ import {
   CHANNEL_ID,
   CHANNEL_ID_2,
   channelDays,
-  videoStatistics,
+  videoWindow,
   youtubeChannel,
   youtubeDay,
   youtubeVideo,
@@ -149,12 +149,12 @@ describe("YouTube view", () => {
     expect(rows[3]).toHaveTextContent("1,200");
     expect(rows[3]).toHaveTextContent("1:23"); // average view duration, as reported
     expect(within(rows[3]!).getAllByRole("cell")[3]).toHaveTextContent(/^0$/); // likes: a reported 0 stays 0
-    // Coverage is stated; there is no total, average, rate or comparison anywhere.
+    // Coverage is stated; the day table has no total row, and nothing is compared or rated.
     expect(screen.getByRole("status", { name: "Partial data" })).toHaveTextContent(
       "Partial: 1 Pacific Time day of this range not synced yet (3 synced)",
     );
-    const text = document.body.textContent ?? "";
-    expect(text).not.toMatch(/Total|Engagement rate|compared with|Average daily|%/);
+    expect(within(table).queryByText(/Total/)).toBeNull();
+    expect(document.body.textContent).not.toMatch(/Engagement rate|compared with|Average daily/);
   });
 
   it("explains a range with no synced day", () => {
@@ -187,58 +187,225 @@ describe("YouTube view", () => {
       linksToConnections,
     );
     if (access === "scope_missing") {
-      expect(notice).toHaveTextContent("Its videos and their statistics keep syncing.");
+      expect(notice).toHaveTextContent("Its videos and their public counts keep syncing.");
     }
   });
 
-  it("lists videos with lifetime statistics, safe YouTube links and cursor pagination", () => {
+  it("shows the range's key metrics as the server totals them, with the current subscribers", () => {
+    renderWithOrg(<SocialView />, NEW_YORK);
+    const totals = screen.getByTestId("youtube-totals");
+    expect(within(totals).getByRole("heading", { name: "Key metrics" })).toBeVisible();
+    expect(totals).toHaveTextContent(
+      "Totals over the 3 reported Pacific Time days of Oct 15, 2026 – Oct 17, 2026.",
+    );
+    const kpi = (key: string) => totals.querySelector(`[data-kpi="${key}"]`)!;
+    expect(
+      [...totals.querySelectorAll("[data-kpi] h3")].map((heading) => heading.textContent),
+    ).toEqual([
+      "Subscribers",
+      "Views",
+      "Watch time (hours)",
+      "Avg. view duration",
+      "Net subscribers",
+      "Likes",
+      "Comments",
+      "Shares",
+    ]);
+    expect(kpi("subscribers")).toHaveTextContent("12,300as of Oct 20, 2026");
+    expect(kpi("views")).toHaveTextContent(/^Views3,600$/);
+    // Minutes are shown as hours (display only); the server's minutes stay visible.
+    expect(kpi("estimatedMinutesWatched")).toHaveTextContent("172.810,368 est. minutes");
+    expect(kpi("averageViewDuration")).toHaveTextContent("2:53");
+    expect(kpi("subscribersNet")).toHaveTextContent("+1215 gained, 3 lost");
+    expect(kpi("likes")).toHaveTextContent(/^Likes0$/); // a reported 0 stays 0
+  });
+
+  it("marks partial totals and explains every missing key metric, never 0", () => {
+    queryResults.set(
+      "v1/youtubeAnalytics:channelDays",
+      channelDays({
+        dataState: "partial",
+        coverage: { syncedDays: 2, unsyncedDays: 1 },
+        subscribers: undefined,
+        totals: {
+          reportedDays: 2,
+          metrics: { views: 0, estimatedMinutesWatched: 0, likes: 0 },
+          unavailableMetrics: [
+            { metric: "comments", reason: "not_reported" },
+            { metric: "averageViewDuration", reason: "zero_views" },
+          ],
+        },
+      }),
+    );
+    renderWithOrg(<SocialView />);
+    const totals = screen.getByTestId("youtube-totals");
+    const kpi = (key: string) => totals.querySelector(`[data-kpi="${key}"]`)!;
+    expect(kpi("views")).toHaveTextContent("0* (partial data)");
+    expect(kpi("subscribers")).toHaveTextContent(
+      "Not available: Hidden by the channel, or not captured yet",
+    );
+    expect(kpi("averageViewDuration")).toHaveTextContent(
+      "Not available: Not defined: this range has no views",
+    );
+    expect(kpi("comments")).toHaveTextContent(
+      "Not available: Not reported by YouTube for any day of this range",
+    );
+    for (const key of ["subscribers", "averageViewDuration", "comments", "subscribersNet"]) {
+      expect(kpi(key).textContent).not.toMatch(/\d/);
+    }
+    // The coverage notice sits with the key metrics.
+    expect(within(totals).getByRole("status", { name: "Partial data" })).toBeInTheDocument();
+  });
+
+  it("names a missing YouTube Analytics grant as the reason for empty key metrics", () => {
+    queryResults.set(
+      "v1/youtubeAnalytics:channelDays",
+      channelDays({
+        analyticsAccess: "scope_missing",
+        dataState: "reported",
+        totals: {
+          reportedDays: 0,
+          metrics: {},
+          unavailableMetrics: [{ metric: "views", reason: "not_reported" }],
+        },
+        days: [youtubeDay("2026-10-15", { status: "not_reported", metrics: {} })],
+      }),
+    );
+    renderWithOrg(<SocialView />);
+    const totals = screen.getByTestId("youtube-totals");
+    expect(totals.querySelector('[data-kpi="views"]')).toHaveTextContent(
+      "Not available: YouTube Analytics access is missing for this channel",
+    );
+    expect(totals).toHaveTextContent(
+      "No Pacific Time day of Oct 15, 2026 – Oct 17, 2026 is reported yet.",
+    );
+  });
+
+  it("charts the server's per-day values with gaps, and offers them as a table", () => {
+    queryResults.set(
+      "v1/youtubeAnalytics:channelDays",
+      channelDays({
+        days: [
+          youtubeDay("2026-10-15"),
+          youtubeDay("2026-10-16", { status: "not_reported", metrics: {} }),
+          youtubeDay("2026-10-17", { status: "unknown", metrics: {} }),
+        ],
+      }),
+    );
+    renderWithOrg(<SocialView />);
+    const chart = screen.getByTestId("youtube-series");
+    expect(within(chart).getByRole("heading", { name: "Channel metrics by day" })).toBeVisible();
+    expect(within(chart).getByRole("combobox", { name: "Chart metric" })).toHaveTextContent(
+      "Views",
+    );
+    expect(within(chart).getByRole("img", { name: "Views by day (Pacific Time)" })).toBeVisible();
+    fireEvent.click(within(chart).getByRole("button", { name: "View as table" }));
+    const rows = within(chart).getAllByRole("row").slice(1);
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "Oct 15, 20261,200Reported",
+      "Oct 16, 2026—Not reported",
+      "Oct 17, 2026—Unknown",
+    ]);
+  });
+
+  it("lists videos with one period's analytics, safe YouTube links and cursor pagination", () => {
     queryResults.set("v1/youtubeAnalytics:videos", (args: Record<string, unknown>) => {
       const cursor = (args.paginationOpts as { cursor: string | null }).cursor;
       return cursor === null
         ? page(
             [
-              youtubeVideo(),
+              youtubeVideo({ analytics: { last28: videoWindow() } }),
               youtubeVideo({
                 id: "post_yt_2",
                 videoId: "vid00000001",
                 title: undefined,
                 permalink: "javascript:alert(1)",
-                dataState: "partial",
-                latest: videoStatistics({
-                  dataState: "partial",
-                  metrics: { views: 50, comments: 0 },
-                  unavailableMetrics: [{ metric: "likes", reason: "not_reported" }],
-                }),
+                analytics: {
+                  last28: videoWindow({ status: "not_in_top", metrics: {} }),
+                  lifetime: videoWindow({ from: "2024-03-12" }),
+                },
               }),
               youtubeVideo({
                 id: "post_yt_3",
-                dataState: "unknown",
-                latest: undefined,
+                analytics: {},
                 removedAt: "2026-10-20T00:00:00.000Z",
+              }),
+              youtubeVideo({
+                id: "post_yt_4",
+                analytics: {
+                  last28: videoWindow({ metrics: { views: 5, estimatedMinutesWatched: 2 } }),
+                },
               }),
             ],
             false,
           )
-        : page([youtubeVideo({ id: "post_yt_4", title: "Older" })]);
+        : page([youtubeVideo({ id: "post_yt_5", title: "Older" })]);
     });
     renderWithOrg(<SocialView />);
-    const rows = screen.getAllByRole("row").filter((row) => row.hasAttribute("data-video-id"));
-    expect(rows).toHaveLength(3);
-    expect(rows[0]).toHaveTextContent("Launch video");
-    expect(rows[0]).toHaveTextContent("9,876");
+    const section = screen.getByTestId("youtube-videos");
+    expect(section).toHaveTextContent(
+      "Last 28 days: Sep 20, 2026 – Oct 17, 2026 (Pacific Time), from YouTube Analytics",
+    );
+    const table = within(section).getByRole("table");
+    expect(
+      within(table)
+        .getAllByRole("columnheader")
+        .map((header) => header.textContent),
+    ).toEqual([
+      "Video (published), sorted newest first",
+      "Views",
+      "Watch time (hours)",
+      "Avg. view duration",
+      "Avg. % viewed",
+      "Likes",
+      "Comments",
+      "Shares",
+      "Subscribers gained",
+      "YouTube link",
+    ]);
+    const rows = within(table)
+      .getAllByRole("row")
+      .filter((row) => row.hasAttribute("data-video-id"));
+    expect(rows).toHaveLength(4);
+    expect(
+      within(rows[0]!)
+        .getAllByRole("cell")
+        .slice(1, -1)
+        .map((cell) => cell.textContent),
+    ).toEqual(["4,321", "164.6", "2:17", "45.3%", "210", "0", "17", "12"]);
+    // The title opens the video's page with the list's state; YouTube opens in a new tab.
+    expect(within(rows[0]!).getByRole("link", { name: "Launch video" })).toHaveAttribute(
+      "href",
+      `/social/youtube/videos/post_yt_1?account=${CHANNEL_ID}`,
+    );
     const link = within(rows[0]!).getByRole("link", { name: /Watch on YouTube/ });
     expect(link).toHaveAttribute("href", "https://www.youtube.com/watch?v=vid00000000");
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", "noopener noreferrer");
     expect(link).toHaveAccessibleName(/Launch video \(opens in a new tab\)/);
-    // An unsafe URL never becomes a link; a hidden count is "—" (never 0).
-    expect(within(rows[1]!).queryByRole("link")).toBeNull();
-    expect(rows[1]).toHaveTextContent("Untitled video");
-    expect(
-      within(rows[1]!).getByText(/hidden or disabled by the channel owner/, { exact: false }),
-    ).toBeInTheDocument();
+    // Outside the top 200 or not synced: one cell says so; never a number (or 0).
+    expect(rows[1]).toHaveAttribute("data-window-state", "not_in_top");
+    expect(within(rows[1]!).getAllByRole("cell")[1]).toHaveTextContent(
+      /^Not in YouTube's top 200$/,
+    );
+    expect(within(rows[1]!).getByRole("link", { name: "Untitled video" })).toBeInTheDocument();
+    expect(within(rows[1]!).queryByRole("link", { name: /Watch on YouTube/ })).toBeNull();
+    expect(rows[2]).toHaveAttribute("data-window-state", "not_synced");
+    expect(within(rows[2]!).getAllByRole("cell")[1]).toHaveTextContent(/^Not synced yet$/);
     expect(rows[2]).toHaveTextContent("Removed");
-    expect(rows[2]).toHaveTextContent("Not synced"); // never captured: no value, never 0
+    for (const row of rows.slice(1, 3)) {
+      for (const cell of within(row).getAllByRole("cell").slice(1)) {
+        expect(cell.textContent?.replace("top 200", "")).not.toMatch(/\d/);
+      }
+    }
+    // A value YouTube did not report for a listed video is "—" with the reason.
+    expect(rows[3]).toHaveTextContent("< 0.1");
+    expect(
+      within(rows[3]!).getAllByText(
+        "Not available: Not reported by YouTube for this video and period",
+        { exact: false },
+      ),
+    ).toHaveLength(6);
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(lastArgs("v1/youtubeAnalytics:videos")).toMatchObject({
@@ -250,6 +417,52 @@ describe("YouTube view", () => {
     expect(lastArgs("v1/youtubeAnalytics:videos")).toMatchObject({
       paginationOpts: { cursor: null },
     });
+  });
+
+  it("switches the videos between the last 28 days and the lifetime through the URL", () => {
+    queryResults.set(
+      "v1/youtubeAnalytics:videos",
+      page([youtubeVideo({ analytics: { last28: videoWindow() } })]),
+    );
+    renderWithOrg(<SocialView />);
+    const period = screen.getByRole("group", { name: "Video analytics period" });
+    expect(within(period).getByRole("button", { name: "Last 28 days" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    fireEvent.click(within(period).getByRole("button", { name: "Lifetime" }));
+    expect(lastReplacedQuery().get("vwin")).toBe("lifetime");
+  });
+
+  it("shows the lifetime values with vwin=lifetime and keeps it on the video link", () => {
+    setUrl("/social", "platform=youtube&preset=last_7_days&pdir=asc&vwin=lifetime");
+    queryResults.set(
+      "v1/youtubeAnalytics:videos",
+      page([
+        youtubeVideo({
+          analytics: {
+            last28: videoWindow({ status: "not_in_top", metrics: {} }),
+            lifetime: videoWindow({ from: "2024-03-12", metrics: { views: 48_210 } }),
+          },
+        }),
+      ]),
+    );
+    renderWithOrg(<SocialView />);
+    const section = screen.getByTestId("youtube-videos");
+    expect(within(section).getByRole("button", { name: "Lifetime" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(section).toHaveTextContent("Lifetime: Mar 12, 2024 – Oct 17, 2026 (Pacific Time)");
+    const row = section.querySelector("[data-video-id]")!;
+    expect(row).toHaveAttribute("data-window-state", "reported");
+    expect(row).toHaveTextContent("48,210");
+    expect(within(section).getByRole("link", { name: "Launch video" })).toHaveAttribute(
+      "href",
+      `/social/youtube/videos/post_yt_1?preset=last_7_days&pdir=asc&vwin=lifetime&account=${CHANNEL_ID}`,
+    );
+    fireEvent.click(within(section).getByRole("button", { name: "Last 28 days" }));
+    expect(lastReplacedQuery().has("vwin")).toBe(false);
   });
 
   it("orders videos by publish time through the URL", () => {

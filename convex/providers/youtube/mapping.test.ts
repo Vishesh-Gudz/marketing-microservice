@@ -7,11 +7,12 @@ import {
   mapChannel,
   mapReportDays,
   mapVideo,
+  mapVideoReport,
   mapVideoSnapshot,
   parseYouTubeTimestamp,
 } from "./mapping";
 import type { RawReport } from "./schemas";
-import { ACCOUNT_REPORT_METRICS } from "./semantics";
+import { ACCOUNT_REPORT_METRICS, VIDEO_REPORT_METRICS } from "./semantics";
 
 // ADR 0016: channel and video metadata -> canonical records. Missing stays absent, the built
 // permalink is the only URL, "upcoming" is excluded and anything unmappable is unresolved.
@@ -373,5 +374,196 @@ describe("mapReportDays", () => {
     ],
   ])("fails closed on %s", (_label, report, code) => {
     expect(failure(report)).toEqual(["data", code]);
+  });
+});
+
+describe("mapVideoReport (Checkpoint 8)", () => {
+  const METRICS = VIDEO_REPORT_METRICS.split(",");
+  const headers = (names = METRICS) => [
+    { name: "video", columnType: "DIMENSION", dataType: "STRING" },
+    ...names.map((name) => ({ name, columnType: "METRIC", dataType: "INTEGER" })),
+  ];
+  const WINDOW = { window: "last28" as const, from: "2026-09-20", to: "2026-10-17" };
+  const map = (report: RawReport) =>
+    mapVideoReport({
+      operation: "fetchVideoAnalytics",
+      accountExternalId: CHANNEL,
+      ...WINDOW,
+      report,
+    });
+  const failure = (report: RawReport) => {
+    try {
+      map(report);
+    } catch (error) {
+      return isProviderError(error) ? [error.kind, error.providerCode] : error;
+    }
+    throw new Error("expected a data error");
+  };
+  // views, minutes, avg duration, avg %, likes, comments, shares, gained, lost
+  const ROW = [1200, 3456, 172, 45.67, 30, 4, 2, 5, 1];
+
+  it("maps every value under its own name, in report order, one record per listed video", () => {
+    const records = map({
+      columnHeaders: headers(),
+      rows: [
+        [VIDEO, ...ROW],
+        ["vid00000001", 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      ],
+    });
+    expect(records).toEqual([
+      {
+        platform: "youtube",
+        accountExternalId: CHANNEL,
+        postExternalId: VIDEO,
+        ...WINDOW,
+        views: 1200,
+        estimatedMinutesWatched: 3456,
+        averageViewDuration: 172,
+        averageViewPercentage: 45.67,
+        likes: 30,
+        comments: 4,
+        shares: 2,
+        subscribersGained: 5,
+        subscribersLost: 1,
+      },
+      {
+        platform: "youtube",
+        accountExternalId: CHANNEL,
+        postExternalId: "vid00000001",
+        ...WINDOW,
+        views: 0, // a reported zero stays 0
+        estimatedMinutesWatched: 0,
+        averageViewDuration: 0,
+        averageViewPercentage: 0,
+        likes: 0,
+        comments: 0,
+        shares: 0,
+        subscribersGained: 0,
+        subscribersLost: 0,
+      },
+    ]);
+    for (const record of records) {
+      expect(socialRecordIssues("youtubeVideoAnalytics", record)).toEqual([]);
+    }
+  });
+
+  it("an empty report gives no record: unlisted videos are not in the top 200, never 0", () => {
+    expect(map({ columnHeaders: headers() })).toEqual([]);
+    expect(map({ columnHeaders: headers(), rows: [] })).toEqual([]);
+  });
+
+  it("a metric YouTube left out of the table, or a null cell, stays absent", () => {
+    const [record] = map({
+      columnHeaders: headers(METRICS.filter((m) => m !== "shares")),
+      rows: [[VIDEO, 10, 20, 30, null, 1, 0, 0, 0]],
+    });
+    expect(record).toEqual({
+      platform: "youtube",
+      accountExternalId: CHANNEL,
+      postExternalId: VIDEO,
+      ...WINDOW,
+      views: 10,
+      estimatedMinutesWatched: 20,
+      averageViewDuration: 30,
+      likes: 1,
+      comments: 0,
+      subscribersGained: 0,
+      subscribersLost: 0,
+    });
+  });
+
+  it("keeps a rewatched video's average percentage above 100 (a decimal, never capped)", () => {
+    const [record] = map({
+      columnHeaders: headers(["views", "averageViewPercentage"]),
+      rows: [[VIDEO, 50, 134.2]],
+    });
+    expect(record).toMatchObject({ views: 50, averageViewPercentage: 134.2 });
+  });
+
+  it("accepts up to 200 rows and fails closed on more", () => {
+    const rows = (n: number) =>
+      Array.from({ length: n }, (_, i) => [`vid${String(i).padStart(8, "0")}`, 1]);
+    expect(map({ columnHeaders: headers(["views"]), rows: rows(200) })).toHaveLength(200);
+    expect(failure({ columnHeaders: headers(["views"]), rows: rows(201) })).toEqual([
+      "data",
+      "report_unexpected",
+    ]);
+  });
+
+  it.each<[string, RawReport, string]>([
+    ["no video dimension", { columnHeaders: headers().slice(1) }, "report_unexpected"],
+    [
+      "the day dimension instead",
+      { columnHeaders: [{ name: "day", columnType: "DIMENSION" }, ...headers().slice(1)] },
+      "report_unexpected",
+    ],
+    ["a duplicate column", { columnHeaders: [...headers(), headers()[1]!] }, "report_unexpected"],
+    [
+      "a metric marked as dimension",
+      { columnHeaders: [headers()[0]!, { name: "views", columnType: "DIMENSION" }] },
+      "report_unexpected",
+    ],
+    ["an unknown metric", { columnHeaders: headers(["views", "dislikes"]) }, "metric_unexpected"],
+    ["a short row", { columnHeaders: headers(["views"]), rows: [[VIDEO]] }, "report_unexpected"],
+    [
+      "a malformed video id",
+      { columnHeaders: headers(["views"]), rows: [["short", 1]] },
+      "video_unexpected",
+    ],
+    [
+      "a duplicate video",
+      {
+        columnHeaders: headers(["views"]),
+        rows: [
+          [VIDEO, 2],
+          [VIDEO, 1],
+        ],
+      },
+      "video_unexpected",
+    ],
+    [
+      "a negative count",
+      { columnHeaders: headers(["views"]), rows: [[VIDEO, -1]] },
+      "metric_invalid",
+    ],
+    [
+      "a fractional count",
+      { columnHeaders: headers(["likes"]), rows: [[VIDEO, 1.5]] },
+      "metric_invalid",
+    ],
+    [
+      "a string value",
+      { columnHeaders: headers(["views"]), rows: [[VIDEO, "1"]] },
+      "metric_invalid",
+    ],
+    [
+      "a negative percentage",
+      { columnHeaders: headers(["averageViewPercentage"]), rows: [[VIDEO, -0.5]] },
+      "metric_invalid",
+    ],
+    [
+      "a non-finite percentage",
+      { columnHeaders: headers(["averageViewPercentage"]), rows: [[VIDEO, Infinity]] },
+      "metric_invalid",
+    ],
+  ])("fails closed on %s", (_label, report, code) => {
+    expect(failure(report)).toEqual(["data", code]);
+  });
+
+  it("the boundary validator refuses a record outside the shape", () => {
+    const [record] = map({ columnHeaders: headers(["views"]), rows: [[VIDEO, 1]] });
+    const issues = (patch: Record<string, unknown>) =>
+      socialRecordIssues("youtubeVideoAnalytics", { ...record, ...patch });
+    expect(issues({ window: "last7" })).not.toEqual([]);
+    expect(issues({ from: "2026-10-18" })).toEqual(["from/to: not a window"]);
+    expect(issues({ postId: "x" })).not.toEqual([]);
+    expect(issues({ orgId: "x" })).not.toEqual([]);
+    expect(issues({ syncedAt: 1 })).not.toEqual([]);
+    expect(issues({ platform: "instagram" })).not.toEqual([]);
+    expect(issues({ postExternalId: "short" })).toEqual(["postExternalId: not an id"]);
+    expect(issues({ averageViewDuration: 1.5 })).toEqual(["averageViewDuration: not a count"]);
+    expect(issues({ averageViewPercentage: -1 })).toEqual([
+      "averageViewPercentage: not a percentage",
+    ]);
   });
 });

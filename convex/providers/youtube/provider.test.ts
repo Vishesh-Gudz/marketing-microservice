@@ -548,3 +548,189 @@ describe("fetchAccountMetrics", () => {
     expect([error.kind, error.providerCode]).toEqual(["data", "report_unexpected"]);
   });
 });
+
+describe("fetchVideoAnalytics (Checkpoint 8)", () => {
+  const VALUES = (views: number) => ({
+    views,
+    estimatedMinutesWatched: views * 2,
+    averageViewDuration: 95,
+    averageViewPercentage: 41.5,
+    likes: Math.floor(views / 10),
+    comments: 3,
+    shares: 1,
+    subscribersGained: 2,
+    subscribersLost: 0,
+  });
+  const LAST28 = {
+    accountExternalId: FAKE_CHANNEL_ID,
+    window: "last28" as const,
+    from: "2026-09-20",
+    to: "2026-10-17",
+  };
+  const LIFETIME = { ...LAST28, window: "lifetime" as const, from: "2024-01-05" };
+  const provider = () => {
+    const created = createYouTubeSocialProvider(CONFIG);
+    if (created.fetchVideoAnalytics === undefined) throw new Error("expected the operation");
+    return created.fetchVideoAnalytics.bind(created);
+  };
+
+  it("reads each window with ONE top-200 report: 2 requests, rows most viewed first", async () => {
+    setup([], {
+      videoReports: {
+        "2026-09-20": { vid00000000: VALUES(50), vid00000001: VALUES(900) },
+        "2024-01-05": {
+          vid00000000: VALUES(5000),
+          vid00000001: VALUES(7000),
+          vid00000002: VALUES(1),
+        },
+      },
+    });
+    const recent = await provider()(ctx(SCOPED), LAST28);
+    expect(fake.requests.map((r) => `${r.method} ${r.host}${r.path}`)).toEqual([
+      "POST oauth2.googleapis.com/token",
+      "GET youtubeanalytics.googleapis.com/v2/reports",
+    ]);
+    const query: Record<string, string> = {};
+    new URL(fake.requests[1]!.url).searchParams.forEach((value, name) => (query[name] = value));
+    expect(query).toEqual({
+      ids: "channel==MINE",
+      startDate: "2026-09-20",
+      endDate: "2026-10-17",
+      metrics:
+        "views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained,subscribersLost",
+      dimensions: "video",
+      sort: "-views",
+      maxResults: "200",
+    });
+    expect(fake.requests[1]!.bearer).toBe(true);
+    expect(recent.nextCursor).toBeUndefined();
+    expect(recent.items).toEqual([
+      {
+        platform: "youtube",
+        accountExternalId: FAKE_CHANNEL_ID,
+        postExternalId: "vid00000001",
+        window: "last28",
+        from: "2026-09-20",
+        to: "2026-10-17",
+        ...VALUES(900),
+      },
+      {
+        platform: "youtube",
+        accountExternalId: FAKE_CHANNEL_ID,
+        postExternalId: "vid00000000",
+        window: "last28",
+        from: "2026-09-20",
+        to: "2026-10-17",
+        ...VALUES(50),
+      },
+    ]);
+
+    fake.requests.length = 0;
+    const lifetime = await provider()(ctx(SCOPED), LIFETIME);
+    expect(fake.requests).toHaveLength(2);
+    expect(new URL(fake.requests[1]!.url).searchParams.get("startDate")).toBe("2024-01-05");
+    expect(lifetime.items.map((item) => [item.postExternalId, item.window, item.views])).toEqual([
+      ["vid00000001", "lifetime", 7000],
+      ["vid00000000", "lifetime", 5000],
+      ["vid00000002", "lifetime", 1],
+    ]);
+    for (const request of fake.requests) expect(request.url).not.toContain(FAKE_YT_TOKEN_MARKER);
+    expect(JSON.stringify([recent, lifetime])).not.toContain(FAKE_YT_TOKEN_MARKER);
+  });
+
+  it("returns at most 200 rows (YouTube's top videos); an empty report gives no record", async () => {
+    const many = Object.fromEntries(
+      Array.from({ length: 250 }, (_, i) => [`vid${String(i).padStart(8, "0")}`, VALUES(i + 1)]),
+    );
+    setup([], { videoReports: { "*": many } });
+    const page = await provider()(ctx(SCOPED), LAST28);
+    expect(page.items).toHaveLength(200);
+    expect(page.items[0]!.views).toBe(250);
+    expect(page.items.at(-1)!.views).toBe(51);
+
+    setup([], {});
+    expect((await provider()(ctx(SCOPED), LAST28)).items).toEqual([]);
+  });
+
+  it("left-out metrics stay absent", async () => {
+    setup([], {
+      videoReports: { "*": { vid00000000: VALUES(10) } },
+      omitMetrics: ["averageViewPercentage", "shares"],
+    });
+    const [record] = (await provider()(ctx(SCOPED), LAST28)).items;
+    expect(record).not.toHaveProperty("averageViewPercentage");
+    expect(record).not.toHaveProperty("shares");
+    expect(record).toMatchObject({ views: 10, likes: 1 });
+  });
+
+  it("refuses a missing analytics grant, bad windows, cursors and foreign channels before any request", async () => {
+    setup([], {});
+    const fetchVideo = provider();
+    const scope = await rejection(fetchVideo(ctx({ scopes: [FAKE_YT_READONLY_SCOPE] }), LAST28));
+    expect([scope.kind, scope.providerCode]).toEqual(["permission", "analytics_scope_missing"]);
+    for (const window of [
+      { from: "2026-10-17", to: "2026-09-20" },
+      { from: "2026-9-20", to: "2026-10-17" },
+      { window: "last7" as never },
+    ]) {
+      const error = await rejection(fetchVideo(ctx(SCOPED), { ...LAST28, ...window }));
+      expect([error.kind, error.providerCode]).toEqual(["invalid_request", "window_invalid"]);
+    }
+    const cursor = await rejection(fetchVideo(ctx(SCOPED), { ...LAST28, cursor: "x" }));
+    expect([cursor.kind, cursor.providerCode]).toEqual(["invalid_request", "cursor_invalid"]);
+    const foreign = await rejection(
+      fetchVideo(ctx(SCOPED), { ...LAST28, accountExternalId: "UCotherChannel000000000a" }),
+    );
+    expect([foreign.kind, foreign.providerCode]).toEqual(["permission", "account_mismatch"]);
+    expect(fake.requests).toHaveLength(0);
+  });
+
+  it.each<[string, number, unknown, string, string]>([
+    [
+      "an exhausted quota",
+      403,
+      { error: { code: 403, errors: [{ reason: "quotaExceeded" }] } },
+      "rate_limited",
+      "quotaExceeded",
+    ],
+    [
+      "a revoked analytics grant",
+      403,
+      { error: { code: 403, errors: [{ reason: "insufficientPermissions" }] } },
+      "permission",
+      "insufficientPermissions",
+    ],
+    [
+      "a backend error",
+      500,
+      { error: { code: 500, errors: [{ reason: "backendError" }] } },
+      "transient",
+      "backendError",
+    ],
+  ])("classifies %s", async (_label, status, body, kind, code) => {
+    setup([], {});
+    fake.failNext("reports", { status, body });
+    const error = await rejection(provider()(ctx(SCOPED), LAST28));
+    expect([error.kind, error.providerCode]).toEqual([kind, code]);
+    expect(JSON.stringify(error)).not.toContain(FAKE_YT_TOKEN_MARKER);
+  });
+
+  it("rejects a malformed or unexpected report as data", async () => {
+    setup([], {});
+    fake.failNext("reports", { status: 200, body: { columnHeaders: [{ name: "views" }] } });
+    const shape = await rejection(provider()(ctx(SCOPED), LAST28));
+    expect([shape.kind, shape.providerCode]).toEqual(["data", "report_unexpected"]);
+    fake.failNext("reports", {
+      status: 200,
+      body: {
+        columnHeaders: [
+          { name: "video", columnType: "DIMENSION" },
+          { name: "estimatedRevenue", columnType: "METRIC" },
+        ],
+        rows: [["vid00000000", 1]],
+      },
+    });
+    const unknown = await rejection(provider()(ctx(SCOPED), LAST28));
+    expect([unknown.kind, unknown.providerCode]).toEqual(["data", "metric_unexpected"]);
+  });
+});

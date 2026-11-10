@@ -346,6 +346,249 @@ export async function withInsightsPermissionMissing(page: Page) {
   });
 }
 
+/**
+ * O4 (ADR 0016 Checkpoint 8): a made-up YouTube channel. The seeded organization has none, so
+ * /social?platform=youtube and the video page answer the channel list, its days, its videos
+ * and one video on the socket. NOW is Wednesday 4 Nov 2026 (Pacific Time): YouTube's days
+ * through Sunday 1 Nov are reported, the newer ones are not yet (the 3-day reporting delay).
+ */
+export const YOUTUBE_CHANNEL = {
+  id: "y1",
+  platform: "youtube",
+  externalId: "UCgudzkitchen0000000000a",
+  username: "gudzkitchen",
+  name: "Gudz Kitchen",
+  accountType: "channel",
+  status: "active",
+  linked: true,
+  connectionId: "c-y1",
+  linkedAt: at(-60 * DAY),
+  followersCount: 12_300,
+  lastSyncedAt: at(-6 * 60),
+  coverage: { from: "2026-08-01", through: "2026-11-01" },
+};
+
+const YOUTUBE_REPORTED_THROUGH = "2026-11-01";
+
+/** Inclusive YYYY-MM-DD days. */
+function eachDay(from: string, to: string): string[] {
+  const days: string[] = [];
+  for (let t = Date.parse(`${from}T00:00:00Z`); t <= Date.parse(`${to}T00:00:00Z`); t += 864e5) {
+    days.push(new Date(t).toISOString().slice(0, 10));
+  }
+  return days;
+}
+
+/** One day's made-up values: steady, with busier weekends. */
+function youtubeDayValues(date: string) {
+  const n = Date.parse(`${date}T00:00:00Z`) / 864e5;
+  const weekend = [0, 6].includes(new Date(`${date}T00:00:00Z`).getUTCDay());
+  const views = 1_150 + ((n * 37) % 11) * 70 + (weekend ? 520 : 0);
+  const estimatedMinutesWatched = Math.round(views * (2.1 + ((n * 13) % 7) / 20));
+  return {
+    views,
+    likes: Math.round(views * 0.046),
+    comments: Math.round(views * 0.006),
+    shares: Math.round(views * 0.004),
+    estimatedMinutesWatched,
+    averageViewDuration: Math.round((estimatedMinutesWatched * 60) / views),
+    subscribersGained: 6 + ((n * 7) % 9),
+    subscribersLost: (n * 5) % 4,
+  };
+}
+
+/** v1/youtubeAnalytics:channelDays for any range, with the totals the server would compute. */
+export function youtubeChannelDays(range: { from: string; to: string }) {
+  const days = eachDay(range.from, range.to).map((date) =>
+    date <= YOUTUBE_REPORTED_THROUGH
+      ? { date, status: "reported", metrics: youtubeDayValues(date), unavailableMetrics: [] }
+      : { date, status: "unknown", metrics: {}, unavailableMetrics: [] },
+  );
+  const reported = days
+    .filter((day) => day.status === "reported")
+    .map((day) => youtubeDayValues(day.date));
+  const sum = (metric: keyof ReturnType<typeof youtubeDayValues>) =>
+    reported.reduce((total, values) => total + values[metric], 0);
+  const views = sum("views");
+  const minutes = sum("estimatedMinutesWatched");
+  const synced = reported.length;
+  return {
+    timezone: "America/Los_Angeles",
+    accountId: YOUTUBE_CHANNEL.id,
+    range,
+    dataState: synced === 0 ? "unknown" : synced === days.length ? "reported" : "partial",
+    reportingDelayDays: 3,
+    totals: {
+      reportedDays: synced,
+      metrics: {
+        views,
+        estimatedMinutesWatched: minutes,
+        likes: sum("likes"),
+        comments: sum("comments"),
+        shares: sum("shares"),
+        subscribersGained: sum("subscribersGained"),
+        subscribersLost: sum("subscribersLost"),
+        subscribersNet: sum("subscribersGained") - sum("subscribersLost"),
+        averageViewDuration: Math.round((minutes * 60) / views),
+      },
+      unavailableMetrics: [],
+    },
+    subscribers: { count: 12_300, capturedAt: at(-6 * 60) },
+    analyticsAccess: "granted",
+    coverage: {
+      syncedDays: synced,
+      unsyncedDays: days.length - synced,
+      covered: { from: "2026-08-01", through: YOUTUBE_REPORTED_THROUGH },
+      lastSyncedAt: at(-6 * 60),
+    },
+    days,
+  };
+}
+
+const LAST_28 = { from: "2026-10-05", to: YOUTUBE_REPORTED_THROUGH };
+const LIFETIME = { from: "2023-06-14", to: YOUTUBE_REPORTED_THROUGH };
+
+function videoWindow(period: { from: string; to: string }, views: number, percent: number) {
+  const estimatedMinutesWatched = Math.round(views * 2.6);
+  return {
+    status: "reported",
+    ...period,
+    syncedAt: at(-6 * 60),
+    metrics: {
+      views,
+      estimatedMinutesWatched,
+      averageViewDuration: Math.round((estimatedMinutesWatched * 60) / views),
+      averageViewPercentage: percent,
+      likes: Math.round(views * 0.05),
+      comments: Math.round(views * 0.007),
+      shares: Math.round(views * 0.004),
+      subscribersGained: Math.round(views / 180),
+      subscribersLost: Math.round(views / 2_400),
+    },
+  };
+}
+
+const notInTop = (period: { from: string; to: string }) => ({
+  status: "not_in_top",
+  ...period,
+  syncedAt: at(-6 * 60),
+  metrics: {},
+});
+
+/** Newest first, as the API lists them by default. */
+export const YOUTUBE_VIDEOS = [
+  {
+    id: "yv7",
+    title: "Live Q&A: your Diwali sweets questions",
+    publishedAt: "2026-11-02T13:30:00.000Z",
+    analytics: {},
+  },
+  {
+    id: "yv6",
+    title: "Monsoon menu: three soups for rainy evenings",
+    publishedAt: "2026-10-29T12:00:00.000Z",
+    analytics: { last28: videoWindow(LAST_28, 1_840, 52.4) },
+    lifetime: "not_in_top",
+  },
+  {
+    id: "yv5",
+    title: "Filter coffee, the slow way",
+    publishedAt: "2026-10-25T12:00:00.000Z",
+    analytics: { last28: videoWindow(LAST_28, 6_215, 61.8) },
+  },
+  {
+    id: "yv4",
+    title: "Five chutneys, one blender",
+    publishedAt: "2026-10-21T12:00:00.000Z",
+    analytics: { last28: videoWindow(LAST_28, 4_902, 47.1) },
+  },
+  {
+    id: "yv3",
+    title: "Our kitchen tour: what changed this year",
+    publishedAt: "2026-10-16T12:00:00.000Z",
+    analytics: { last28: notInTop(LAST_28) },
+    removedAt: "2026-10-30T08:00:00.000Z",
+  },
+  {
+    id: "yv2",
+    title: "Weeknight paneer tikka, no tandoor needed",
+    publishedAt: "2026-10-12T12:00:00.000Z",
+    analytics: { last28: videoWindow(LAST_28, 12_480, 44.6) },
+  },
+  {
+    id: "yv1",
+    title: "Masala dosa at home in 20 minutes",
+    publishedAt: "2026-10-07T12:00:00.000Z",
+    analytics: { last28: videoWindow(LAST_28, 21_305, 38.9) },
+  },
+].map(({ id, lifetime, ...video }, i) => {
+  // Published inside the last 28 days, so the lifetime values are the same (or outside the
+  // lifetime top 200, among the channel's older videos).
+  const last28 = (video.analytics as { last28?: { status: string } }).last28;
+  const analytics =
+    last28 === undefined
+      ? {}
+      : {
+          last28,
+          lifetime:
+            lifetime === "not_in_top" || last28.status === "not_in_top"
+              ? notInTop(LIFETIME)
+              : { ...last28, ...LIFETIME },
+        };
+  const videoId = `GudzVideo${String(i).padStart(2, "0")}`;
+  return {
+    ...video,
+    id,
+    socialAccountId: YOUTUBE_CHANNEL.id,
+    videoId,
+    permalink: `https://www.youtube.com/watch?v=${videoId}`,
+    dataState: "reported",
+    analytics,
+  };
+});
+
+/** A video's daily public-count captures (UTC days) after publishing: lifetime counts. */
+function youtubeCaptures(video: (typeof YOUTUBE_VIDEOS)[number]) {
+  const reported = (video.analytics as { last28?: { metrics: { views?: number } } }).last28;
+  const target = (reported?.metrics.views ?? 900) * 1.08;
+  const days = eachDay(video.publishedAt.slice(0, 10), "2026-11-03").slice(1);
+  return days.map((capturedDate, i) => {
+    const views = Math.round(target * Math.sqrt((i + 1) / days.length));
+    return {
+      capturedDate,
+      capturedAt: `${capturedDate}T06:00:00.000Z`,
+      dataState: "reported",
+      metrics: { views, likes: Math.round(views * 0.05), comments: Math.round(views * 0.007) },
+      unavailableMetrics: [],
+    };
+  });
+}
+
+/** v1/youtubeAnalytics:video: the video, its latest capture and every capture. */
+export function youtubeVideoDetail(video: (typeof YOUTUBE_VIDEOS)[number]) {
+  const captures = youtubeCaptures(video);
+  const latest = captures.at(-1);
+  return { ...video, ...(latest ? { latest } : { dataState: "unknown" }), captures };
+}
+
+/** /social?platform=youtube and /social/youtube/videos/[videoId] over the made-up channel. */
+export async function withYouTubeData(page: Page) {
+  await answerQueries(page, {
+    "v1/socialAccounts:list": () => page1([...SOCIAL_ACCOUNTS, YOUTUBE_CHANNEL]),
+    "v1/youtubeAnalytics:channelDays": (args) =>
+      youtubeChannelDays(args.range as { from: string; to: string }),
+    "v1/youtubeAnalytics:videos": () =>
+      page1(
+        YOUTUBE_VIDEOS.map((video) => {
+          const latest = youtubeCaptures(video).at(-1);
+          return latest ? { ...video, latest } : { ...video, dataState: "unknown" };
+        }),
+      ),
+    "v1/youtubeAnalytics:video": (args) =>
+      youtubeVideoDetail(YOUTUBE_VIDEOS.find((v) => v.id === args.videoId) ?? YOUTUBE_VIDEOS[0]!),
+  });
+}
+
 export const AVAILABILITY: Record<string, unknown> = {
   s1: { availability: "active", accountId: "m1" },
   s2: { availability: "ready" },

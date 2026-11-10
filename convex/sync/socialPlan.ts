@@ -1,5 +1,6 @@
-import { addDays, compareDateKeys, todayIn, type DateKey } from "../lib/dates";
+import { addDays, compareDateKeys, toDateKey, todayIn, type DateKey } from "../lib/dates";
 import type { SocialProviderCapabilities } from "../providers/social/capabilities";
+import type { VideoAnalyticsWindow } from "../providers/social/types";
 import { SYNC_LIMITS } from "./config";
 import { windowChunks, type DateWindow, type PlanState, type SyncRunKind } from "./plan";
 import type { SocialSyncOperation } from "./subject";
@@ -27,6 +28,15 @@ import type { SocialSyncOperation } from "./subject";
  *                          incremental  the day before `latest` .. `latest`
  *                          lookback     the accountMetricsLookbackDays days up to `latest`
  *                          backfill     the gap between the horizon and coveredFrom
+ *   fetchVideoAnalytics  ADR 0016 Checkpoint 8: capabilities.videoAnalytics declared (YouTube),
+ *                        initial and lookback runs only, and only with the same report scope
+ *                        as the account metrics. One task per window, both ending at `latest`
+ *                        = today in videoAnalytics.dayTimeZone (Pacific Time) - the delay:
+ *                          last28    [latest - 27, latest], planned complete
+ *                          lifetime  planned with `to` only; its claim resolves `from` to the
+ *                                    oldest stored upload's publish day (resolveVideoWindow)
+ *                        A window is skipped at claim time when the channel has no stored
+ *                        video (the listing of the same run commits first: tasks run in seq).
  *
  * Stage B: Instagram declares posts, post metrics and account metrics
  * (providers/instagram/capabilities.ts), so every operation above is planned. Tasks run in
@@ -37,6 +47,8 @@ export type SocialTaskSpec = {
   operation: SocialSyncOperation;
   from?: DateKey;
   to?: DateKey;
+  /** fetchVideoAnalytics only. */
+  videoWindow?: VideoAnalyticsWindow;
   fullListing: boolean;
 };
 
@@ -89,6 +101,44 @@ export function socialMetricWindow(input: {
   }
 }
 
+/**
+ * ADR 0016 Checkpoint 8: the newest day a per-video window may request, in the platform's own
+ * report-day zone (YouTube Analytics: Pacific Time), the reporting delay applied.
+ */
+export function videoAnalyticsLatestDay(
+  capabilities: SocialProviderCapabilities,
+  now: number,
+): DateKey | undefined {
+  const video = capabilities.videoAnalytics;
+  if (video === undefined) return undefined;
+  return addDays(todayIn(video.dayTimeZone, now), -(capabilities.accountMetricsDelayDays ?? 0));
+}
+
+/**
+ * ADR 0016 Checkpoint 8, at claim time: the days one per-video window requests, or undefined
+ * when the window is skipped (no stored video, or every stored video is newer than `to`).
+ *   last28    the planned days (the channel must have at least one stored video)
+ *   lifetime  [publish day of the oldest stored video in the report-day zone, to]; once an
+ *             earlier claim of the task resolved `from` (plannedFrom), retries keep it
+ */
+export function resolveVideoWindow(input: {
+  window: VideoAnalyticsWindow;
+  plannedFrom?: DateKey;
+  to: DateKey;
+  /** publishedAt (epoch ms) of the channel's oldest stored video; undefined = none stored. */
+  oldestPublishedAt: number | undefined;
+  dayTimeZone: string;
+}): { from: DateKey; to: DateKey } | undefined {
+  if (input.oldestPublishedAt === undefined) return undefined;
+  const from =
+    input.plannedFrom ??
+    (input.window === "lifetime"
+      ? toDateKey(input.oldestPublishedAt, input.dayTimeZone)
+      : undefined);
+  if (from === undefined || compareDateKeys(from, input.to) > 0) return undefined;
+  return { from, to: input.to };
+}
+
 export function buildSocialRunPlan(input: {
   kind: SyncRunKind;
   state: PlanState;
@@ -123,6 +173,28 @@ export function buildSocialRunPlan(input: {
     for (const chunk of windowChunks(window, capabilities.maxAccountMetricsRangeDays)) {
       tasks.push({ operation: "fetchAccountMetrics", ...chunk, fullListing: false });
     }
+  }
+  const video = capabilities.videoAnalytics;
+  const latest = videoAnalyticsLatestDay(capabilities, now);
+  if (
+    video !== undefined &&
+    latest !== undefined &&
+    input.accountMetricsGranted !== false &&
+    (kind === "initial" || kind === "lookback")
+  ) {
+    tasks.push({
+      operation: "fetchVideoAnalytics",
+      videoWindow: "last28",
+      from: addDays(latest, -(video.recentWindowDays - 1)),
+      to: latest,
+      fullListing: false,
+    });
+    tasks.push({
+      operation: "fetchVideoAnalytics",
+      videoWindow: "lifetime",
+      to: latest,
+      fullListing: false,
+    });
   }
   if (tasks.length > SYNC_LIMITS.maxTasksPerRun) {
     throw new Error("Social run plan exceeds maxTasksPerRun");

@@ -54,6 +54,8 @@ function brand(): FakeChannel {
     days: Object.fromEntries(
       eachDay("2026-09-15", "2026-10-19").map((day, i) => [day, { views: 100 + i }]),
     ),
+    // Checkpoint 8: two videos in both per-video windows (4 youtubeVideoAnalytics rows).
+    videoReports: { "*": { vid00000000: { views: 40, likes: 2 }, vid00000001: { views: 30 } } },
   };
 }
 
@@ -74,6 +76,7 @@ async function allRows(t: Backend) {
     socialAccounts: await ctx.db.query("socialAccounts").collect(),
     posts: await ctx.db.query("socialPosts").collect(),
     snapshots: await ctx.db.query("socialPostMetricSnapshots").collect(),
+    analytics: await ctx.db.query("youtubeVideoAnalytics").collect(),
     daily: await ctx.db.query("socialAccountMetricsDaily").collect(),
     syncAccounts: await ctx.db.query("syncAccounts").collect(),
     runs: await ctx.db.query("syncRuns").collect(),
@@ -92,6 +95,7 @@ function channelRows(db: Rows, id: Id<"socialAccounts">) {
     account: db.socialAccounts.filter((r) => r._id === id).length,
     posts: db.posts.filter((r) => r.socialAccountId === id).length,
     snapshots: db.snapshots.filter((r) => r.socialAccountId === id).length,
+    analytics: db.analytics.filter((r) => r.socialAccountId === id).length,
     daily: db.daily.filter((r) => r.socialAccountId === id).length,
     syncAccounts: db.syncAccounts.filter((r) => r.socialAccountId === id).length,
     runs: runs.size,
@@ -102,6 +106,7 @@ const NOTHING = {
   account: 0,
   posts: 0,
   snapshots: 0,
+  analytics: 0,
   daily: 0,
   syncAccounts: 0,
   runs: 0,
@@ -139,7 +144,14 @@ async function syncedYouTube(t: Backend, who: IdentityInput = {}) {
   const linked = await linkedYouTube(t, who);
   await planAndDrain(t);
   const rows = channelRows(await allRows(t), linked.socialAccountId);
-  expect(rows).toMatchObject({ account: 1, posts: 3, snapshots: 3, syncAccounts: 1, runs: 1 });
+  expect(rows).toMatchObject({
+    account: 1,
+    posts: 3,
+    snapshots: 3,
+    analytics: 4,
+    syncAccounts: 1,
+    runs: 1,
+  });
   expect(rows.daily).toBeGreaterThan(0);
   return linked;
 }
@@ -218,9 +230,11 @@ describe("disconnect and unlink delete the channel's data (live, fake API)", () 
     ]);
     const [started, purged] = retentionAudit(db);
     expect(started!.changes).toEqual({ reason: { from: null, to: "disconnected" } });
+    expect(db.analytics).toEqual([]);
     expect(purged!.changes).toEqual({
       posts: { from: null, to: 3 },
       snapshots: { from: null, to: 3 },
+      videoAnalytics: { from: null, to: 4 },
       days: { from: null, to: before.daily },
       runs: { from: null, to: 1 },
     });
@@ -296,7 +310,8 @@ describe("disconnect and unlink delete the channel's data (live, fake API)", () 
         });
       }
     });
-    const stored = (db: Rows) => db.posts.length + db.snapshots.length + db.daily.length;
+    const stored = (db: Rows) =>
+      db.posts.length + db.snapshots.length + db.analytics.length + db.daily.length;
     const before = stored(await allRows(t));
 
     await as(t).mutation(api.v1.connections.unlinkSocialAccount, { socialAccountId });
@@ -689,6 +704,10 @@ describe("stale videos (live, fake API)", () => {
     );
     expect(db.snapshots.some((s) => s.postId === stale!._id)).toBe(false);
     expect(db.snapshots).toHaveLength(before.snapshots.length - 1);
+    // Checkpoint 8: the stale video's per-video analytics rows go with it; the others stay.
+    expect(before.analytics.filter((row) => row.postId === stale!._id)).toHaveLength(2);
+    expect(db.analytics.some((row) => row.postId === stale!._id)).toBe(false);
+    expect(db.analytics).toHaveLength(before.analytics.length - 2);
     expect(channelRows(db, instagram)).toEqual(channelRows(before, instagram));
     expect(db.daily).toHaveLength(before.daily.length); // days are kept
     expect(db.socialAccounts).toHaveLength(before.socialAccounts.length);

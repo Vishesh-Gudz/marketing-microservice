@@ -78,6 +78,8 @@ export const SOCIAL_SYNC_OPERATIONS = [
   "listSocialPosts",
   "fetchPostMetrics",
   "fetchAccountMetrics",
+  // ADR 0016 Checkpoint 8 (YouTube): per-video analytics windows.
+  "fetchVideoAnalytics",
 ] as const;
 export type SocialSyncOperation = (typeof SOCIAL_SYNC_OPERATIONS)[number];
 

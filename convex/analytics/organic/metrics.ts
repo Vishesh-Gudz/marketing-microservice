@@ -120,8 +120,9 @@ export type OrganicDeltaReason = (typeof ORGANIC_DELTA_REASONS)[number];
  * ADR 0016 (Checkpoint 4): the YouTube channel day values the sync stores, each under its own
  * YouTube Analytics name (`views` in the canonical column, the others in `extras`), keyed by
  * Pacific Time day. They mirror providers/youtube/semantics.ts ACCOUNT_REPORT_TARGETS (a test
- * keeps both equal). Exposed day by day only: never summed, averaged, compared or combined.
- * `averageViewDuration` is YouTube's own per-day value (seconds).
+ * keeps both equal). Exposed day by day, plus (Checkpoint 8) the one-channel range totals
+ * below; never compared or combined across channels or platforms. `averageViewDuration` is
+ * YouTube's own per-day value (seconds).
  */
 export const YOUTUBE_DAY_METRICS = [
   "views",
@@ -138,6 +139,49 @@ export type YouTubeDayMetric = (typeof YOUTUBE_DAY_METRICS)[number];
 /** YouTube video lifetime statistics (`videos.list` statistics, our UTC capture days). */
 export const YOUTUBE_VIDEO_METRICS = ["views", "likes", "comments"] as const;
 export type YouTubeVideoMetric = (typeof YOUTUBE_VIDEO_METRICS)[number];
+
+/**
+ * ADR 0016 Checkpoint 8: the per-video analytics values of one window (youtubeVideoAnalytics),
+ * each under its own YouTube Analytics name. They mirror providers/youtube/semantics.ts
+ * VIDEO_REPORT_COLUMNS (a test keeps both equal). averageViewDuration (seconds) and
+ * averageViewPercentage (percent) are YouTube's own values for ONE video and window.
+ */
+export const YOUTUBE_VIDEO_ANALYTICS_METRICS = [
+  "views",
+  "estimatedMinutesWatched",
+  "averageViewDuration",
+  "averageViewPercentage",
+  "likes",
+  "comments",
+  "shares",
+  "subscribersGained",
+  "subscribersLost",
+] as const;
+export type YouTubeVideoAnalyticsMetric = (typeof YOUTUBE_VIDEO_ANALYTICS_METRICS)[number];
+
+/**
+ * ADR 0016 Checkpoint 8 (approved): read-time totals of ONE channel over a range of its
+ * reported Pacific Time days. The counts are summed over the days that report them;
+ * subscribersNet = subscribersGained - subscribersLost over the days that report both;
+ * averageViewDuration = estimatedMinutesWatched x 60 / views over the days that report both
+ * (whole seconds). Never across channels or platforms, never compared with another period.
+ */
+export const YOUTUBE_TOTAL_METRICS = [
+  "views",
+  "estimatedMinutesWatched",
+  "likes",
+  "comments",
+  "shares",
+  "subscribersGained",
+  "subscribersLost",
+  "subscribersNet",
+  "averageViewDuration",
+] as const;
+export type YouTubeTotalMetric = (typeof YOUTUBE_TOTAL_METRICS)[number];
+
+/** not_reported: no reported day of the range has the value(s); zero_views: views summed to 0. */
+export const YOUTUBE_TOTAL_REASONS = ["not_reported", "zero_views"] as const;
+export type YouTubeTotalReason = (typeof YOUTUBE_TOTAL_REASONS)[number];
 
 /** [doc] YouTube Analytics reports Pacific Time days (ADR 0016, providers/youtube/semantics.ts). */
 export const YOUTUBE_DAY_TIMEZONE = "America/Los_Angeles";

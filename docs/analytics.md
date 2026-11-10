@@ -356,16 +356,17 @@ and `tests/lint/organic-separation.test.ts`. All organic data used in tests is m
 `convex/analytics/organic/youtube.ts`. Read-only `orgQuery` functions (viewer) with the same
 tenancy, bounds and errors as the organic functions above.
 
-**One channel per request, values exactly as YouTube reported them.** Nothing is summed,
-averaged, compared, ranked or combined, across days, channels or platforms, and there is no rate,
-percent change or score. The open policy questions are in
+**One channel per request, values exactly as YouTube reported them.** Nothing is compared,
+ranked or combined across channels or platforms, and there is no rate, percent change or score.
+The only values we compute are the Checkpoint 8 range totals of one channel
+(`channelDays.totals`, below). The open policy questions are in
 [ADR 0016](adr/0016-youtube-organic.md#open-compliance-questions).
 
-| Function                          | Args                                                                                         | Returns                                                                                         |
-| --------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `v1/youtubeAnalytics:channelDays` | `socialAccountId, range` (Pacific Time days, ≤ 400)                                          | one entry per day, `dataState`, `coverage`, `reportingDelayDays`, `analyticsAccess`             |
-| `v1/youtubeAnalytics:videos`      | `socialAccountId, publishedFrom?, publishedTo?, sort?{by: publishedAt, dir}, paginationOpts` | one channel's videos (1–100 per page, by publish instant) with their latest lifetime statistics |
-| `v1/youtubeAnalytics:video`       | `videoId, range?` (UTC capture days)                                                         | one video, its latest statistics and its lifetime captures (oldest first)                       |
+| Function                          | Args                                                                                         | Returns                                                                                                                                |
+| --------------------------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `v1/youtubeAnalytics:channelDays` | `socialAccountId, range` (Pacific Time days, ≤ 400)                                          | one entry per day, `dataState`, `coverage`, `reportingDelayDays`, `analyticsAccess`, `totals`, `subscribers?` (Checkpoint 8)           |
+| `v1/youtubeAnalytics:videos`      | `socialAccountId, publishedFrom?, publishedTo?, sort?{by: publishedAt, dir}, paginationOpts` | one channel's videos (1–100 per page, by publish instant) with their latest lifetime statistics and `analytics` windows (Checkpoint 8) |
+| `v1/youtubeAnalytics:video`       | `videoId, range?` (UTC capture days)                                                         | one video, its latest statistics, its lifetime captures (oldest first) and its `analytics` windows (Checkpoint 8)                      |
 
 **Time zones.** Two calendars are used, and they are never mixed. Instagram is unchanged.
 
@@ -388,8 +389,40 @@ percent change or score. The open policy questions are in
 
 **Range state.** `dataState` is `reported` when every day of the range was synced, `partial` when
 some were, and `unknown` when none were. `coverage` gives `syncedDays`, `unsyncedDays`, the
-`covered` Pacific Time days of the sync state, and `lastSyncedAt`. No total is returned, so a
-partial range can never pass for a complete one.
+`covered` Pacific Time days of the sync state, and `lastSyncedAt`.
+
+**Range totals (`channelDays.totals`, Checkpoint 8).** Computed on the server over the range's
+`reported` days only, so `totals.reportedDays` (with `dataState` and `coverage`) shows how much
+of the range they cover; a partial range never passes for a complete one:
+
+- `views`, `estimatedMinutesWatched`, `likes`, `comments`, `shares`, `subscribersGained`,
+  `subscribersLost`: summed over the reported days that carry the value;
+- `subscribersNet` = `subscribersGained` − `subscribersLost` over the days that report both (may
+  be negative);
+- `averageViewDuration` = `estimatedMinutesWatched` × 60 ÷ `views` over the days that report
+  both, in whole seconds (YouTube's own per-day averages are never averaged);
+- a total that does not exist is omitted and listed in `totals.unavailableMetrics`:
+  `not_reported` (no reported day carries the value), or `zero_views` (`averageViewDuration`
+  only: those days' views add up to 0).
+
+```ts
+totals: {
+  reportedDays: number;
+  metrics: {
+    views?: number;
+    estimatedMinutesWatched?: number;
+    likes?: number;
+    comments?: number;
+    shares?: number;
+    subscribersGained?: number;
+    subscribersLost?: number;
+    subscribersNet?: number;
+    averageViewDuration?: number; // seconds
+  };
+  unavailableMetrics: { metric: string; reason: "not_reported" | "zero_views" }[];
+};
+subscribers?: { count: number; capturedAt: string }; // ISO instant
+```
 
 **Analytics grant (`analyticsAccess`):**
 
@@ -403,15 +436,56 @@ partial range can never pass for a complete one.
 It is derived from the connection's status and granted scopes. No scope string, token or
 connection internal is returned.
 
-**Subscriber count.** The current subscriber count is `followersCount` in `v1/socialAccounts`.
-The captures stored on the day rows are UTC capture days, so they are not part of the Pacific
-Time day series.
+**Subscriber count.** The current subscriber count is `followersCount` in `v1/socialAccounts`
+and, since Checkpoint 8, `channelDays.subscribers` (`count` and `capturedAt`, the latest capture
+of the sync preflight; YouTube rounds it to three significant figures; absent when the channel
+hides it or it was never captured). The captures stored on the day rows are UTC capture days, so
+they are not part of the Pacific Time day series.
 
 **Videos.** `metrics` holds the lifetime `views`, `likes` and `comments` of one capture.
 `dataState` is `partial` when the owner hides likes or disabled comments; those counts are
 `not_reported`, never 0. A video never captured (published before the 90-day capture window) has
 `dataState: "unknown"` and no `latest`. The only URL is the `https://www.youtube.com/watch?v=<id>`
 permalink.
+
+**Per-video windows (`analytics`, Checkpoint 8).** Every video of `videos` and `video` carries
+`analytics: { last28?, lifetime? }` from YouTube's per-video report (the channel's 200 most viewed
+videos of each window, synced once a day):
+
+- `last28`: the 28 Pacific Time days ending `reportingDelayDays` before today;
+- `lifetime`: from the channel's oldest stored upload (its Pacific Time publish day) to the
+  same last day.
+
+```ts
+type VideoWindowDto = {
+  status: "reported" | "not_in_top";
+  from: string; // Pacific Time day
+  to: string; // Pacific Time day
+  syncedAt: string; // ISO instant
+  metrics: {
+    views?: number;
+    estimatedMinutesWatched?: number;
+    averageViewDuration?: number; // seconds, YouTube's value for the video and window
+    averageViewPercentage?: number; // percent, a decimal; may exceed 100 on rewatches
+    likes?: number;
+    comments?: number;
+    shares?: number;
+    subscribersGained?: number;
+    subscribersLost?: number;
+  };
+};
+```
+
+- `reported`: YouTube listed the video; `metrics` are its values (a metric YouTube left out is
+  omitted, a reported 0 stays 0).
+- `not_in_top`: the window was synced for the channel and the video was published by its last
+  day, but it is not among the window's top 200 by views. `metrics` is empty, never 0.
+- The window is **absent** when it was never synced for the channel (for example without
+  `yt-analytics.readonly`, or before the first daily sync) or the video is newer than its last
+  day.
+
+The per-video `averageViewDuration` and `averageViewPercentage` are YouTube's own values; they are
+never summed or averaged across videos, windows or channels.
 
 **Errors:**
 
@@ -422,7 +496,9 @@ permalink.
 
 Tests: `convex/v1/youtubeAnalytics.test.ts` (mock-synced data plus exact seeds: Pacific Time
 days, missing and zero values, coverage, scope, mixed selections, Instagram regression, tenant
-isolation, DTO contract) and `tests/lint/organic-separation.test.ts`.
+isolation, DTO contract; Checkpoint 8: totals and their `averageViewDuration` rules, the
+subscriber count, `reported` / `not_in_top` / absent windows, another org's rows) and
+`tests/lint/organic-separation.test.ts`.
 
 ## Testing
 

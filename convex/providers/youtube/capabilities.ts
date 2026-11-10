@@ -5,6 +5,9 @@ import {
   CHANNEL_ACCOUNT_TYPE,
   LISTING_PAGE_SIZE,
   POST_SNAPSHOT_WINDOW_DAYS,
+  REPORT_DAY_BASIS,
+  VIDEO_RECENT_WINDOW_DAYS,
+  VIDEO_REPORT_MAX_RESULTS,
   YOUTUBE_ACCOUNT_METRICS,
   YOUTUBE_POST_METRICS,
 } from "./semantics";
@@ -33,6 +36,9 @@ import {
  *                                     gets no day-report task (Q13); the rest keeps syncing
  * - maxAccountMetricsRangeDays 31     ours: one window chunk = one `reports.query`
  * - postSnapshotWindowDays 90         ours (Y-D8)
+ * - videoAnalytics                    Checkpoint 8: the per-video report, windows last28 and
+ *                                     lifetime on Pacific Time days, top 200 videos each;
+ *                                     1 token + 1 report per window
  */
 export const YOUTUBE_CAPABILITIES: SocialProviderCapabilities = Object.freeze({
   accountTypes: Object.freeze([CHANNEL_ACCOUNT_TYPE] as const),
@@ -44,6 +50,11 @@ export const YOUTUBE_CAPABILITIES: SocialProviderCapabilities = Object.freeze({
   accountMetricsDelayDays: ACCOUNT_METRICS_DELAY_DAYS,
   accountMetricsScope: YOUTUBE_ANALYTICS_SCOPE,
   maxAccountMetricsRangeDays: 31,
+  videoAnalytics: Object.freeze({
+    dayTimeZone: REPORT_DAY_BASIS,
+    recentWindowDays: VIDEO_RECENT_WINDOW_DAYS,
+    maxVideosPerWindow: VIDEO_REPORT_MAX_RESULTS,
+  }),
   postSnapshotWindowDays: POST_SNAPSHOT_WINDOW_DAYS,
   defaultPageSize: LISTING_PAGE_SIZE,
   maxPageSize: LISTING_PAGE_SIZE,

@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 import { resolvePreset } from "@/convex/analytics/periods";
 import { todayIn } from "@/convex/lib/dates";
 import { DEFAULT_FILTERS, resolveRange } from "./filters";
-import { parseSocialParams, postPublishFilter } from "./organic-filters";
+import {
+  parseSocialParams,
+  parseVideoWindow,
+  postPublishFilter,
+  youtubeListHref,
+  youtubeVideoHref,
+} from "./organic-filters";
 
 // /social URL state: the account and post order params; account-metric presets resolve
 // against today in UTC (the org timezone only applies to post publish days).
@@ -71,5 +77,29 @@ describe("postPublishFilter", () => {
       publishedFrom: "2026-09-01",
       publishedTo: "2026-09-07",
     });
+  });
+});
+
+// ADR 0016 Checkpoint 8: the YouTube videos table's period and the video page's way back.
+describe("YouTube video links", () => {
+  it("reads the period: lifetime only when asked, else the last 28 days", () => {
+    expect(parseVideoWindow(new URLSearchParams("vwin=lifetime"))).toBe("lifetime");
+    for (const value of ["", "last28", "Lifetime", "all"]) {
+      expect(parseVideoWindow(new URLSearchParams({ vwin: value }))).toBe("last28");
+    }
+  });
+
+  it("carries the filters and the list's channel, order and period to the video and back", () => {
+    const list = new URLSearchParams(
+      "platform=youtube&preset=custom&from=2026-10-01&to=2026-10-31&pdir=asc&vwin=lifetime&account=acct_old&tab=x",
+    );
+    const href = youtubeVideoHref({ id: "post/1", socialAccountId: "acct_yt" }, list);
+    expect(href).toBe(
+      "/social/youtube/videos/post%2F1?preset=custom&from=2026-10-01&to=2026-10-31&account=acct_yt&pdir=asc&vwin=lifetime",
+    );
+    expect(youtubeListHref(new URLSearchParams(href.split("?")[1]))).toBe(
+      "/social?preset=custom&from=2026-10-01&to=2026-10-31&platform=youtube&account=acct_yt&pdir=asc&vwin=lifetime",
+    );
+    expect(youtubeListHref(new URLSearchParams())).toBe("/social?platform=youtube");
   });
 });

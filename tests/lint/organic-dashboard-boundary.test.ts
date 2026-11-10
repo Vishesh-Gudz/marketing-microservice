@@ -11,7 +11,9 @@ import { describe, expect, it } from "vitest";
 // - no media, thumbnail or profile-picture URL and no image of a post is ever rendered.
 // ADR 0016 (Checkpoint 5): the YouTube view on /social is part of the organic UI, under the same
 // rules: it calls only v1/youtubeAnalytics (plus the social account list), and does no arithmetic
-// on YouTube's metrics either.
+// on YouTube's metrics either. Checkpoint 8 (key metrics, daily chart, video page): the range
+// totals come from the server; lib/analytics/youtube-values.ts only turns a value into text
+// (seconds as m:ss, minutes as hours, YouTube's percent number as a percent).
 
 const ROOT = process.cwd();
 
@@ -31,6 +33,7 @@ const ORGANIC_FILES = [
   "components/dashboard/views/social-post-detail-view.tsx",
   "components/dashboard/views/social-view.tsx",
   "components/dashboard/views/youtube-view.tsx",
+  "components/dashboard/views/youtube-video-detail-view.tsx",
   ...walk("lib/analytics").filter((path) =>
     /\/(organic-[^/]+|youtube-[^/]+|permalink)\.ts$/.test(path),
   ),
@@ -54,7 +57,7 @@ const ORGANIC_ONLY_MODULES = [
   "youtubeAnalytics",
 ];
 
-const METRIC = String.raw`(?:reach|views|likes|comments|shares|saves|replies|totalInteractions|accountsEngaged|followers|followerDelta|profileLinksTaps|engagementRate|estimatedMinutesWatched|averageViewDuration|subscribersGained|subscribersLost)`;
+const METRIC = String.raw`(?:reach|views|likes|comments|shares|saves|replies|totalInteractions|accountsEngaged|followers|followerDelta|profileLinksTaps|engagementRate|estimatedMinutesWatched|averageViewDuration|subscribersGained|subscribersLost|subscribersNet|averageViewPercentage)`;
 /** A metric member access used as an arithmetic operand (either side). */
 const ARITHMETIC = new RegExp(
   String.raw`\.${METRIC}\b\s*[-+*/%](?![/*=])|[-+*/%]\s*[\w.?]*\.${METRIC}\b`,
@@ -80,6 +83,11 @@ describe("organic dashboard boundary", () => {
         "components/dashboard/views/youtube-view.tsx",
         "components/dashboard/organic/youtube-channel-days.tsx",
         "lib/analytics/youtube-values.ts",
+        // ADR 0016 Checkpoint 8: the key metrics, the daily chart and the video page.
+        "components/dashboard/organic/youtube-kpi-strip.tsx",
+        "components/dashboard/organic/youtube-day-chart.tsx",
+        "components/dashboard/views/youtube-video-detail-view.tsx",
+        "app/(dashboard)/social/youtube/videos/[videoId]/page.tsx",
       ]),
     );
     expect(PAID_VIEWS.length).toBeGreaterThan(3);

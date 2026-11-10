@@ -27,7 +27,8 @@ import { CredentialUnavailableError, withConnectionCredential } from "./credenti
  * III.D.2.3 and III.E.4; docs/providers/youtube.md "Retention").
  *
  * WHAT is deleted: a YouTube channel's stored data is HARD-deleted — its videos, their lifetime
- * snapshots, its day rows, its sync runs and tasks, its sync state, then the channel row itself
+ * snapshots and per-video analytics rows (Checkpoint 8), its day rows, its sync runs and tasks,
+ * its sync state, then the channel row itself
  * (last, so an interrupted purge keeps its anchor and is resumed). Never: Instagram rows, rows of
  * another org, credentials (the credential store owns them), connection rows, audit entries.
  *
@@ -36,7 +37,7 @@ import { CredentialUnavailableError, withConnectionCredential } from "./credenti
  *    (status "disconnected", unlinked) in the admin's transaction and schedules the purge at
  *    once. Disconnect also revokes at Google through the existing flow.
  * 2. Hourly sweep: resumes every channel still marked (an interrupted chain), and deletes videos
- *    no listing has refreshed for 25 days with their snapshots. Absence from the listing is NOT
+ *    no listing has refreshed for 25 days with their snapshots and analytics rows. Absence from the listing is NOT
  *    evidence that a video was deleted on YouTube (it may also be beyond the 5,000-upload
  *    listing cap); the row is deleted because its metadata can no longer be refreshed.
  * 3. Daily authorization check: a linked channel whose authorization was last confirmed
@@ -82,15 +83,26 @@ const countsValidator = v.object({
   days: v.number(),
   runs: v.number(),
   tasks: v.number(),
+  // Checkpoint 8 (optional: a continuation scheduled before it existed carries none).
+  analytics: v.optional(v.number()),
 });
 export type PurgeCounts = {
   posts: number;
   snapshots: number;
+  /** youtubeVideoAnalytics rows (Checkpoint 8). */
+  analytics: number;
   days: number;
   runs: number;
   tasks: number;
 };
-export const NO_COUNTS: PurgeCounts = { posts: 0, snapshots: 0, days: 0, runs: 0, tasks: 0 };
+export const NO_COUNTS: PurgeCounts = {
+  posts: 0,
+  snapshots: 0,
+  analytics: 0,
+  days: 0,
+  runs: 0,
+  tasks: 0,
+};
 
 export type Budget = { left: number };
 type Actor = { orgId: Id<"organizations">; issuer: string; subject: string };
@@ -146,8 +158,9 @@ export async function markYouTubeAccountForPurge(
 }
 
 /**
- * Deletes a video's snapshots, then the video. False when the budget ran out first (the video
- * is kept until its snapshots are gone, so nothing is orphaned).
+ * Deletes a video's snapshots and (Checkpoint 8) its per-video analytics rows, then the video.
+ * False when the budget ran out first (the video is kept until its dependent rows are gone, so
+ * nothing is orphaned).
  */
 async function deleteVideo(
   db: DatabaseWriter,
@@ -167,6 +180,17 @@ async function deleteVideo(
   }
   budget.left -= snapshots.length;
   if (snapshots.length === limit) return false; // maybe more: the next step continues
+  const analyticsLimit = budget.left;
+  const analytics = await db
+    .query("youtubeVideoAnalytics")
+    .withIndex("by_org_post_window", (q) => q.eq("orgId", post.orgId).eq("postId", post._id))
+    .take(analyticsLimit);
+  for (const row of analytics) {
+    await db.delete(row._id);
+    counts.analytics++;
+  }
+  budget.left -= analytics.length;
+  if (analytics.length === analyticsLimit) return false;
   await db.delete(post._id);
   budget.left--;
   counts.posts++;
@@ -203,6 +227,22 @@ export async function deleteChannelRows(
     for (const post of posts) {
       if (!(await deleteVideo(ctx.db, post, budget, counts))) return false;
     }
+  }
+
+  // Checkpoint 8: per-video analytics rows go with their videos (above); this pass only
+  // removes rows whose video is already gone, so the channel never leaves one behind.
+  for (;;) {
+    if (budget.left <= 0) return false;
+    const rows = await ctx.db
+      .query("youtubeVideoAnalytics")
+      .withIndex("by_org_account_window", (q) =>
+        q.eq("orgId", orgId).eq("socialAccountId", account._id),
+      )
+      .take(budget.left);
+    if (rows.length === 0) break;
+    for (const row of rows) await ctx.db.delete(row._id);
+    budget.left -= rows.length;
+    counts.analytics += rows.length;
   }
 
   for (;;) {
@@ -278,7 +318,11 @@ export const purgeYouTubeAccount = internalMutation({
   }),
   handler: async (ctx, args) => {
     const now = Date.now();
-    const counts: PurgeCounts = { ...(args.deleted ?? NO_COUNTS) };
+    const counts: PurgeCounts = {
+      ...NO_COUNTS,
+      ...args.deleted,
+      analytics: args.deleted?.analytics ?? 0,
+    };
     const account = await ctx.db.get(args.socialAccountId);
     if (account === null || account.orgId !== args.orgId || account.platform !== "youtube") {
       return { status: "skipped" as const, deleted: counts };
@@ -321,6 +365,7 @@ export const purgeYouTubeAccount = internalMutation({
       changes: {
         posts: { from: null, to: counts.posts },
         snapshots: { from: null, to: counts.snapshots },
+        videoAnalytics: { from: null, to: counts.analytics },
         days: { from: null, to: counts.days },
         runs: { from: null, to: counts.runs },
       },

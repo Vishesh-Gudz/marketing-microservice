@@ -30,6 +30,8 @@ import { Notice } from "../notices";
 import { SECTION_HEADING, SURFACE, TABLE_EDGES } from "../surface";
 import { UpdatingIndicator } from "../updating-indicator";
 import { ValueText } from "../value-text";
+import { YouTubeDayChart } from "./youtube-day-chart";
+import { YouTubeKpiStrip, YouTubeKpiStripSkeleton } from "./youtube-kpi-strip";
 
 const STATUS_BADGE = {
   reported: "secondary",
@@ -74,11 +76,45 @@ function ChannelNotices({ data }: { data: YouTubeChannelDays }) {
   );
 }
 
+/** What the key metrics cover: the range's reported days (the server's totals). */
+function totalsCoverage(data: YouTubeChannelDays): string {
+  const days = data.totals.reportedDays;
+  const covered =
+    days === 0
+      ? `No Pacific Time day of ${formatRange(data.range)} is reported yet.`
+      : `Totals over the ${days} reported Pacific Time ${days === 1 ? "day" : "days"} of ${formatRange(data.range)}.`;
+  return `${covered} Subscribers is the latest count, rounded by YouTube.`;
+}
+
+/** The range's key metrics, with the access and coverage notices that explain them. */
+function KeyMetrics({ data, isUpdating }: { data: YouTubeChannelDays; isUpdating: boolean }) {
+  return (
+    <section
+      aria-labelledby="youtube-key-metrics"
+      className={cn("flex flex-col gap-3", isUpdating && "opacity-60")}
+      aria-busy={isUpdating}
+      data-testid="youtube-totals"
+    >
+      <div>
+        <div className="flex items-center gap-2">
+          <h2 id="youtube-key-metrics" className={SECTION_HEADING}>
+            Key metrics
+          </h2>
+          <UpdatingIndicator active={isUpdating} />
+        </div>
+        <p className="text-xs text-muted-foreground">{totalsCoverage(data)}</p>
+      </div>
+      <ChannelNotices data={data} />
+      <YouTubeKpiStrip data={data} />
+    </section>
+  );
+}
+
 /**
- * One YouTube channel's days over the selected Pacific Time range
- * (v1/youtubeAnalytics:channelDays), newest first: each day's status and the values YouTube
- * reported for it, under YouTube's own names. No total, average, rate or comparison row: a
- * partial range can never pass for a complete one.
+ * One YouTube channel over the selected Pacific Time range (v1/youtubeAnalytics:channelDays):
+ * the key metrics (the server's range totals and the current subscriber count, Checkpoint 8),
+ * a daily chart, and every day newest first with its status and the values YouTube reported
+ * for it, under YouTube's own names. The table has no total row; the dashboard computes nothing.
  */
 export function YouTubeChannelDays({ args }: { args: YouTubeChannelDaysArgs }) {
   const { data, isLoading, isUpdating } = useAnalyticsQuery(
@@ -87,13 +123,36 @@ export function YouTubeChannelDays({ args }: { args: YouTubeChannelDaysArgs }) {
   );
   if (isLoading || !data) {
     return (
-      <Skeleton
-        className="h-64 w-full rounded-[14px]"
-        role="status"
-        aria-label="Loading channel days"
-      />
+      <>
+        <div className="flex flex-col gap-3">
+          <Skeleton className="h-5 w-32" role="status" aria-label="Loading channel metrics" />
+          <YouTubeKpiStripSkeleton />
+        </div>
+        <Skeleton className="h-80 w-full rounded-[14px]" aria-hidden="true" />
+        <Skeleton className="h-64 w-full rounded-[14px]" aria-hidden="true" />
+      </>
     );
   }
+  return (
+    <>
+      <KeyMetrics data={data} isUpdating={isUpdating} />
+      <div className="relative">
+        <UpdatingIndicator active={isUpdating} overlay />
+        <div
+          className={cn(SURFACE, "p-4", isUpdating && "opacity-60")}
+          aria-busy={isUpdating}
+          data-testid="youtube-series"
+        >
+          <YouTubeDayChart days={data.days} reportingDelayDays={data.reportingDelayDays} />
+        </div>
+      </div>
+      <DayTable data={data} isUpdating={isUpdating} />
+    </>
+  );
+}
+
+/** Every day of the range, newest first: the full data view of the chart. */
+function DayTable({ data, isUpdating }: { data: YouTubeChannelDays; isUpdating: boolean }) {
   const days = [...data.days].reverse();
   const caption = `YouTube channel days ${formatRange(data.range)} (Pacific Time), as reported by YouTube`;
   return (
@@ -108,16 +167,27 @@ export function YouTubeChannelDays({ args }: { args: YouTubeChannelDaysArgs }) {
           Daily channel metrics (Pacific Time)
         </h2>
         <p className="text-xs text-muted-foreground">
-          Source: YouTube Analytics. One row per Pacific Time day, exactly as YouTube reported it —
-          no totals or averages across days. {YOUTUBE_DATA_STATE_DESCRIPTION[data.dataState]}
+          Source: YouTube Analytics. One row per Pacific Time day, exactly as YouTube reported it.{" "}
+          {YOUTUBE_DATA_STATE_DESCRIPTION[data.dataState]}
           {data.coverage.covered &&
             ` Synced through ${formatDateKey(data.coverage.covered.through)}.`}
         </p>
       </div>
-      <ChannelNotices data={data} />
       <div className="relative">
         <UpdatingIndicator active={isUpdating} overlay />
-        <div className={cn(SURFACE, "max-h-[32rem] overflow-auto", isUpdating && "opacity-60")}>
+        <div
+          role="region"
+          aria-label="Channel days table"
+          // Focusable so keyboard users can scroll the days (they hold no other tab stop). The
+          // table's own wrapper does not scroll, so this one surface scrolls both ways and the
+          // header row stays in view.
+          tabIndex={0}
+          className={cn(
+            SURFACE,
+            "max-h-[32rem] overflow-auto focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [&>[data-slot=table-container]]:overflow-visible",
+            isUpdating && "opacity-60",
+          )}
+        >
           <Table className={TABLE_EDGES}>
             <TableCaption className="sr-only">{caption}</TableCaption>
             <TableHeader className="sticky top-0 z-10 bg-paper">

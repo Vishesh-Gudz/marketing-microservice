@@ -1,7 +1,7 @@
 import { validate } from "convex-helpers/validators";
 import { v, type PropertyValidators } from "convex/values";
 import type { SocialPlatform } from "../../domain/types";
-import { isDateKey, toDateKey } from "../../lib/dates";
+import { compareDateKeys, isDateKey, toDateKey } from "../../lib/dates";
 import { connectionTables } from "../../tables/connections";
 import { socialTables } from "../../tables/social";
 import { ProviderError } from "../errors";
@@ -63,6 +63,12 @@ export const SOCIAL_RECORD_VALIDATORS = {
     socialTables.socialAccountMetricsDaily.validator.fields,
     SOCIAL_RECORD_DROPPED_FIELDS.socialAccountDay,
     { accountExternalId: externalRef },
+  ),
+  // ADR 0016 Checkpoint 8: a YouTube-only table, so the record names its platform explicitly.
+  youtubeVideoAnalytics: recordValidator(
+    socialTables.youtubeVideoAnalytics.validator.fields,
+    SOCIAL_RECORD_DROPPED_FIELDS.youtubeVideoAnalytics,
+    { platform: v.literal("youtube"), accountExternalId: externalRef, postExternalId: externalRef },
   ),
 } satisfies Record<SocialRecordKind, unknown>;
 
@@ -158,6 +164,27 @@ function semanticIssues(kind: SocialRecordKind, record: Record<string, unknown>)
         issues.push("followerDelta: not an integer");
       }
       break;
+    case "youtubeVideoAnalytics": {
+      issues.push(...idIssue(platform, record.postExternalId as string, "postExternalId", "post"));
+      issues.push(
+        ...idIssue(platform, record.accountExternalId as string, "accountExternalId", "account"),
+      );
+      const from = record.from as string;
+      const to = record.to as string;
+      if (!isDateKey(from) || !isDateKey(to) || compareDateKeys(from, to) > 0) {
+        issues.push("from/to: not a window");
+      }
+      issues.push(...countIssues(record, VIDEO_ANALYTICS_COUNTS));
+      // A per-video average percent: a non-negative decimal (it may exceed 100 on rewatches).
+      const percent = record.averageViewPercentage;
+      if (
+        percent !== undefined &&
+        (typeof percent !== "number" || !Number.isFinite(percent) || percent < 0)
+      ) {
+        issues.push("averageViewPercentage: not a percentage");
+      }
+      break;
+    }
   }
   return issues;
 }
@@ -176,6 +203,17 @@ const SNAPSHOT_COUNTS = [
   "totalInteractions",
 ] as const;
 const DAY_COUNTS = ["reach", "views", "accountsEngaged", "totalInteractions"] as const;
+/** Every per-video value except averageViewPercentage is a non-negative integer. */
+const VIDEO_ANALYTICS_COUNTS = [
+  "views",
+  "estimatedMinutesWatched",
+  "averageViewDuration",
+  "likes",
+  "comments",
+  "shares",
+  "subscribersGained",
+  "subscribersLost",
+] as const;
 
 /** Metric values are non-negative integers (extras too); absent stays absent. */
 function countIssues(record: Record<string, unknown>, fields: readonly string[]): string[] {

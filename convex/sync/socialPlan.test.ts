@@ -4,7 +4,12 @@ import { INSTAGRAM_CAPABILITIES } from "../providers/instagram/capabilities";
 import { YOUTUBE_CAPABILITIES } from "../providers/youtube/capabilities";
 import type { SocialProviderCapabilities } from "../providers/social/capabilities";
 import type { PlanState } from "./plan";
-import { buildSocialRunPlan, socialMetricWindow } from "./socialPlan";
+import {
+  buildSocialRunPlan,
+  resolveVideoWindow,
+  socialMetricWindow,
+  videoAnalyticsLatestDay,
+} from "./socialPlan";
 import {
   isAdOperation,
   isPreflightOperation,
@@ -214,6 +219,9 @@ describe("reporting delay (ADR 0016, YouTube)", () => {
       ["fetchPostMetrics", "2026-07-01", "2026-09-28"], // the 90-day snapshot window, not delayed
       ["fetchAccountMetrics", "2026-09-01", "2026-09-25"],
       ["fetchAccountMetrics", "2026-08-27", "2026-08-31"],
+      // Checkpoint 8: the per-video windows (lifetime's first day is resolved at claim time).
+      ["fetchVideoAnalytics", "2026-08-29", "2026-09-25"],
+      ["fetchVideoAnalytics", undefined, "2026-09-25"],
     ]);
     const backfill = buildSocialRunPlan({
       kind: "backfill",
@@ -275,11 +283,13 @@ describe("report scope (ADR 0016, open question 13)", () => {
     expect(INSTAGRAM_CAPABILITIES.accountMetricsScope).toBeUndefined();
   });
 
-  it("without the scope: no day-report task, and nothing else changes", () => {
+  it("without the scope: no day-report or video-report task, and nothing else changes", () => {
     for (const kind of ["initial", "lookback", "incremental", "manual"] as const) {
       const granted = operations({ kind });
       const missing = operations({ kind, accountMetricsGranted: false });
-      expect(missing).toEqual(granted.filter((op) => op !== "fetchAccountMetrics"));
+      expect(missing).toEqual(
+        granted.filter((op) => op !== "fetchAccountMetrics" && op !== "fetchVideoAnalytics"),
+      );
       expect(missing[0]).toBe("getSocialAccount");
     }
     expect(operations({ accountMetricsGranted: false })).toEqual([
@@ -302,5 +312,147 @@ describe("report scope (ADR 0016, open question 13)", () => {
   it("with the scope (or by default) the plan is exactly as before", () => {
     expect(operations({ accountMetricsGranted: true })).toEqual(operations({}));
     expect(operations({})).toContain("fetchAccountMetrics");
+    expect(operations({})).toContain("fetchVideoAnalytics");
+  });
+});
+
+describe("per-video analytics windows (ADR 0016 Checkpoint 8)", () => {
+  const youtubeState: PlanState = { structureStale: false, backfillHorizon: "2025-08-30" };
+  const plan = (
+    kind: "initial" | "incremental" | "lookback" | "backfill" | "manual",
+    now = NOW,
+    capabilities: SocialProviderCapabilities = YOUTUBE_CAPABILITIES,
+    state: PlanState = youtubeState,
+  ) => buildSocialRunPlan({ kind, state, capabilities, now });
+  const videoTasks = (result: ReturnType<typeof plan>) =>
+    result.tasks.filter((task) => task.operation === "fetchVideoAnalytics");
+
+  it("plans last28 and lifetime on initial and lookback runs, after every other task", () => {
+    for (const kind of ["initial", "lookback"] as const) {
+      const result = plan(kind);
+      expect(videoTasks(result)).toEqual([
+        {
+          operation: "fetchVideoAnalytics",
+          videoWindow: "last28",
+          from: "2026-08-29",
+          to: "2026-09-25",
+          fullListing: false,
+        },
+        {
+          operation: "fetchVideoAnalytics",
+          videoWindow: "lifetime",
+          to: "2026-09-25",
+          fullListing: false,
+        },
+      ]);
+      // The listing (and so the stored videos) always comes first; the windows come last.
+      const operations = result.tasks.map((task) => task.operation);
+      expect(operations.indexOf("listSocialPosts")).toBeLessThan(
+        operations.indexOf("fetchVideoAnalytics"),
+      );
+      expect(operations.slice(-2)).toEqual(["fetchVideoAnalytics", "fetchVideoAnalytics"]);
+    }
+  });
+
+  it("never on incremental, manual or backfill runs", () => {
+    const covered = { ...youtubeState, coveredFrom: "2026-08-27", coveredThrough: "2026-09-25" };
+    for (const kind of ["incremental", "manual", "backfill"] as const) {
+      expect(videoTasks(plan(kind, NOW, YOUTUBE_CAPABILITIES, covered))).toEqual([]);
+    }
+  });
+
+  it("never without the report scope, and never for a platform that declares no video analytics", () => {
+    expect(
+      videoTasks(
+        buildSocialRunPlan({
+          kind: "initial",
+          state: youtubeState,
+          capabilities: YOUTUBE_CAPABILITIES,
+          now: NOW,
+          accountMetricsGranted: false,
+        }),
+      ),
+    ).toEqual([]);
+    expect(INSTAGRAM_CAPABILITIES.videoAnalytics).toBeUndefined();
+    expect(videoTasks(plan("initial", NOW, INSTAGRAM_CAPABILITIES, state))).toEqual([]);
+    expect(videoTasks(plan("lookback", NOW, FULL, state))).toEqual([]);
+  });
+
+  it("ends both windows at today in Pacific Time minus the reporting delay", () => {
+    expect(YOUTUBE_CAPABILITIES.videoAnalytics).toEqual({
+      dayTimeZone: "America/Los_Angeles",
+      recentWindowDays: 28,
+      maxVideosPerWindow: 200,
+    });
+    // 2026-09-29 03:00 UTC is still 2026-09-28 in Pacific Time: latest = 2026-09-25 (UTC would
+    // give 2026-09-26).
+    const lateUtc = Date.UTC(2026, 8, 29, 3, 0);
+    expect(videoAnalyticsLatestDay(YOUTUBE_CAPABILITIES, lateUtc)).toBe("2026-09-25");
+    expect(videoTasks(plan("lookback", lateUtc)).map((t) => [t.videoWindow, t.from, t.to])).toEqual(
+      [
+        ["last28", "2026-08-29", "2026-09-25"],
+        ["lifetime", undefined, "2026-09-25"],
+      ],
+    );
+    expect(videoAnalyticsLatestDay(INSTAGRAM_CAPABILITIES, lateUtc)).toBeUndefined();
+  });
+
+  describe("resolveVideoWindow (at claim time)", () => {
+    const base = { to: "2026-09-25", dayTimeZone: "America/Los_Angeles" };
+    // 2024-03-01 06:00 UTC is 2024-02-29 in Pacific Time.
+    const oldest = Date.UTC(2024, 2, 1, 6, 0);
+
+    it("lifetime starts on the oldest stored upload's Pacific Time publish day", () => {
+      expect(
+        resolveVideoWindow({ ...base, window: "lifetime", oldestPublishedAt: oldest }),
+      ).toEqual({ from: "2024-02-29", to: "2026-09-25" });
+      // A retry keeps the day an earlier claim resolved.
+      expect(
+        resolveVideoWindow({
+          ...base,
+          window: "lifetime",
+          plannedFrom: "2024-01-01",
+          oldestPublishedAt: oldest,
+        }),
+      ).toEqual({ from: "2024-01-01", to: "2026-09-25" });
+    });
+
+    it("last28 keeps its planned days", () => {
+      expect(
+        resolveVideoWindow({
+          ...base,
+          window: "last28",
+          plannedFrom: "2026-08-29",
+          oldestPublishedAt: oldest,
+        }),
+      ).toEqual({ from: "2026-08-29", to: "2026-09-25" });
+    });
+
+    it("skips a window when the channel has no stored video", () => {
+      for (const window of ["last28", "lifetime"] as const) {
+        expect(
+          resolveVideoWindow({
+            ...base,
+            window,
+            plannedFrom: "2026-08-29",
+            oldestPublishedAt: undefined,
+          }),
+        ).toBeUndefined();
+      }
+    });
+
+    it("skips lifetime when every stored video is newer than the window's last day", () => {
+      expect(
+        resolveVideoWindow({
+          ...base,
+          window: "lifetime",
+          oldestPublishedAt: Date.UTC(2026, 8, 27, 12),
+        }),
+      ).toBeUndefined();
+      // A malformed last28 task (no planned days) is never requested.
+      expect(
+        resolveVideoWindow({ ...base, window: "last28", oldestPublishedAt: oldest }),
+      ).toBeUndefined();
+    });
   });
 });

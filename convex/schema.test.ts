@@ -145,6 +145,8 @@ describe("schema inventory", () => {
         "whatsappMessages",
         "whatsappPhoneNumbers",
         "whatsappWebhookEvents",
+        // ADR 0016 Checkpoint 8: YouTube per-video analytics windows.
+        "youtubeVideoAnalytics",
       ].sort(),
     );
   });
@@ -228,6 +230,7 @@ describe("tenant ownership", () => {
       "instagramMessages",
       "instagramTemplates",
       "inboxThreads",
+      "youtubeVideoAnalytics",
     ];
     expect([...owned].sort()).toEqual(tenantTables);
   });

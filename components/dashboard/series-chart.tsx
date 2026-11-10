@@ -70,6 +70,7 @@ export function SeriesChart<M extends string>({
   tooltip,
   period,
   periodHeader = "Period",
+  stateLabel,
   unavailable,
   nothingToChart,
   note,
@@ -90,6 +91,8 @@ export function SeriesChart<M extends string>({
   /** A bucket's period, as the table and tooltip show it. */
   period: (row: ChartRow) => string;
   periodHeader?: string;
+  /** The table view's "Data" text of a bucket (default: its data state). */
+  stateLabel?: (row: ChartRow) => string;
   /** Shown instead of the chart and its table when the metric cannot be charted. */
   unavailable?: ReactNode;
   /** The text of "Nothing to chart for this range". */
@@ -166,8 +169,14 @@ export function SeriesChart<M extends string>({
                   <TableCell>{period(row)}</TableCell>
                   <TableCell className="text-right tabular-nums">{row.display}</TableCell>
                   <TableCell className="text-muted-foreground">
-                    {DATA_STATE_LABEL[row.dataState]}
-                    {row.incomplete && row.dataState !== "partial" ? " (partial bucket)" : ""}
+                    {stateLabel ? (
+                      stateLabel(row)
+                    ) : (
+                      <>
+                        {DATA_STATE_LABEL[row.dataState]}
+                        {row.incomplete && row.dataState !== "partial" ? " (partial bucket)" : ""}
+                      </>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

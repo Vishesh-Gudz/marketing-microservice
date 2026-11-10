@@ -9,7 +9,8 @@
  *   GET  https://www.googleapis.com/youtube/v3/channels      mine=true (Bearer)
  *   GET  https://www.googleapis.com/youtube/v3/playlistItems the uploads playlist (Bearer)
  *   GET  https://www.googleapis.com/youtube/v3/videos        snippets (+ statistics) by id (Bearer)
- *   GET  https://youtubeanalytics.googleapis.com/v2/reports  the channel day report (Bearer)
+ *   GET  https://youtubeanalytics.googleapis.com/v2/reports  the channel day report and the
+ *                                                            per-video report (Bearer)
  *
  * Errors use the documented shapes: OAuth `{ error: "invalid_grant" }` and the Google API
  * `{ error: { code, status, errors: [{ reason }] } }`. Authorization codes are single-use and
@@ -67,6 +68,12 @@ export type FakeChannel = {
   processedThrough?: string;
   /** Requested metric columns the report leaves out. */
   omitMetrics?: string[];
+  /**
+   * Checkpoint 8: per-video report values by window START day (Pacific Time; "*" = any
+   * window), then by video id and metric name. The fake sorts the rows by views (descending)
+   * and returns at most `maxResults` of them, like YouTube's top-videos report.
+   */
+  videoReports?: Record<string, Record<string, Record<string, number | null>>>;
 };
 
 export type FakeRequest = {
@@ -294,9 +301,41 @@ export function createFakeYouTube(options: { channels?: Record<string, FakeChann
       if (!granted.split(" ").includes(FAKE_YT_ANALYTICS_SCOPE)) {
         return apiError(403, "insufficientPermissions", "PERMISSION_DENIED");
       }
+      if (url.searchParams.get("dimensions") === "video") {
+        return json(200, videoReportOf(channel, url.searchParams));
+      }
       return json(200, reportOf(channel, url.searchParams));
     }
     return apiError(404, "notFound", "NOT_FOUND");
+  }
+
+  /**
+   * [doc] Checkpoint 8: the per-video report: headers (video + requested metrics), one row per
+   * video with values, most viewed first, at most `maxResults` rows.
+   */
+  function videoReportOf(channel: FakeChannel, params: URLSearchParams) {
+    const start = params.get("startDate") ?? "";
+    const metrics = (params.get("metrics") ?? "")
+      .split(",")
+      .filter((metric) => !(channel.omitMetrics ?? []).includes(metric));
+    const values = channel.videoReports?.[start] ?? channel.videoReports?.["*"] ?? {};
+    const limit = Number(params.get("maxResults") ?? "0");
+    const rows = Object.entries(values)
+      .sort(([, a], [, b]) => (b.views ?? 0) - (a.views ?? 0))
+      .slice(0, limit)
+      .map(([video, row]) => [video, ...metrics.map((metric) => row[metric] ?? null)]);
+    return {
+      kind: "youtubeAnalytics#resultTable",
+      columnHeaders: [
+        { name: "video", columnType: "DIMENSION", dataType: "STRING" },
+        ...metrics.map((name) => ({
+          name,
+          columnType: "METRIC",
+          dataType: name === "averageViewPercentage" ? "FLOAT" : "INTEGER",
+        })),
+      ],
+      ...(rows.length > 0 ? { rows } : {}),
+    };
   }
 
   /** [doc] A day report: headers (day + requested metrics), rows in day order, cut at processedThrough. */

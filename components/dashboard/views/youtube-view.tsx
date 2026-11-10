@@ -8,7 +8,7 @@ import { api } from "@/convex/_generated/api";
 import { formatDateKey } from "@/lib/analytics/chart-data";
 import { humanize } from "@/lib/analytics/labels";
 import { useOrg } from "@/lib/analytics/org-context";
-import { parseSocialParams } from "@/lib/analytics/organic-filters";
+import { parseSocialParams, parseVideoWindow } from "@/lib/analytics/organic-filters";
 import type { SocialAccount } from "@/lib/analytics/organic-types";
 import { useAnalyticsQuery } from "@/lib/analytics/use-analytics-query";
 import { useAnalyticsScope, useDashboardFilters } from "@/lib/analytics/use-dashboard-filters";
@@ -56,15 +56,19 @@ function ChannelSummary({ channel }: { channel: SocialAccount }) {
 }
 
 /**
- * YouTube organic (ADR 0016, Checkpoint 5): ONE channel at a time, separate from Instagram and
- * paid analytics. Channel days are YouTube's Pacific Time days (presets resolve against today
- * in Pacific Time); videos are filtered by publish day in the org timezone and show lifetime
- * statistics. Every value comes from v1/youtubeAnalytics exactly as YouTube reported it: no
- * total, average, rate, change, score or cross-channel / cross-platform figure is computed.
+ * YouTube organic (ADR 0016, Checkpoints 5 and 8): ONE channel at a time, separate from
+ * Instagram and paid analytics. Channel days are YouTube's Pacific Time days (presets resolve
+ * against today in Pacific Time): key metrics (the server's range totals and the subscriber
+ * count), a daily chart and the day table. Videos are filtered by publish day in the org
+ * timezone and show YouTube Analytics' values for the last 28 days or the lifetime (`vwin`).
+ * Every value comes from v1/youtubeAnalytics: the dashboard computes no total, average, rate,
+ * change, score or cross-channel / cross-platform figure.
  */
 export function YouTubeView({ switcher }: { switcher?: ReactNode }) {
   const { searchParams, setParams } = useDashboardFilters();
-  const social = parseSocialParams(new URLSearchParams(searchParams.toString()));
+  const params = new URLSearchParams(searchParams.toString());
+  const social = parseSocialParams(params);
+  const videoWindow = parseVideoWindow(params);
   const scope = useAnalyticsScope({ dayBasis: "pacific" });
   const accounts = useAnalyticsQuery(api.v1.socialAccounts.list, {
     paginationOpts: { numItems: 100, cursor: null },
@@ -73,7 +77,7 @@ export function YouTubeView({ switcher }: { switcher?: ReactNode }) {
   const header = (
     <OrganicPageHeader
       title="YouTube (organic)"
-      description="Daily channel metrics and video statistics exactly as YouTube reports them — separate from Instagram and paid ads. Channel days are Pacific Time days."
+      description="Channel and video metrics from YouTube — separate from Instagram and paid ads. Channel days are Pacific Time days."
       switcher={switcher}
     />
   );
@@ -165,7 +169,7 @@ export function YouTubeView({ switcher }: { switcher?: ReactNode }) {
         <ChannelSummary channel={selected} />
       </IdentityBar>
       <FilterBar dayBasis="pacific" accounts={false} compare={false} />
-      <QueryBoundary resetKey={JSON.stringify(daysArgs)} title="Channel days">
+      <QueryBoundary resetKey={JSON.stringify(daysArgs)} title="Channel metrics">
         <YouTubeChannelDays args={daysArgs} />
       </QueryBoundary>
       <QueryBoundary
@@ -176,6 +180,7 @@ export function YouTubeView({ switcher }: { switcher?: ReactNode }) {
           socialAccountId={selectedId}
           range={scope.range}
           order={social.postOrder}
+          videoWindow={videoWindow}
         />
       </QueryBoundary>
       <p className="text-xs text-muted-foreground">

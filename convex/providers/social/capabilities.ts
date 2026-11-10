@@ -54,6 +54,20 @@ export type SocialProviderCapabilities = {
   accountMetricsScope?: string;
   /** Longer account-metric ranges are rejected with invalid_request (the plan chunks). */
   maxAccountMetricsRangeDays: number;
+  /**
+   * ADR 0016 Checkpoint 8 (YouTube only): per-video analytics windows (`fetchVideoAnalytics`,
+   * an OPTIONAL provider operation). Planned on initial and lookback runs only, and only when the
+   * connection holds `accountMetricsScope` (the same report scope). Each window ends at today in
+   * `dayTimeZone` minus `accountMetricsDelayDays`. Absent = never planned (Instagram).
+   */
+  videoAnalytics?: {
+    /** IANA zone of the platform's report days (YouTube Analytics: America/Los_Angeles). */
+    dayTimeZone: string;
+    /** Days of the recent window ("last28"). */
+    recentWindowDays: number;
+    /** Most rows (videos) one window report returns: its top N by views. */
+    maxVideosPerWindow: number;
+  };
   /** Posts published within this many UTC days get a daily lifetime snapshot. */
   postSnapshotWindowDays: number;
   /** Post listing page size. */

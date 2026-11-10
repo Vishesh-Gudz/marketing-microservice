@@ -7,6 +7,9 @@
   reports are skipped without `yt-analytics.readonly`; everything else keeps syncing).
   Nothing was validated against a real YouTube channel or a real Google OAuth client (YR1–YR14
   provisional).
+- Addendum 2026-11-09: Checkpoint 8 (per-video analytics, range totals and the subscriber count
+  in `v1/youtubeAnalytics`) implemented against mock and fake data only (YR15, YR16
+  provisional); see [Checkpoint 8](#checkpoint-8-per-video-analytics).
 - Date: 2026-10-25
 
 ## Context
@@ -267,6 +270,67 @@ stopped updating and the videos were deleted after 25 days was **wrong**.
   state unblocks; a revocation still means `needs_reauth`, and a reconnect with the scope syncs
   the days; another org keeps its own reports.
 
+### Checkpoint 8: per-video analytics
+
+Approved in the organic analytics plan (2026-11-09, decisions 2 and 3: two windows, and
+`averageViewPercentage` per video). Backend and v1 only; the YouTube page follows separately.
+
+**Report.** One new exact client route on the same reports URL: `ids=channel==MINE`,
+`startDate`, `endDate`, `metrics=views,estimatedMinutesWatched,averageViewDuration,`
+`averageViewPercentage,likes,comments,shares,subscribersGained,subscribersLost`,
+`dimensions=video`, `sort=-views`, `maxResults=200`. The day route is unchanged. Parameters of
+the two routes never mix; `dimensions=day,video`, `filters`, another sort or row cap stay
+refused. Same scope (`yt-analytics.readonly`), so no reconnect is needed.
+
+**Provider.** `fetchVideoAnalytics` is an OPTIONAL `SocialProvider` operation behind the
+YouTube-only capability `videoAnalytics` (`dayTimeZone` America/Los_Angeles,
+`recentWindowDays` 28, `maxVideosPerWindow` 200). Instagram and the social contract are
+unchanged. Same checks as the day report (configuration, credential, channel ownership,
+`analytics_scope_missing` before any request), 2 requests per window. The mapping fails closed
+on an unknown or mistyped column, a malformed or repeated video id, a bad value or more than 200
+rows; a missing value stays absent.
+
+**Windows.** Fetched on initial and lookback runs only, and only with the scope:
+
+- `last28` = [latest − 27, latest];
+- `lifetime` = [Pacific Time publish day of the oldest stored upload, latest];
+
+where latest = today (Pacific Time) − the 3-day reporting delay. The lifetime start is set when
+the task is claimed (the run's listing has committed by then) and kept for retries. A window
+is skipped when the channel has no stored video.
+
+**Storage.** New table `youtubeVideoAnalytics` (org, channel, video, window, days, the nine
+metrics, syncedAt; indexes `by_org_post_window`, `by_org_account_window`). A sync replaces all
+rows of an (account, window) pair in one transaction; a video that fell out of the top 200 loses
+its row. The window's last sync is recorded on the sync state
+(`syncAccounts.videoAnalyticsWindows`), so "not in the top 200" is distinguishable from "never
+synced", also for an empty report. Rows go with their video (retention sweep) and with the
+channel (disconnect and unlink purge; the purge audit counts them as `videoAnalytics`). Only
+`convex/sync/upsert.ts` writes the table (ESLint).
+
+**v1 (additive).**
+
+- `videos` / `video`: each video gains `analytics.last28` / `analytics.lifetime`, each
+  `{ status, from, to, syncedAt, metrics }`:
+  - `reported`: YouTube's values for the video and window;
+  - `not_in_top`: the window was synced for the channel, the video was published by its last
+    day, but the report did not list it (no metrics, never 0);
+  - the window is absent when it was never synced for the channel or the video is newer than
+    its last day.
+- `channelDays` gains `totals` (computed by us over the range's reported days: the counts,
+  `subscribersNet` and `averageViewDuration` = watch time × 60 ÷ views over the days that report
+  both, absent as `zero_views` or `not_reported`; plus `reportedDays`) and `subscribers`
+  (the latest preflight capture of the rounded subscriber count; absent when hidden).
+
+**Policy position.** Range totals of ONE channel are the Developer Policies Guide's simple
+calculations (sums, a difference and one division); they are a product decision, not an answer
+to open question 1. There is still no comparison, no multi-channel or cross-platform figure, and
+`v1/organicAnalytics` still never aggregates YouTube. The per-video `averageViewDuration` and
+`averageViewPercentage` are YouTube's own values and are never aggregated.
+
+**Not verified on a real channel:** the row cap and ordering (YR15), the decimal and above-100
+percentages (YR16).
+
 ## Policy review findings (Checkpoint 3)
 
 - **III.E.4.h:** no API Data replaced by independently calculated data and no "new or derived
@@ -327,9 +391,10 @@ stopped updating and the videos were deleted after 25 days was **wrong**.
       deleted. Before, every run failed and the channel showed as blocked.
 
 Until answered: only metrics YouTube reports are stored and exposed (one channel at a time,
-through `v1/youtubeAnalytics`), nothing is derived, there is no multi-channel or cross-platform
-aggregation, and there are no period totals or comparisons for YouTube. Nothing in this service
-claims that such totals or comparisons are policy-approved.
+through `v1/youtubeAnalytics`), there is no multi-channel or cross-platform aggregation, and
+there are no comparisons for YouTube. The one exception, decided in Checkpoint 8, is the range
+totals of one channel's reported days (`channelDays.totals`). Nothing in this service claims that
+such totals or comparisons are policy-approved.
 
 ## Consequences
 

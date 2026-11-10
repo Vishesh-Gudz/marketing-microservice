@@ -64,6 +64,8 @@ export const SOCIAL_RECORD_DROPPED_FIELDS = {
     "profileViews",
     "websiteClicks",
   ],
+  // ADR 0016 Checkpoint 8: internal references and the engine-owned commit time.
+  youtubeVideoAnalytics: ["socialAccountId", "postId", "syncedAt"],
 } as const;
 
 type Dropped<K extends keyof typeof SOCIAL_RECORD_DROPPED_FIELDS> =
@@ -98,6 +100,21 @@ export type ProviderSocialAccountDay = Canonical<
 };
 
 /**
+ * ADR 0016 Checkpoint 8 (YouTube only): one video's values in one analytics window, exactly as
+ * the platform's per-video report returned them. Videos the report does not list get no record.
+ */
+export type ProviderYouTubeVideoAnalytics = Canonical<
+  "youtubeVideoAnalytics",
+  Dropped<"youtubeVideoAnalytics">
+> & {
+  platform: "youtube";
+  accountExternalId: string;
+  postExternalId: string;
+};
+
+export type VideoAnalyticsWindow = Doc<"youtubeVideoAnalytics">["window"];
+
+/**
  * A page of social records. `unresolved` counts platform items the provider could not map
  * and did NOT emit (e.g. media without a product type, a post deleted mid-page); the engine
  * adds it to the run's unresolved count, which also blocks removal marking. Items excluded
@@ -110,7 +127,8 @@ export type SocialRecordKind =
   | "socialAccount"
   | "socialPost"
   | "socialPostSnapshot"
-  | "socialAccountDay";
+  | "socialAccountDay"
+  | "youtubeVideoAnalytics";
 
 export type SocialRecordByKind = {
   discoveredSocialAccount: ProviderDiscoveredSocialAccount;
@@ -118,6 +136,7 @@ export type SocialRecordByKind = {
   socialPost: ProviderSocialPost;
   socialPostSnapshot: ProviderSocialPostSnapshot;
   socialAccountDay: ProviderSocialAccountDay;
+  youtubeVideoAnalytics: ProviderYouTubeVideoAnalytics;
 };
 
 // ---------------------------------------------------------------------------
@@ -140,6 +159,15 @@ export type SocialPostMetricsRequest = PageRequest &
 export type SocialAccountMetricsRequest = PageRequest &
   SocialAccountRequest & {
     /** Inclusive UTC days. */
+    from: DateKey;
+    to: DateKey;
+  };
+
+/** ADR 0016 Checkpoint 8: one per-video analytics window (the platform's own report days). */
+export type SocialVideoAnalyticsRequest = PageRequest &
+  SocialAccountRequest & {
+    window: VideoAnalyticsWindow;
+    /** Inclusive days in capabilities.videoAnalytics.dayTimeZone. */
     from: DateKey;
     to: DateKey;
   };
@@ -188,4 +216,13 @@ export interface SocialProvider<TCredential = unknown> {
     ctx: ProviderContext<TCredential>,
     request: SocialAccountMetricsRequest,
   ): Promise<ProviderPage<ProviderSocialAccountDay>>;
+  /**
+   * ADR 0016 Checkpoint 8, OPTIONAL (YouTube only; planned only when
+   * capabilities.videoAnalytics is declared): the per-video values of ONE window, as ONE complete
+   * page (never a cursor). Videos the platform's report does not list get no record.
+   */
+  fetchVideoAnalytics?(
+    ctx: ProviderContext<TCredential>,
+    request: SocialVideoAnalyticsRequest,
+  ): Promise<ProviderPage<ProviderYouTubeVideoAnalytics>>;
 }

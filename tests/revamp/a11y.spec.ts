@@ -5,6 +5,7 @@ import {
   WHATSAPP_CLOSED,
   withInsightsPermissionMissing,
   withMessagingData,
+  withYouTubeData,
 } from "./fixtures";
 import { expect, firstLink, settled, test } from "./support";
 
@@ -169,6 +170,13 @@ const STATES: Case[] = [
   },
   // O2: an Instagram account that cannot sync without instagram_manage_insights.
   { name: "social-insights-permission", path: "/social", answers: withInsightsPermissionMissing },
+  // O4: a YouTube channel with key metrics, chart, days and videos, and a video page.
+  { name: "youtube-channel", path: "/social?platform=youtube", answers: withYouTubeData },
+  {
+    name: "youtube-video",
+    path: "/social/youtube/videos/yv6?account=y1",
+    answers: withYouTubeData,
+  },
 ];
 
 const PHONE: Case[] = [
@@ -194,6 +202,12 @@ const PHONE: Case[] = [
   },
   { name: "instagram-templates-list", path: "/instagram/messages/templates", data: true },
   { name: "social-insights-permission", path: "/social", answers: withInsightsPermissionMissing },
+  { name: "youtube-channel", path: "/social?platform=youtube", answers: withYouTubeData },
+  {
+    name: "youtube-video",
+    path: "/social/youtube/videos/yv6?account=y1",
+    answers: withYouTubeData,
+  },
   {
     name: "menu-sheet",
     path: "/",

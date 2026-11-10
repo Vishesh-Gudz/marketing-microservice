@@ -51,8 +51,8 @@ planner re-verifies every row it returns: the row's subject must point at an acc
   account). `convex/sync/subject.ts` enforces this on every read and write. A row naming
   neither or both fails closed: it is parked by the planner, and claims are refused.
 - **Operations are bound to the kind:** ad tasks run only the Phase 5 operations, and social
-  tasks only `getSocialAccount`, `listSocialPosts`, `fetchPostMetrics` and
-  `fetchAccountMetrics`.
+  tasks only `getSocialAccount`, `listSocialPosts`, `fetchPostMetrics`,
+  `fetchAccountMetrics` and (YouTube only, ADR 0016 Checkpoint 8) `fetchVideoAnalytics`.
 - **Ad subjects** behave exactly as before.
 - **Social subjects** share the run, task, lease, claim and failure machinery:
   - they are planned by `sync/socialPlan.ts` (capability-driven, UTC days);
@@ -205,6 +205,7 @@ insert into the four social tables (ESLint).
 | socialPosts               | orgId, socialAccountId, externalId | listing replaces provider-owned fields and clears `removedAt`; only the permalink URL is stored |
 | socialPostMetricSnapshots | orgId, postId, capturedDate        | replace (the last capture of a UTC day wins); lifetime values, never differenced or incremented |
 | socialAccountMetricsDaily | orgId, socialAccountId, date       | column-group replace (below)                                                                    |
+| youtubeVideoAnalytics     | orgId, postId, window              | one complete window report replaces every row of the (account, window) pair (ADR 0016 CP 8)     |
 
 - **Column groups (F7):** a day row has two independent writers. The preflight owns the
   **profile** group (`followers`, `followersCapturedAt`, today's UTC day); `fetchAccountMetrics`

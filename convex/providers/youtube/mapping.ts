@@ -4,8 +4,11 @@ import type {
   ProviderSocialAccountDay,
   ProviderSocialPost,
   ProviderSocialPostSnapshot,
+  ProviderYouTubeVideoAnalytics,
+  VideoAnalyticsWindow,
 } from "../social/types";
 import type { ProviderOperation } from "../types";
+import { isYouTubeVideoId } from "./config";
 import { youtubeError } from "./errors";
 import type { RawChannel, RawReport, RawVideo } from "./schemas";
 import { parseCount } from "./schemas";
@@ -19,8 +22,13 @@ import {
   REPORT_DIMENSION,
   TITLE_MAX_CHARS,
   VIDEO_POST_TYPE,
+  VIDEO_REPORT_COLUMNS,
+  VIDEO_REPORT_DECIMAL_METRICS,
+  VIDEO_REPORT_DIMENSION,
+  VIDEO_REPORT_MAX_RESULTS,
   VIDEO_STATISTICS_COLUMNS,
   youtubePermalink,
+  type VideoReportMetric,
 } from "./semantics";
 
 /**
@@ -247,6 +255,81 @@ export function mapReportDays(input: {
       date,
       ...columns,
       ...(Object.keys(extras).length > 0 ? { extras } : {}),
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Per-video report (Checkpoint 8)
+// ---------------------------------------------------------------------------
+
+const VIDEO_METRIC_NAMES: ReadonlySet<string> = new Set(VIDEO_REPORT_COLUMNS);
+
+/** A report cell as a per-video value: integers for counts, a finite decimal for the percent. */
+function videoValue(metric: VideoReportMetric, cell: unknown): number | undefined {
+  if (typeof cell !== "number" || !Number.isFinite(cell) || cell < 0) return undefined;
+  if (VIDEO_REPORT_DECIMAL_METRICS.has(metric)) return cell;
+  return Number.isSafeInteger(cell) ? cell : undefined;
+}
+
+/**
+ * One record per row of the per-video report (YouTube's top videos of the window by views), in
+ * report order. Fails closed as a "data" error on: a header that is not exactly the `video`
+ * dimension plus known metrics (unknown, duplicate or mistyped columns), a row of the wrong
+ * width, a malformed or repeated video id, a value that is not a non-negative integer (or, for
+ * averageViewPercentage, a non-negative decimal), or more rows than the report may return. A
+ * requested metric YouTube left out (or a null cell) stays ABSENT; a video without a row gets no
+ * record ("not in the top 200", never 0).
+ */
+export function mapVideoReport(input: {
+  operation: ProviderOperation;
+  accountExternalId: string;
+  window: VideoAnalyticsWindow;
+  from: DateKey;
+  to: DateKey;
+  report: RawReport;
+}): ProviderYouTubeVideoAnalytics[] {
+  const fail = (code: string) =>
+    youtubeError("data", input.operation, code, "Unexpected YouTube report");
+  const headers = input.report.columnHeaders;
+  const names = headers.map((header) => header.name);
+  if (new Set(names).size !== names.length) throw fail("report_unexpected");
+  const videoIndex = names.indexOf(VIDEO_REPORT_DIMENSION);
+  if (videoIndex < 0) throw fail("report_unexpected");
+  headers.forEach((header, index) => {
+    const expected = index === videoIndex ? "DIMENSION" : "METRIC";
+    if (header.columnType !== undefined && header.columnType !== expected) {
+      throw fail("report_unexpected");
+    }
+    if (index !== videoIndex && !VIDEO_METRIC_NAMES.has(header.name)) {
+      throw fail("metric_unexpected");
+    }
+  });
+  const rows = input.report.rows ?? [];
+  if (rows.length > VIDEO_REPORT_MAX_RESULTS) throw fail("report_unexpected");
+
+  const seen = new Set<string>();
+  return rows.map((row) => {
+    if (row.length !== names.length) throw fail("report_unexpected");
+    const videoId: unknown = row[videoIndex];
+    if (!isYouTubeVideoId(videoId) || seen.has(videoId)) throw fail("video_unexpected");
+    seen.add(videoId);
+    const values: Partial<Record<VideoReportMetric, number>> = {};
+    row.forEach((cell: unknown, index) => {
+      if (index === videoIndex || cell === null || cell === undefined) return;
+      const metric = names[index] as VideoReportMetric;
+      const value = videoValue(metric, cell);
+      if (value === undefined) throw fail("metric_invalid");
+      values[metric] = value;
+    });
+    return {
+      platform: "youtube" as const,
+      accountExternalId: input.accountExternalId,
+      postExternalId: videoId,
+      window: input.window,
+      from: input.from,
+      to: input.to,
+      ...values,
     };
   });
 }

@@ -3,7 +3,9 @@ import type {
   YouTubeChannelDays,
   YouTubeDay,
   YouTubeVideo,
+  YouTubeVideoDetail,
   YouTubeVideoStatistics,
+  YouTubeVideoWindow,
 } from "@/lib/analytics/youtube-types";
 
 // DTO-shaped YouTube test data for dashboard component tests (ADR 0016, Checkpoint 5).
@@ -58,6 +60,23 @@ export function channelDays(overrides: Partial<YouTubeChannelDays> = {}): YouTub
     range: { from: "2026-10-15", to: "2026-10-17" },
     dataState: "reported",
     reportingDelayDays: 3,
+    // ADR 0016 Checkpoint 8: the server-computed totals of the three days below.
+    totals: {
+      reportedDays: 3,
+      metrics: {
+        views: 3_600,
+        estimatedMinutesWatched: 10_368,
+        likes: 0,
+        comments: 12,
+        shares: 6,
+        subscribersGained: 15,
+        subscribersLost: 3,
+        subscribersNet: 12,
+        averageViewDuration: 173,
+      },
+      unavailableMetrics: [],
+    },
+    subscribers: { count: 12_300, capturedAt: "2026-10-20T12:00:00.000Z" },
     analyticsAccess: "granted",
     coverage: {
       syncedDays: 3,
@@ -93,6 +112,55 @@ export function youtubeVideo(overrides: Partial<YouTubeVideo> = {}): YouTubeVide
     publishedAt: "2026-10-19T10:00:00.000Z",
     dataState: "reported",
     latest: videoStatistics(),
+    // ADR 0016 Checkpoint 8: per-video windows (none synced in this fixture).
+    analytics: {},
+    ...overrides,
+  };
+}
+
+/** ADR 0016 Checkpoint 8: one reported window of YouTube's per-video report. */
+export function videoWindow(overrides: Partial<YouTubeVideoWindow> = {}): YouTubeVideoWindow {
+  return {
+    status: "reported",
+    from: "2026-09-20",
+    to: "2026-10-17",
+    syncedAt: "2026-10-20T12:00:00.000Z",
+    metrics: {
+      views: 4_321,
+      estimatedMinutesWatched: 9_876,
+      averageViewDuration: 137,
+      averageViewPercentage: 45.3,
+      likes: 210,
+      comments: 0,
+      shares: 17,
+      subscribersGained: 12,
+      subscribersLost: 2,
+    },
+    ...overrides,
+  };
+}
+
+export function youtubeVideoDetail(
+  overrides: Partial<YouTubeVideoDetail> = {},
+): YouTubeVideoDetail {
+  return {
+    ...youtubeVideo({
+      analytics: {
+        last28: videoWindow(),
+        lifetime: videoWindow({
+          from: "2024-03-12",
+          metrics: { ...videoWindow().metrics, views: 48_210 },
+        }),
+      },
+    }),
+    captures: [
+      videoStatistics({
+        capturedDate: "2026-10-19",
+        capturedAt: "2026-10-19T12:00:00.000Z",
+        metrics: { views: 9_500, likes: 300, comments: 11 },
+      }),
+      videoStatistics(),
+    ],
     ...overrides,
   };
 }

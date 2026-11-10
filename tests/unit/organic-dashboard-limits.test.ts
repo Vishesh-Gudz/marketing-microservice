@@ -8,12 +8,18 @@ import { ORGANIC_MAX_PAGE_SIZE, ORGANIC_MAX_RANGE_DAYS } from "@/lib/analytics/o
 import {
   YOUTUBE_DAY_METRICS,
   YOUTUBE_DAY_TIMEZONE,
+  YOUTUBE_TOTAL_METRICS,
+  YOUTUBE_TOTAL_REASONS,
+  YOUTUBE_VIDEO_ANALYTICS_METRICS,
   YOUTUBE_VIDEO_METRICS,
 } from "@/convex/analytics/organic/metrics";
 import {
   YOUTUBE_DAY_COLUMNS,
   YOUTUBE_DAY_TIMEZONE as DASHBOARD_YOUTUBE_TIMEZONE,
+  YOUTUBE_KPIS,
+  YOUTUBE_TOTAL_REASON_TEXT,
   YOUTUBE_VIDEO_COLUMNS,
+  YOUTUBE_WINDOW_METRICS,
 } from "@/lib/analytics/youtube-values";
 
 // The organic dashboard may not import convex/analytics/organic/* (D23), so this test (outside
@@ -50,5 +56,16 @@ describe("YouTube dashboard vocabulary", () => {
     expect([...YOUTUBE_DAY_COLUMNS]).toEqual([...YOUTUBE_DAY_METRICS]);
     expect([...YOUTUBE_VIDEO_COLUMNS]).toEqual([...YOUTUBE_VIDEO_METRICS]);
     expect(DASHBOARD_YOUTUBE_TIMEZONE).toBe(YOUTUBE_DAY_TIMEZONE);
+  });
+
+  it("mirrors the Checkpoint 8 per-video values, totals and their reasons", () => {
+    expect([...YOUTUBE_WINDOW_METRICS]).toEqual([...YOUTUBE_VIDEO_ANALYTICS_METRICS]);
+    // Every key metric but the subscriber count is one of the server's totals.
+    for (const key of YOUTUBE_KPIS.filter((k) => k !== "subscribers")) {
+      expect(YOUTUBE_TOTAL_METRICS).toContain(key);
+    }
+    expect(Object.keys(YOUTUBE_TOTAL_REASON_TEXT).sort()).toEqual(
+      [...YOUTUBE_TOTAL_REASONS].sort(),
+    );
   });
 });

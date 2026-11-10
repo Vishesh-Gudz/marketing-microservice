@@ -7,6 +7,7 @@ import {
   socialPlatformValidator,
 } from "../domain/validators";
 import { orgIdField } from "./common";
+import { videoAnalyticsWindowValidator } from "./social";
 
 // Phase 5: sync engine state. INTERNAL-ONLY (no public function reads these
 // tables in Phase 5). Cursors, leases and claim sequence numbers never leave
@@ -76,6 +77,8 @@ export const syncOperationValidator = v.union(
   v.literal("listSocialPosts"),
   v.literal("fetchPostMetrics"),
   v.literal("fetchAccountMetrics"),
+  // ADR 0016 Checkpoint 8: YouTube per-video analytics windows.
+  v.literal("fetchVideoAnalytics"),
 );
 
 /**
@@ -96,6 +99,14 @@ export const syncCancelReasonValidator = v.union(
   v.literal("timeout"),
   v.literal("superseded"),
 );
+
+/** One synced per-video analytics window: its Pacific Time days, commit time and row count. */
+export const videoAnalyticsWindowSyncValidator = v.object({
+  from: dateKeyValidator,
+  to: dateKeyValidator,
+  syncedAt: v.number(),
+  videos: v.number(),
+});
 
 export const syncTables = {
   /**
@@ -128,6 +139,17 @@ export const syncTables = {
     coveredThrough: v.optional(dateKeyValidator),
     /** Oldest day the backfill intends to hold (fixed when the row is created). */
     backfillHorizon: dateKeyValidator,
+    /**
+     * ADR 0016 Checkpoint 8 (YouTube channels only): the last committed per-video analytics
+     * report of each window. Set = the window was synced for the channel (a video without a
+     * youtubeVideoAnalytics row is then "not in the top 200"); absent = never synced.
+     */
+    videoAnalyticsWindows: v.optional(
+      v.object({
+        last28: v.optional(videoAnalyticsWindowSyncValidator),
+        lifetime: v.optional(videoAnalyticsWindowSyncValidator),
+      }),
+    ),
     throttledUntil: v.optional(v.number()),
     consecutiveFailures: v.number(),
     lastRunId: v.optional(v.id("syncRuns")),
@@ -192,6 +214,11 @@ export const syncTables = {
     to: v.optional(dateKeyValidator),
     breakdown: v.optional(v.union(v.literal("none"), v.literal("placement"))),
     updatedSince: v.optional(v.number()),
+    /**
+     * ADR 0016 Checkpoint 8 (fetchVideoAnalytics only): the window. A "lifetime" task is planned
+     * without `from`; its claim sets it to the oldest stored upload's Pacific Time publish day.
+     */
+    videoWindow: v.optional(videoAnalyticsWindowValidator),
     /** Complete listing without updatedSince: allows removal marking. */
     fullListing: v.boolean(),
     /** finalize = prune stale metric rows / mark removed entities (DB only). */

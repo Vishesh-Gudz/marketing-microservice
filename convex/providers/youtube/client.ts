@@ -7,7 +7,15 @@ import {
   YOUTUBE_ANALYTICS_BASE,
   YOUTUBE_DATA_BASE,
 } from "./config";
-import { ACCOUNT_REPORT_METRICS, REPORT_DIMENSION, REPORT_IDS } from "./semantics";
+import {
+  ACCOUNT_REPORT_METRICS,
+  REPORT_DIMENSION,
+  REPORT_IDS,
+  VIDEO_REPORT_DIMENSION,
+  VIDEO_REPORT_MAX_RESULTS,
+  VIDEO_REPORT_METRICS,
+  VIDEO_REPORT_SORT,
+} from "./semantics";
 
 /**
  * Minimal read-only YouTube HTTP client (ADR 0016, Y-D1). Plain `fetch` in either runtime; no
@@ -18,9 +26,11 @@ import { ACCOUNT_REPORT_METRICS, REPORT_DIMENSION, REPORT_IDS } from "./semantic
  *   method + URL per route; exactly the route's query parameter names, each value checked.
  *   Routes: the OAuth token endpoint (authorization-code and refresh grants), token
  *   revocation (disconnect, Checkpoint 2), three Data API reads (channels mine=true,
- *   playlistItems, videos snippet / snippet+statistics) and one Analytics report (the channel
- *   day report with the exact metric list, Checkpoint 3). Anything else, any write, any API
- *   key parameter and any other host is refused.
+ *   playlistItems, videos snippet / snippet+statistics) and two Analytics reports on the same
+ *   URL: the channel day report (Checkpoint 3) and the per-video top-200 report (Checkpoint 8),
+ *   each with its exact metric list, dimension and (video report) sort and row cap. Anything
+ *   else (another dimension combination such as `day,video`, a `filters` parameter, any
+ *   write, any API key parameter, any other host) is refused.
  * - Tokens travel only in the Authorization header (Bearer) or a form body, never in a URL.
  * - Every request takes one unit from an explicit per-call request budget.
  * - Results never carry the URL, headers, tokens, messages or request ids; failures are
@@ -151,7 +161,33 @@ const ROUTES: readonly Route[] = [
     },
     required: ["ids", "startDate", "endDate", "metrics", "dimensions"],
   },
+  {
+    // Checkpoint 8: the per-video report (the channel's 200 most viewed videos of a window).
+    method: "GET",
+    url: `${YOUTUBE_ANALYTICS_BASE}/reports`,
+    params: {
+      ids: exactly(REPORT_IDS),
+      startDate: isDateKey,
+      endDate: isDateKey,
+      metrics: exactly(VIDEO_REPORT_METRICS),
+      dimensions: exactly(VIDEO_REPORT_DIMENSION),
+      sort: exactly(VIDEO_REPORT_SORT),
+      maxResults: exactly(String(VIDEO_REPORT_MAX_RESULTS)),
+    },
+    required: ["ids", "startDate", "endDate", "metrics", "dimensions", "sort", "maxResults"],
+  },
 ];
+
+/** The query of `entries` matches `route` exactly (known names, each once, each value checked). */
+function matchesRoute(route: Route, entries: readonly [string, string][]): boolean {
+  const seen = new Set<string>();
+  for (const [name, value] of entries) {
+    const check = route.params[name];
+    if (check === undefined || seen.has(name) || !check(value)) return false;
+    seen.add(name);
+  }
+  return route.required.every((name) => seen.has(name));
+}
 
 /** True when `method url` is exactly an allowlisted request. Checked before any network call. */
 export function isAllowedRequest(method: string, rawUrl: string): boolean {
@@ -165,17 +201,14 @@ export function isAllowedRequest(method: string, rawUrl: string): boolean {
   if (url.port !== "" || url.hash !== "" || rawUrl.includes("#")) return false;
   // The raw URL must spell the route exactly (no default port, case or encoding variants).
   const base = rawUrl.split("?", 1)[0];
-  const route = ROUTES.find((r) => r.method === method && r.url === base);
-  if (route === undefined || `${url.origin}${url.pathname}` !== base) return false;
+  if (`${url.origin}${url.pathname}` !== base) return false;
   const entries: [string, string][] = [];
   url.searchParams.forEach((value, name) => entries.push([name, value]));
-  const seen = new Set<string>();
-  for (const [name, value] of entries) {
-    const check = route.params[name];
-    if (check === undefined || seen.has(name) || !check(value)) return false;
-    seen.add(name);
-  }
-  return route.required.every((name) => seen.has(name));
+  // Several routes may share a URL (the two Analytics reports): the query must match one of
+  // them completely; parameters are never mixed between routes.
+  return ROUTES.some(
+    (route) => route.method === method && route.url === base && matchesRoute(route, entries),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -416,6 +449,37 @@ export function createYouTubeClient(options: { timeoutMs: number }) {
             endDate: input.endDate,
             metrics: ACCOUNT_REPORT_METRICS,
             dimensions: REPORT_DIMENSION,
+          },
+          YOUTUBE_ANALYTICS_BASE,
+        ),
+        { headers: bearer(accessToken) },
+        timeoutMs,
+        budget,
+      );
+    },
+
+    /**
+     * [doc] One per-video `reports.query` (Analytics API, 1 unit, Checkpoint 8): the video
+     * metrics of `ids=channel==MINE` over the inclusive Pacific Time days, the 200 most viewed
+     * videos (`sort=-views`, `maxResults=200`).
+     */
+    async queryVideoReport(
+      accessToken: string,
+      input: { startDate: string; endDate: string },
+      budget: YouTubeRequestBudget,
+    ) {
+      return await sendChecked(
+        "GET",
+        dataUrl(
+          "reports",
+          {
+            ids: REPORT_IDS,
+            startDate: input.startDate,
+            endDate: input.endDate,
+            metrics: VIDEO_REPORT_METRICS,
+            dimensions: VIDEO_REPORT_DIMENSION,
+            sort: VIDEO_REPORT_SORT,
+            maxResults: String(VIDEO_REPORT_MAX_RESULTS),
           },
           YOUTUBE_ANALYTICS_BASE,
         ),

@@ -6,10 +6,11 @@ import {
   parseErrorBody,
   YouTubeRequestBudget,
 } from "./client";
-import { ACCOUNT_REPORT_METRICS } from "./semantics";
+import { ACCOUNT_REPORT_METRICS, VIDEO_REPORT_METRICS } from "./semantics";
 
 // ADR 0016: the YouTube client sends only allowlisted, read-only requests, checked before any
 // network access; tokens never travel in a URL; failures carry codes, never URLs or tokens.
+// Checkpoint 8 adds exactly one route: the per-video top-200 report (its own exact query).
 
 const DATA = "https://www.googleapis.com/youtube/v3";
 const PLAYLIST = "UUfakeChannel0000000000a";
@@ -155,6 +156,111 @@ describe("allowlist", () => {
     ],
   ])("refuses %s", (_label, method, url) => {
     expect(isAllowedRequest(method, url)).toBe(false);
+  });
+});
+
+describe("allowlist: the per-video report (Checkpoint 8)", () => {
+  const VIDEO_METRICS =
+    "views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained,subscribersLost";
+  const VIDEO_REPORT = `${ANALYTICS}?ids=channel==MINE&startDate=2026-09-20&endDate=2026-10-17&metrics=${VIDEO_METRICS}&dimensions=video&sort=-views&maxResults=200`;
+
+  it("allows exactly the documented top-videos query (any parameter order)", () => {
+    expect(VIDEO_REPORT_METRICS).toBe(VIDEO_METRICS);
+    expect(isAllowedRequest("GET", VIDEO_REPORT)).toBe(true);
+    expect(
+      isAllowedRequest(
+        "GET",
+        `${ANALYTICS}?maxResults=200&sort=-views&dimensions=video&metrics=${VIDEO_METRICS}&endDate=2026-10-17&startDate=2016-01-01&ids=channel==MINE`,
+      ),
+    ).toBe(true);
+    // The day report stays allowed, unchanged.
+    expect(
+      isAllowedRequest(
+        "GET",
+        `${ANALYTICS}?ids=channel==MINE&startDate=2026-10-01&endDate=2026-10-17&metrics=${METRICS}&dimensions=day`,
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["another sort", VIDEO_REPORT.replace("sort=-views", "sort=-estimatedMinutesWatched")],
+    ["an ascending sort", VIDEO_REPORT.replace("sort=-views", "sort=views")],
+    ["maxResults 201", VIDEO_REPORT.replace("maxResults=200", "maxResults=201")],
+    ["maxResults 10", VIDEO_REPORT.replace("maxResults=200", "maxResults=10")],
+    ["no sort", VIDEO_REPORT.replace("&sort=-views", "")],
+    ["no maxResults", VIDEO_REPORT.replace("&maxResults=200", "")],
+    ["a filter", `${VIDEO_REPORT}&filters=video==${VIDEO}`],
+    ["a start index", `${VIDEO_REPORT}&startIndex=201`],
+    ["a currency", `${VIDEO_REPORT}&currency=EUR`],
+    ["dimensions day,video", VIDEO_REPORT.replace("dimensions=video", "dimensions=day,video")],
+    ["dimensions video,day", VIDEO_REPORT.replace("dimensions=video", "dimensions=video,day")],
+    ["another channel", VIDEO_REPORT.replace("channel==MINE", "channel==UCfakeChannel0000000000a")],
+    ["the day metrics", VIDEO_REPORT.replace(`metrics=${VIDEO_METRICS}`, `metrics=${METRICS}`)],
+    ["revenue", VIDEO_REPORT.replace("metrics=views,", "metrics=estimatedRevenue,views,")],
+    [
+      "metrics reordered",
+      VIDEO_REPORT.replace(
+        `metrics=${VIDEO_METRICS}`,
+        `metrics=${VIDEO_METRICS.split(",").reverse().join(",")}`,
+      ),
+    ],
+    ["a malformed date", VIDEO_REPORT.replace("2026-09-20", "2026-9-20")],
+    // Parameters of the two report routes never mix.
+    [
+      "the day report with a sort",
+      `${ANALYTICS}?ids=channel==MINE&startDate=2026-10-01&endDate=2026-10-17&metrics=${METRICS}&dimensions=day&sort=-views`,
+    ],
+    [
+      "the day report with maxResults",
+      `${ANALYTICS}?ids=channel==MINE&startDate=2026-10-01&endDate=2026-10-17&metrics=${METRICS}&dimensions=day&maxResults=200`,
+    ],
+    [
+      "the day dimension with the video metrics",
+      VIDEO_REPORT.replace("dimensions=video", "dimensions=day"),
+    ],
+  ])("refuses %s", (_label, url) => {
+    expect(isAllowedRequest("GET", url)).toBe(false);
+  });
+
+  it("refuses the per-video report by POST", () => {
+    expect(isAllowedRequest("POST", VIDEO_REPORT)).toBe(false);
+  });
+
+  it("queryVideoReport sends exactly that query, with the token only in the header", async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ columnHeaders: [] })));
+    vi.stubGlobal("fetch", fetch);
+    const client = createYouTubeClient({ timeoutMs: 1_000 });
+    const budget = new YouTubeRequestBudget(1);
+    const result = await client.queryVideoReport(
+      "access-secret",
+      { startDate: "2026-09-20", endDate: "2026-10-17" },
+      budget,
+    );
+    expect(result.ok).toBe(true);
+    const [url, init] = (fetch.mock.calls as unknown as [string, RequestInit][])[0]!;
+    expect(isAllowedRequest("GET", url)).toBe(true);
+    const query: Record<string, string> = {};
+    new URL(url).searchParams.forEach((value, name) => (query[name] = value));
+    expect(query).toEqual({
+      ids: "channel==MINE",
+      startDate: "2026-09-20",
+      endDate: "2026-10-17",
+      metrics: VIDEO_METRICS,
+      dimensions: "video",
+      sort: "-views",
+      maxResults: "200",
+    });
+    expect(url).not.toMatch(/secret/);
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer access-secret");
+    expect(budget.count).toBe(1);
+    // A refused window (malformed day) never reaches fetch and costs nothing.
+    const refused = await client.queryVideoReport(
+      "access-secret",
+      { startDate: "2026-9-20", endDate: "2026-10-17" },
+      new YouTubeRequestBudget(1),
+    );
+    expect(refused).toEqual({ ok: false, failure: { type: "blocked" } });
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
 

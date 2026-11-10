@@ -13,7 +13,9 @@ const CREDENTIALS_LITERAL = {
 const CANONICAL_TABLES =
   "adAccounts|campaigns|adGroups|ads|creatives|metricsDaily|actionMetricsDaily|" +
   // Phase 10: the organic social tables share the single write path (convex/sync/upsert.ts).
-  "socialAccounts|socialPosts|socialPostMetricSnapshots|socialAccountMetricsDaily";
+  "socialAccounts|socialPosts|socialPostMetricSnapshots|socialAccountMetricsDaily|" +
+  // ADR 0016 Checkpoint 8: YouTube per-video analytics, the same single write path.
+  "youtubeVideoAnalytics";
 const CANONICAL_INSERT = {
   selector: `CallExpression[callee.property.name='insert'][arguments.0.value=/^(${CANONICAL_TABLES})$/]`,
   message:

@@ -98,6 +98,7 @@ async function state(t: Backend) {
     posts: await ctx.db.query("socialPosts").collect(),
     snapshots: await ctx.db.query("socialPostMetricSnapshots").collect(),
     daily: await ctx.db.query("socialAccountMetricsDaily").collect(),
+    analytics: await ctx.db.query("youtubeVideoAnalytics").collect(),
   }));
 }
 
@@ -136,6 +137,9 @@ describe("YouTube sync (live, fake API)", () => {
       ["fetchPostMetrics", "succeeded", "2026-07-23", "2026-10-20"],
       ["fetchAccountMetrics", "succeeded", "2026-10-01", "2026-10-17"],
       ["fetchAccountMetrics", "succeeded", "2026-09-18", "2026-09-30"],
+      // Checkpoint 8: last28, then lifetime from the oldest upload's Pacific Time day.
+      ["fetchVideoAnalytics", "succeeded", "2026-09-20", "2026-10-17"],
+      ["fetchVideoAnalytics", "succeeded", "2026-10-17", "2026-10-17"],
     ]);
 
     // Snapshots: lifetime counts as reported; the hidden like count stays absent.
@@ -185,9 +189,10 @@ describe("YouTube sync (live, fake API)", () => {
       coveredFrom: "2026-09-18",
       coveredThrough: "2026-10-17",
     });
-    // Requests: preflight 2, listing 4, snapshots 4, two day reports 2 each.
-    expect(count("/v2/reports")).toBe(2);
-    expect(fake.requests).toHaveLength(2 + 4 + 4 + 4);
+    // Requests: preflight 2, listing 4, snapshots 4, two day reports and two video reports
+    // (Checkpoint 8) 2 each.
+    expect(count("/v2/reports")).toBe(4);
+    expect(fake.requests).toHaveLength(2 + 4 + 4 + 4 + 4);
     expect(JSON.stringify(db)).not.toContain(FAKE_YT_TOKEN_MARKER);
   });
 
@@ -210,6 +215,7 @@ describe("YouTube sync (live, fake API)", () => {
         posts: strip(db.posts, ["lastSeenAt", "updatedAt"]),
         snapshots: strip(db.snapshots, ["capturedAt"]),
         daily: strip(db.daily, ["syncedAt", "insightsSyncedAt", "followersCapturedAt"]),
+        analytics: strip(db.analytics, ["syncedAt"]),
       };
     };
     const first = await values();
@@ -243,7 +249,8 @@ describe("YouTube sync (live, fake API)", () => {
     await planAndDrain(t);
     const db = await state(t);
     expect(db.runs[0]).toMatchObject({ status: "succeeded" });
-    expect(count("/v2/reports")).toBe(4); // 2 windows + 2 retried attempts
+    // 2 day windows + 2 retried attempts + 2 per-video windows (Checkpoint 8)
+    expect(count("/v2/reports")).toBe(6);
     const insights = db.daily.filter((d) => d.insightsSyncedAt !== undefined);
     expect(insights).toHaveLength(30);
     expect(new Set(insights.map((d) => d.date)).size).toBe(30);
@@ -418,7 +425,7 @@ describe("YouTube sync (live, fake API)", () => {
     await planAndDrain(t);
     const latest = (await state(t)).runs.sort((a, b) => a.createdAt - b.createdAt).at(-1)!;
     expect(latest).toMatchObject({ kind: "lookback", status: "succeeded" });
-    expect(count("/v2/reports")).toBe(1);
+    expect(count("/v2/reports")).toBe(3); // the day report and the two per-video windows
     const days = await as(t).query(api.v1.youtubeAnalytics.channelDays, {
       socialAccountId: account!.id,
       range: { from: "2026-10-11", to: "2026-10-17" },
@@ -472,6 +479,229 @@ describe("YouTube sync (live, fake API)", () => {
     expect(insights.filter((d) => d.date === "2026-11-01")).toHaveLength(1);
     expect(insights.find((d) => d.date === "2026-11-01")!.views).toBe(DAY_VALUES(2).views);
     expect(insights.find((d) => d.date === "2026-10-31")!.views).toBe(DAY_VALUES(1).views);
+  });
+});
+
+describe("per-video analytics windows (Checkpoint 8, live, fake API)", () => {
+  const VIDEO_VALUES = (views: number) => ({
+    views,
+    estimatedMinutesWatched: views * 3,
+    averageViewDuration: 120,
+    averageViewPercentage: 37.5,
+    likes: Math.floor(views / 10),
+    comments: 2,
+    shares: 1,
+    subscribersGained: 3,
+    subscribersLost: 1,
+  });
+  const byWindow = <T extends { window: string }>(rows: T[], window: string) =>
+    rows.filter((row) => row.window === window);
+
+  it("writes last28 and lifetime, then a lookback replaces each window completely", async () => {
+    // The lifetime window starts on 2026-10-17 (the oldest upload's Pacific Time day), so
+    // both windows are keyed by their own start day.
+    const channel = brand({
+      videoReports: {
+        "2026-09-20": {
+          vid00000000: VIDEO_VALUES(500),
+          vid00000001: VIDEO_VALUES(300),
+          vidNotStore: VIDEO_VALUES(900), // not a stored upload: dropped, never a post
+        },
+        "2026-10-17": {
+          vid00000000: VIDEO_VALUES(800),
+          vid00000001: VIDEO_VALUES(600),
+          vid00000002: { ...VIDEO_VALUES(10), averageViewPercentage: null },
+        },
+      },
+    });
+    fake = createFakeYouTube({ channels: { brand: channel } });
+    stubLiveYouTube(fake);
+    const t = newBackend();
+    const socialAccountId = await linkedYouTube(t);
+    await planAndDrain(t);
+
+    let db = await state(t);
+    expect(db.runs[0]).toMatchObject({ status: "succeeded" }); // the unknown video is no error
+    expect(db.runs[0]!.counts.unresolved).toBe(0);
+    expect(db.posts.map((post) => post.externalId).sort()).toEqual([
+      "vid00000000",
+      "vid00000001",
+      "vid00000002",
+    ]);
+    const postOf = new Map(db.posts.map((post) => [post._id, post.externalId]));
+    const view = (window: string) =>
+      byWindow(db.analytics, window)
+        .map((row) => [postOf.get(row.postId), row.views, row.from, row.to])
+        .sort();
+    expect(view("last28")).toEqual([
+      ["vid00000000", 500, "2026-09-20", "2026-10-17"],
+      ["vid00000001", 300, "2026-09-20", "2026-10-17"],
+    ]);
+    expect(view("lifetime")).toEqual([
+      ["vid00000000", 800, "2026-10-17", "2026-10-17"],
+      ["vid00000001", 600, "2026-10-17", "2026-10-17"],
+      ["vid00000002", 10, "2026-10-17", "2026-10-17"],
+    ]);
+    const first = db.analytics.find(
+      (row) => row.window === "last28" && postOf.get(row.postId) === "vid00000000",
+    )!;
+    expect(first).toMatchObject({
+      socialAccountId,
+      ...VIDEO_VALUES(500),
+      syncedAt: NOW.getTime(),
+    });
+    expect(first.orgId).toBe(db.socialAccounts[0]!.orgId);
+    // A value YouTube left out stays absent (never 0).
+    const partial = db.analytics.find((row) => postOf.get(row.postId) === "vid00000002")!;
+    expect(partial).not.toHaveProperty("averageViewPercentage");
+    expect(db.accounts[0]!.videoAnalyticsWindows).toEqual({
+      last28: { from: "2026-09-20", to: "2026-10-17", syncedAt: NOW.getTime(), videos: 2 },
+      lifetime: { from: "2026-10-17", to: "2026-10-17", syncedAt: NOW.getTime(), videos: 3 },
+    });
+
+    // The next day's lookback (Pacific Time 2026-10-21: both windows end on 2026-10-18).
+    // vid00000001 fell out of the recent top list; vid00000002 entered it.
+    channel.videoReports = {
+      "2026-09-21": { vid00000000: VIDEO_VALUES(510), vid00000002: VIDEO_VALUES(20) },
+      "2026-10-17": { vid00000000: VIDEO_VALUES(820), vid00000001: VIDEO_VALUES(610) },
+    };
+    const later = NOW.getTime() + 25 * 60 * 60_000;
+    vi.setSystemTime(later);
+    fake.requests.length = 0;
+    await planAndDrain(t);
+    db = await state(t);
+    const lookback = db.runs.sort((a, b) => a.createdAt - b.createdAt).at(-1)!;
+    expect(lookback).toMatchObject({ kind: "lookback", status: "succeeded" });
+    expect(view("last28")).toEqual([
+      ["vid00000000", 510, "2026-09-21", "2026-10-18"],
+      ["vid00000002", 20, "2026-09-21", "2026-10-18"],
+    ]);
+    expect(view("lifetime")).toEqual([
+      ["vid00000000", 820, "2026-10-17", "2026-10-18"],
+      ["vid00000001", 610, "2026-10-17", "2026-10-18"],
+    ]);
+    // A video still listed keeps its row (replaced in place); every row carries the new sync.
+    expect(db.analytics.some((row) => row._id === first._id)).toBe(true);
+    expect(db.analytics.every((row) => row.syncedAt === later)).toBe(true);
+    expect(db.accounts[0]!.videoAnalyticsWindows).toEqual({
+      last28: { from: "2026-09-21", to: "2026-10-18", syncedAt: later, videos: 2 },
+      lifetime: { from: "2026-10-17", to: "2026-10-18", syncedAt: later, videos: 2 },
+    });
+    const reports = fake.requests.filter((r) => r.path === "/v2/reports");
+    expect(reports.map((r) => new URL(r.url).searchParams.get("dimensions"))).toEqual([
+      "day",
+      "video",
+      "video",
+    ]);
+    expect(JSON.stringify(db)).not.toContain(FAKE_YT_TOKEN_MARKER);
+  });
+
+  it("an empty window report empties the window but keeps it synced", async () => {
+    const channel = brand({ videoReports: { "*": { vid00000000: VIDEO_VALUES(5) } } });
+    fake = createFakeYouTube({ channels: { brand: channel } });
+    stubLiveYouTube(fake);
+    const t = newBackend();
+    await linkedYouTube(t);
+    await planAndDrain(t);
+    expect((await state(t)).analytics).toHaveLength(2);
+
+    channel.videoReports = {};
+    vi.setSystemTime(NOW.getTime() + 25 * 60 * 60_000);
+    await planAndDrain(t);
+    const db = await state(t);
+    expect(db.analytics).toEqual([]);
+    expect(db.accounts[0]!.videoAnalyticsWindows).toMatchObject({
+      last28: { videos: 0 },
+      lifetime: { videos: 0 },
+    });
+  });
+
+  it("skips both windows for a channel without videos: no video report, nothing synced", async () => {
+    fake = createFakeYouTube({ channels: { brand: brand({ videos: [] }) } });
+    stubLiveYouTube(fake);
+    const t = newBackend();
+    await linkedYouTube(t);
+    fake.requests.length = 0;
+    await planAndDrain(t);
+    const db = await state(t);
+    expect(db.runs[0]).toMatchObject({ status: "succeeded", tasksSkipped: 2 });
+    expect(db.runs[0]!.error).toBeUndefined();
+    expect(
+      db.tasks
+        .filter((task) => task.operation === "fetchVideoAnalytics")
+        .map((task) => [task.videoWindow, task.status, task.from]),
+    ).toEqual([
+      ["last28", "skipped", "2026-09-20"],
+      ["lifetime", "skipped", undefined],
+    ]);
+    expect(count("/v2/reports")).toBe(2); // the two day reports only
+    expect(db.analytics).toEqual([]);
+    expect(db.accounts[0]!.videoAnalyticsWindows).toBeUndefined();
+  });
+
+  it("a channel without the analytics grant plans no window; incremental runs never fetch one", async () => {
+    stubLiveYouTube(fake);
+    const t = newBackend();
+    await linkedYouTube(t, "noAnalytics");
+    await planAndDrain(t);
+    let db = await state(t);
+    expect(db.tasks.some((task) => task.operation === "fetchVideoAnalytics")).toBe(false);
+
+    const withGrant = newBackend();
+    await linkedYouTube(withGrant);
+    await planAndDrain(withGrant);
+    // An hour later the incremental run lists and reads days, never the video windows.
+    vi.setSystemTime(NOW.getTime() + 61 * 60_000);
+    fake.requests.length = 0;
+    await planAndDrain(withGrant);
+    db = await state(withGrant);
+    const incremental = db.runs.sort((a, b) => a.createdAt - b.createdAt).at(-1)!;
+    expect(incremental.kind).toBe("incremental");
+    expect(
+      db.tasks
+        .filter((task) => task.runId === incremental._id)
+        .some((task) => task.operation === "fetchVideoAnalytics"),
+    ).toBe(false);
+    expect(
+      fake.requests.filter((r) => new URL(r.url).searchParams.get("dimensions") === "video"),
+    ).toEqual([]);
+  });
+
+  it("a failed video report fails only its task; the stored windows stay as they were", async () => {
+    const channel = brand({ videoReports: { "*": { vid00000000: VIDEO_VALUES(5) } } });
+    fake = createFakeYouTube({ channels: { brand: channel } });
+    stubLiveYouTube(fake);
+    const t = newBackend();
+    await linkedYouTube(t);
+    await planAndDrain(t);
+    const before = (await state(t)).analytics;
+    expect(before).toHaveLength(2);
+
+    // The next lookback: the day report succeeds, then both video reports answer garbage.
+    vi.setSystemTime(NOW.getTime() + 25 * 60 * 60_000);
+    const garbage = { status: 200, body: { columnHeaders: [{ name: "views" }] } };
+    const realFetch = fake.fetch;
+    let reports = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input.toString());
+      if (url.pathname === "/v2/reports" && url.searchParams.get("dimensions") === "video") {
+        reports++;
+        return new Response(JSON.stringify(garbage.body), { status: garbage.status });
+      }
+      return await realFetch(input, init);
+    });
+    await planAndDrain(t);
+    const db = await state(t);
+    const lookback = db.runs.sort((a, b) => a.createdAt - b.createdAt).at(-1)!;
+    expect(lookback).toMatchObject({
+      kind: "lookback",
+      status: "partial",
+      tasksFailed: 2,
+      error: { kind: "data", code: "report_unexpected" },
+    });
+    expect(reports).toBe(2); // a data error is never retried
+    expect(db.analytics.map((row) => row._id).sort()).toEqual(before.map((row) => row._id).sort());
+    expect(db.accounts[0]).toMatchObject({ state: "idle" });
   });
 });
 

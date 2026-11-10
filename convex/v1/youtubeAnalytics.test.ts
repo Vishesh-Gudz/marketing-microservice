@@ -4,15 +4,17 @@ import type { Doc, Id } from "../_generated/dataModel";
 import {
   YOUTUBE_DAY_METRICS,
   YOUTUBE_DAY_TIMEZONE,
+  YOUTUBE_VIDEO_ANALYTICS_METRICS,
   YOUTUBE_VIDEO_METRICS,
 } from "../analytics/organic/metrics";
-import { eachDay } from "../lib/dates";
+import { compareDateKeys, eachDay, toDateKey } from "../lib/dates";
 import { isMarketingError } from "../lib/errors";
 import { mockInstagramAccountId } from "../providers/social/mock";
-import { mockYouTubeChannelId } from "../providers/social/mock/youtubeData";
+import { mockYouTubeChannelId, mockYouTubeSubscribers } from "../providers/social/mock/youtubeData";
 import {
   ACCOUNT_REPORT_TARGETS,
   REPORT_DAY_BASIS,
+  VIDEO_REPORT_COLUMNS,
   YOUTUBE_POST_METRICS,
 } from "../providers/youtube/semantics";
 import {
@@ -105,7 +107,7 @@ async function invalidReason(promise: Promise<unknown>): Promise<unknown> {
 const page = { numItems: 100, cursor: null };
 
 describe("v1/youtubeAnalytics:channelDays", () => {
-  it("one entry per Pacific Time day with the values as stored: no total, average or rate", async () => {
+  it("one entry per Pacific Time day with the values as stored; no rate or comparison", async () => {
     const t = newBackend();
     const { ids } = await youtubeOrg(t);
     const stored = (await rowsOf(t, ids["1"]!)).days;
@@ -124,7 +126,9 @@ describe("v1/youtubeAnalytics:channelDays", () => {
         "days",
         "range",
         "reportingDelayDays",
+        "subscribers",
         "timezone",
+        "totals",
       ].sort(),
     );
     expect(dto).toMatchObject({
@@ -482,6 +486,303 @@ describe("Instagram ids, mixed selections and the organic aggregation", () => {
   });
 });
 
+describe("Checkpoint 8: channel totals and subscribers", () => {
+  /** The expected totals, recomputed from the DTO's own days (reported days only). */
+  function expectedTotals(days: { status: string; metrics: Record<string, number | undefined> }[]) {
+    const reported = days.filter((day) => day.status === "reported");
+    const sum = (metric: string) => {
+      const values = reported.flatMap((day) =>
+        day.metrics[metric] === undefined ? [] : [day.metrics[metric]],
+      );
+      return values.length === 0 ? undefined : values.reduce((a, b) => a + b, 0);
+    };
+    return { reported, sum };
+  }
+
+  it("sums the reported days server-side; averageViewDuration = watch time x 60 / views", async () => {
+    const t = newBackend();
+    const { ids } = await youtubeOrg(t);
+    const dto = await as(t).query(api.v1.youtubeAnalytics.channelDays, {
+      socialAccountId: ids["1"]!,
+      range: SYNCED,
+    });
+    const { reported, sum } = expectedTotals(dto.days);
+    expect(reported.length).toBeGreaterThan(0);
+    expect(reported.length).toBeLessThan(dto.days.length); // some days report nothing
+    const views = sum("views")!;
+    const minutes = sum("estimatedMinutesWatched")!;
+    expect(dto.totals).toEqual({
+      reportedDays: reported.length,
+      metrics: {
+        views,
+        estimatedMinutesWatched: minutes,
+        likes: sum("likes"),
+        comments: sum("comments"),
+        shares: sum("shares"),
+        subscribersGained: sum("subscribersGained"),
+        subscribersLost: sum("subscribersLost"),
+        subscribersNet: sum("subscribersGained")! - sum("subscribersLost")!,
+        averageViewDuration: Math.round((minutes * 60) / views),
+      },
+      unavailableMetrics: [],
+    });
+    // The current subscriber count of the preflight capture (YouTube's rounded value).
+    expect(dto.subscribers).toEqual({
+      count: mockYouTubeSubscribers("1"),
+      capturedAt: NOW.toISOString(),
+    });
+  });
+
+  it("averages only days reporting both values; zero views and no reported day are named", async () => {
+    const t = newBackend();
+    const { ids } = await youtubeOrg(t);
+    const channel = ids["1"]!;
+    const orgId = (await t.run((ctx) => ctx.db.get(channel)))!.orgId;
+    const day = (date: string, views: number | undefined, extras: Record<string, number>) => ({
+      orgId,
+      socialAccountId: channel,
+      platform: "youtube" as const,
+      date,
+      ...(views !== undefined ? { views } : {}),
+      extras,
+      insightsSyncedAt: 1,
+      syncedAt: 1,
+    });
+    await t.run(async (ctx) => {
+      // 2025-01-01: both watch values; 2025-01-02: views without watch time and a gain without
+      // a loss (excluded from the average and the net change); 2025-01-03: synced, nothing.
+      await ctx.db.insert(
+        "socialAccountMetricsDaily",
+        day("2025-01-01", 100, {
+          estimatedMinutesWatched: 250,
+          subscribersGained: 5,
+          subscribersLost: 2,
+        }),
+      );
+      await ctx.db.insert(
+        "socialAccountMetricsDaily",
+        day("2025-01-02", 900, { likes: 3, subscribersGained: 7 }),
+      );
+      await ctx.db.insert("socialAccountMetricsDaily", {
+        orgId,
+        socialAccountId: channel,
+        platform: "youtube",
+        date: "2025-01-03",
+        insightsSyncedAt: 1,
+        syncedAt: 1,
+      });
+      // 2025-02-01 / 02: reported, but zero views.
+      await ctx.db.insert(
+        "socialAccountMetricsDaily",
+        day("2025-02-01", 0, { estimatedMinutesWatched: 0 }),
+      );
+      await ctx.db.insert("socialAccountMetricsDaily", day("2025-02-02", 0, { likes: 0 }));
+    });
+    const totals = async (from: string, to: string) =>
+      (
+        await as(t).query(api.v1.youtubeAnalytics.channelDays, {
+          socialAccountId: channel,
+          range: { from, to },
+        })
+      ).totals;
+
+    expect(await totals("2025-01-01", "2025-01-04")).toEqual({
+      reportedDays: 2,
+      metrics: {
+        views: 1000,
+        estimatedMinutesWatched: 250,
+        likes: 3,
+        subscribersGained: 12,
+        subscribersLost: 2,
+        subscribersNet: 3, // only 2025-01-01 reports both
+        averageViewDuration: 150, // 250 x 60 / 100: the 900 views without watch time are left out
+      },
+      unavailableMetrics: [
+        { metric: "comments", reason: "not_reported" },
+        { metric: "shares", reason: "not_reported" },
+      ],
+    });
+    expect(await totals("2025-02-01", "2025-02-02")).toEqual({
+      reportedDays: 2,
+      metrics: { views: 0, estimatedMinutesWatched: 0, likes: 0 },
+      unavailableMetrics: [
+        { metric: "comments", reason: "not_reported" },
+        { metric: "shares", reason: "not_reported" },
+        { metric: "subscribersGained", reason: "not_reported" },
+        { metric: "subscribersLost", reason: "not_reported" },
+        { metric: "subscribersNet", reason: "not_reported" },
+        { metric: "averageViewDuration", reason: "zero_views" },
+      ],
+    });
+    // Nothing reported (synced-empty and unknown days only): no total at all, never 0.
+    const empty = await totals("2025-01-03", "2025-01-10");
+    expect(empty).toMatchObject({ reportedDays: 0, metrics: {} });
+    expect(empty.unavailableMetrics.every((entry) => entry.reason === "not_reported")).toBe(true);
+    expect(empty.unavailableMetrics).toHaveLength(9);
+  });
+
+  it("a hidden subscriber count stays absent; days and totals are unaffected", async () => {
+    const t = newBackend();
+    const { ids } = await youtubeOrg(t, ["hidden"]);
+    const dto = await as(t).query(api.v1.youtubeAnalytics.channelDays, {
+      socialAccountId: ids["hidden"]!,
+      range: SYNCED,
+    });
+    expect(dto).not.toHaveProperty("subscribers");
+    expect(dto.totals.reportedDays).toBeGreaterThan(0);
+  });
+
+  it("without the analytics grant: no totals (nothing reported) and no video window", async () => {
+    const t = newBackend();
+    const { ids } = await youtubeOrg(t, ["limited"]);
+    const dto = await as(t).query(api.v1.youtubeAnalytics.channelDays, {
+      socialAccountId: ids["limited"]!,
+      range: SYNCED,
+    });
+    expect(dto.totals).toMatchObject({ reportedDays: 0, metrics: {} });
+    expect(dto.subscribers?.count).toBe(mockYouTubeSubscribers("limited")); // the Data API value
+    const videos = await as(t).query(api.v1.youtubeAnalytics.videos, {
+      socialAccountId: ids["limited"]!,
+      paginationOpts: page,
+    });
+    expect(videos.page.length).toBeGreaterThan(0);
+    expect(videos.page.every((video) => Object.keys(video.analytics).length === 0)).toBe(true);
+    const tasks = await t.run((ctx) => ctx.db.query("syncTasks").collect());
+    expect(tasks.some((task) => task.operation === "fetchVideoAnalytics")).toBe(false);
+  });
+});
+
+describe("Checkpoint 8: per-video analytics windows", () => {
+  async function analyticsRows(t: Backend) {
+    return await t.run((ctx) => ctx.db.query("youtubeVideoAnalytics").collect());
+  }
+  const LAST28 = { from: "2026-09-20", to: "2026-10-17" };
+
+  it("each video carries its reported windows, exactly as stored", async () => {
+    const t = newBackend();
+    const { ids } = await youtubeOrg(t);
+    const rows = await analyticsRows(t);
+    const result = await as(t).query(api.v1.youtubeAnalytics.videos, {
+      socialAccountId: ids["1"]!,
+      paginationOpts: page,
+    });
+    expect(result.page.length).toBeGreaterThan(10);
+    const lifetimeFrom = rows.find((row) => row.window === "lifetime")!.from;
+    let reported = 0;
+    for (const video of result.page) {
+      const publishedDay = toDateKey(Date.parse(video.publishedAt), "America/Los_Angeles");
+      const mine = rows.filter((row) => row.postId === video.id);
+      if (compareDateKeys(publishedDay, LAST28.to) > 0) {
+        // Uploaded after the windows' last day: no window at all.
+        expect(mine).toEqual([]);
+        expect(video.analytics).toEqual({});
+        continue;
+      }
+      reported++;
+      for (const window of ["last28", "lifetime"] as const) {
+        const row = mine.find((candidate) => candidate.window === window)!;
+        expect(video.analytics[window]).toEqual({
+          status: "reported",
+          from: window === "last28" ? LAST28.from : lifetimeFrom,
+          to: LAST28.to,
+          syncedAt: NOW.toISOString(),
+          metrics: Object.fromEntries(
+            YOUTUBE_VIDEO_ANALYTICS_METRICS.flatMap((metric) =>
+              row[metric] === undefined ? [] : [[metric, row[metric]]],
+            ),
+          ),
+        });
+      }
+    }
+    expect(reported).toBeGreaterThan(0);
+    // The detail endpoint returns the same windows.
+    const sample = result.page.find((video) => video.analytics.last28 !== undefined)!;
+    const detail = await as(t).query(api.v1.youtubeAnalytics.video, { videoId: sample.id });
+    expect(detail.analytics).toEqual(sample.analytics);
+    expect(detail.analytics.last28!.metrics.averageViewPercentage).toBeDefined();
+  });
+
+  it("a video without a row in a synced window is not_in_top (no values, never 0)", async () => {
+    const t = newBackend();
+    const { ids } = await youtubeOrg(t);
+    const rows = await analyticsRows(t);
+    // Simulate the window report without this video: it fell out of the top 200.
+    const dropped = rows.find((row) => row.window === "last28")!;
+    await t.run((ctx) => ctx.db.delete(dropped._id));
+
+    const detail = await as(t).query(api.v1.youtubeAnalytics.video, { videoId: dropped.postId });
+    expect(detail.analytics.last28).toEqual({
+      status: "not_in_top",
+      from: LAST28.from,
+      to: LAST28.to,
+      syncedAt: NOW.toISOString(),
+      metrics: {},
+    });
+    expect(detail.analytics.lifetime?.status).toBe("reported");
+    const listed = await as(t).query(api.v1.youtubeAnalytics.videos, {
+      socialAccountId: ids["1"]!,
+      paginationOpts: page,
+    });
+    expect(listed.page.find((video) => video.id === dropped.postId)!.analytics).toEqual(
+      detail.analytics,
+    );
+  });
+
+  it("a window never synced for the channel is absent, not not_in_top", async () => {
+    const t = newBackend();
+    const { ids } = await youtubeOrg(t);
+    const video = (await analyticsRows(t)).find((row) => row.window === "lifetime")!.postId;
+    await t.run(async (ctx) => {
+      for (const row of await ctx.db.query("youtubeVideoAnalytics").collect()) {
+        if (row.window === "lifetime") await ctx.db.delete(row._id);
+      }
+      for (const state of await ctx.db.query("syncAccounts").collect()) {
+        await ctx.db.patch(state._id, {
+          videoAnalyticsWindows: { last28: state.videoAnalyticsWindows!.last28! },
+        });
+      }
+    });
+    const detail = await as(t).query(api.v1.youtubeAnalytics.video, { videoId: video });
+    expect(Object.keys(detail.analytics)).toEqual(["last28"]);
+    expect(ids["1"]).toBeDefined();
+  });
+
+  it("never mixes organizations: the same channel in another org reads its own rows", async () => {
+    const t = newBackend();
+    const a = await youtubeOrg(t);
+    const b = await youtubeOrg(t, ["1"], CRM);
+    const rowsBefore = await analyticsRows(t);
+    // Org A's stored values change; org B's answer does not.
+    const bVideos = async () =>
+      (
+        await as(t, CRM).query(api.v1.youtubeAnalytics.videos, {
+          socialAccountId: b.ids["1"]!,
+          paginationOpts: page,
+        })
+      ).page.map((video) => video.analytics);
+    const before = await bVideos();
+    const orgA = (await t.run((ctx) => ctx.db.get(a.ids["1"]!)))!.orgId;
+    await t.run(async (ctx) => {
+      for (const row of rowsBefore.filter((r) => r.orgId === orgA)) {
+        await ctx.db.patch(row._id, { views: 999_999_999 });
+      }
+    });
+    expect(await bVideos()).toEqual(before);
+    const views = before.flatMap((windows) => [
+      windows.last28?.metrics.views,
+      windows.lifetime?.metrics.views,
+    ]);
+    expect(views.some((value) => value !== undefined)).toBe(true);
+    expect(views).not.toContain(999_999_999);
+    // Another org's video id is NOT_FOUND (never its windows).
+    const aVideo = rowsBefore.find((row) => row.orgId === orgA)!.postId;
+    await expectMarketingError(
+      as(t, CRM).query(api.v1.youtubeAnalytics.video, { videoId: aVideo }),
+      "NOT_FOUND",
+    );
+  });
+});
+
 describe("security", () => {
   it("another org's channel or video is NOT_FOUND; malformed ids too", async () => {
     const t = newBackend();
@@ -574,9 +875,19 @@ describe("contract", () => {
     return out;
   }
 
+  /**
+   * ADR 0016 Checkpoint 8 (approved): the only derived or ratio fields are the one-channel range
+   * totals of channelDays and YouTube's own per-video averageViewPercentage. Nothing else.
+   */
+  const APPROVED_DERIVED: Record<string, string[]> = {
+    "youtubeAnalytics:channelDays": ["totals"],
+    "youtubeAnalytics:videos": ["averageViewPercentage"],
+    "youtubeAnalytics:video": ["averageViewPercentage"],
+  };
+
   it.each(Object.entries(fns))(
-    "%s exposes no derived, aggregate or forbidden field",
-    (_name, fn) => {
+    "%s exposes no derived, aggregate or forbidden field beyond the approved ones",
+    (name, fn) => {
       const names = fieldNames(JSON.parse(fn.exportReturns()));
       for (const forbidden of [
         "_id",
@@ -592,13 +903,15 @@ describe("contract", () => {
         "totalInteractions",
         "engagementRate",
         "kpis",
-        "totals",
         "comparison",
         "deltas",
+        "postId",
       ]) {
         expect(names, forbidden).not.toContain(forbidden);
       }
-      expect(names.filter((n) => /total|delta|percent|rate|score|rank|sum/i.test(n))).toEqual([]);
+      expect([
+        ...new Set(names.filter((n) => /total|delta|percent|rate|score|rank|sum/i.test(n))),
+      ]).toEqual(APPROVED_DERIVED[name]);
       expect(names.filter((n) => /url/i.test(n))).toEqual([]);
     },
   );
@@ -606,6 +919,7 @@ describe("contract", () => {
   it("the API's YouTube vocabulary matches what the provider stores", () => {
     expect([...YOUTUBE_DAY_METRICS]).toEqual(Object.keys(ACCOUNT_REPORT_TARGETS));
     expect([...YOUTUBE_VIDEO_METRICS]).toEqual([...YOUTUBE_POST_METRICS]);
+    expect([...YOUTUBE_VIDEO_ANALYTICS_METRICS]).toEqual([...VIDEO_REPORT_COLUMNS]);
     expect(YOUTUBE_DAY_TIMEZONE).toBe(REPORT_DAY_BASIS);
   });
 });

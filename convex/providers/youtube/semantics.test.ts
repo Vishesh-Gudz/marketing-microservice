@@ -15,8 +15,17 @@ import {
   isAllowedYouTubePermalink,
   LISTING_PAGE_SIZE,
   POST_SNAPSHOT_WINDOW_DAYS,
+  REPORT_DAY_BASIS,
   REPORT_DIMENSION,
   REPORT_IDS,
+  VIDEO_ANALYTICS_WINDOWS,
+  VIDEO_RECENT_WINDOW_DAYS,
+  VIDEO_REPORT_COLUMNS,
+  VIDEO_REPORT_DECIMAL_METRICS,
+  VIDEO_REPORT_DIMENSION,
+  VIDEO_REPORT_MAX_RESULTS,
+  VIDEO_REPORT_METRICS,
+  VIDEO_REPORT_SORT,
   YOUTUBE_ACCOUNT_METRICS,
   YOUTUBE_POST_METRICS,
   youtubePermalink,
@@ -81,6 +90,38 @@ describe("YouTube semantics", () => {
     for (const [name, target] of Object.entries(ACCOUNT_REPORT_TARGETS)) {
       expect("column" in target ? target.column : target.extra).toBe(name);
     }
+  });
+
+  it("Checkpoint 8: one per-video report per window, its own exact query, top 200 by views", () => {
+    expect(VIDEO_REPORT_METRICS).toBe(
+      "views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained,subscribersLost",
+    );
+    expect(VIDEO_REPORT_METRICS.split(",")).toEqual([...VIDEO_REPORT_COLUMNS]);
+    expect([VIDEO_REPORT_DIMENSION, VIDEO_REPORT_SORT, VIDEO_REPORT_MAX_RESULTS]).toEqual([
+      "video",
+      "-views",
+      200,
+    ]);
+    expect(
+      isAllowedRequest(
+        "GET",
+        `https://youtubeanalytics.googleapis.com/v2/reports?ids=${REPORT_IDS}&startDate=2026-09-20&endDate=2026-10-17&metrics=${VIDEO_REPORT_METRICS}&dimensions=${VIDEO_REPORT_DIMENSION}&sort=${VIDEO_REPORT_SORT}&maxResults=${VIDEO_REPORT_MAX_RESULTS}`,
+      ),
+    ).toBe(true);
+    // averageViewPercentage is requested ONLY per video (never in the day report) and is the
+    // only decimal; nothing revenue- or audience-related is requested.
+    expect(ACCOUNT_REPORT_METRICS.split(",")).not.toContain("averageViewPercentage");
+    expect([...VIDEO_REPORT_DECIMAL_METRICS]).toEqual(["averageViewPercentage"]);
+    for (const never of ["dislikes", "engagedViews", "estimatedRevenue", "cardClickRate"]) {
+      expect(VIDEO_REPORT_METRICS.split(",")).not.toContain(never);
+    }
+    expect([...VIDEO_ANALYTICS_WINDOWS]).toEqual(["last28", "lifetime"]);
+    expect(YOUTUBE_CAPABILITIES.videoAnalytics).toEqual({
+      dayTimeZone: REPORT_DAY_BASIS,
+      recentWindowDays: VIDEO_RECENT_WINDOW_DAYS,
+      maxVideosPerWindow: VIDEO_REPORT_MAX_RESULTS,
+    });
+    expect(VIDEO_RECENT_WINDOW_DAYS).toBe(28);
   });
 
   it("builds exactly the one permalink form that may be stored", () => {

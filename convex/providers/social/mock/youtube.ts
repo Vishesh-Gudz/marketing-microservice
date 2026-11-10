@@ -5,8 +5,15 @@ import { fingerprint } from "../../hash";
 import type { OAuthGrant, OAuthSpec } from "../../oauth";
 import type { PageRequest, ProviderContext, ProviderOperation, ProviderPage } from "../../types";
 import { YOUTUBE_CAPABILITIES } from "../../youtube/capabilities";
-import { mapChannel, mapReportDays, mapVideo, mapVideoSnapshot } from "../../youtube/mapping";
+import {
+  mapChannel,
+  mapReportDays,
+  mapVideo,
+  mapVideoReport,
+  mapVideoSnapshot,
+} from "../../youtube/mapping";
 import { YOUTUBE_READONLY_SCOPE, YOUTUBE_SCOPES } from "../../youtube/oauth";
+import { VIDEO_ANALYTICS_WINDOWS } from "../../youtube/semantics";
 import type {
   ProviderDiscoveredSocialAccount,
   ProviderSocialPost,
@@ -19,6 +26,7 @@ import {
   mockYouTubeChannel,
   mockYouTubeChannelId,
   mockYouTubeReport,
+  mockYouTubeVideoReport,
   mockYouTubeVideos,
 } from "./youtubeData";
 
@@ -28,14 +36,15 @@ import {
  *
  * - The SocialProvider serves the raw-shaped mock data (./youtubeData.ts) through the REAL
  *   YouTube mapping and capabilities, with the same exclusions ("upcoming") and unresolved
- *   counts as the live provider; day reports and lifetime statistics run the same mapping.
+ *   counts as the live provider; day reports, lifetime statistics and (Checkpoint 8) the
+ *   per-video window reports run the same mapping.
  * - The OAuth spec is "instant consent" with PKCE (like the ads mock): the authorization URL
  *   IS the callback URL carrying `mock-yt-code.<user>.<fingerprint(challenge, user)>`; the
  *   scopes are the real YouTube scopes.
  * - Discovery returns the credential's channel.
  *
  * Users: "<n>" a channel; "limited" grants youtube.readonly only (analytics scope missing:
- * its day reports fail as `permission`, like the live provider);
+ * its day and video reports fail as `permission`, like the live provider);
  * "noyoutube" grants no youtube.readonly (the exchange fails); "nochannel" has no channel;
  * "norefresh" receives no refresh token; "revoked" holds a credential the mock rejects
  * ("auth", as `invalid_grant`). See ./youtubeData.ts for the data users.
@@ -202,6 +211,38 @@ export function createMockYouTubeSocialProvider(): SocialProvider {
       });
       for (const item of items) {
         assertValidSocialRecord("socialAccountDay", item, "youtube", operation);
+      }
+      return { items };
+    },
+
+    async fetchVideoAnalytics(ctx, request) {
+      const operation = "fetchVideoAnalytics" as const;
+      const user = mockUser(ctx, operation, request.accountExternalId);
+      const { from, to, window } = request;
+      if (
+        !(VIDEO_ANALYTICS_WINDOWS as readonly string[]).includes(window) ||
+        !isDateKey(from) ||
+        !isDateKey(to) ||
+        compareDateKeys(from, to) > 0
+      ) {
+        return fail("invalid_request", operation, "window_invalid", "Invalid window");
+      }
+      if (request.cursor !== undefined) {
+        return fail("invalid_request", operation, "cursor_invalid", "Unexpected cursor");
+      }
+      if (user === "limited") {
+        return fail("permission", operation, "analytics_scope_missing", "Not granted");
+      }
+      const items = mapVideoReport({
+        operation,
+        accountExternalId: request.accountExternalId,
+        window,
+        from,
+        to,
+        report: mockYouTubeVideoReport(user, from, to, todayIn("UTC", Date.now())),
+      });
+      for (const item of items) {
+        assertValidSocialRecord("youtubeVideoAnalytics", item, "youtube", operation);
       }
       return { items };
     },

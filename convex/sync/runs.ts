@@ -18,6 +18,7 @@ import type {
   ProviderSocialAccountDay,
   ProviderSocialPost,
   ProviderSocialPostSnapshot,
+  ProviderYouTubeVideoAnalytics,
 } from "../providers/social/types";
 import type { ProviderAdAccount } from "../providers/types";
 import { SYNC_CADENCE, SYNC_LIMITS } from "./config";
@@ -49,7 +50,7 @@ import {
   toSyncFailure,
   type SyncFailure,
 } from "./policy";
-import type { SocialRunPlan } from "./socialPlan";
+import { resolveVideoWindow, type SocialRunPlan } from "./socialPlan";
 import { findSocialSyncAccount, findSyncAccount, findSyncAccountForSubject } from "./state";
 import {
   isAdOperation,
@@ -72,9 +73,11 @@ import {
   emptyCounts,
   markRemovedBatch,
   markRemovedSocialPostsBatch,
+  oldestSocialPostPublishedAt,
   pruneMetricsBatch,
   refreshAdAccount,
   refreshSocialAccount,
+  replaceYouTubeVideoWindow,
   socialAccountDrift,
   writeEntityPage,
   writeMetricPage,
@@ -464,6 +467,9 @@ async function createSubjectRun(
       ...("breakdown" in spec && spec.breakdown !== undefined ? { breakdown: spec.breakdown } : {}),
       ...("updatedSince" in spec && spec.updatedSince !== undefined
         ? { updatedSince: spec.updatedSince }
+        : {}),
+      ...("videoWindow" in spec && spec.videoWindow !== undefined
+        ? { videoWindow: spec.videoWindow }
         : {}),
       fullListing: spec.fullListing,
       ...newTaskFields(now),
@@ -1000,6 +1006,23 @@ export const claimTask = internalMutation({
       return { status: "skip" };
     }
 
+    // ADR 0016 Checkpoint 8: a per-video window runs only for a channel with stored videos (the
+    // listing of this run has committed: tasks run in seq order); "lifetime" gets its first day
+    // here, from the oldest stored upload, and keeps it for every retry.
+    let from = task.from;
+    if (loaded.kind === "social" && task.operation === "fetchVideoAnalytics") {
+      const window = await claimedVideoWindow(ctx, loaded);
+      if (window === "invalid") {
+        await finishTask(ctx, task, "failed", now, sanitizeFailure({ kind: "internal" }, now));
+        return { status: "skip" };
+      }
+      if (window === undefined) {
+        await finishTask(ctx, task, "skipped", now);
+        return { status: "skip" };
+      }
+      from = window.from;
+    }
+
     // Platform cursors can expire: a checkpoint older than staleCursorMs restarts the task once.
     const staleCursor =
       task.cursor !== undefined &&
@@ -1014,6 +1037,7 @@ export const claimTask = internalMutation({
       startedAt: task.startedAt ?? now,
       fetchStartedAt: staleCursor ? now : (task.fetchStartedAt ?? now),
       totalAttempts: task.totalAttempts + 1,
+      ...(from !== task.from ? { from } : {}),
       ...(staleCursor
         ? {
             cursor: undefined,
@@ -1044,15 +1068,42 @@ export const claimTask = internalMutation({
         operation: task.operation,
         accountExternalId: account.externalId,
         ...(task.level !== undefined ? { level: task.level } : {}),
-        ...(task.from !== undefined ? { from: task.from } : {}),
+        ...(from !== undefined ? { from } : {}),
         ...(task.to !== undefined ? { to: task.to } : {}),
         ...(task.breakdown !== undefined ? { breakdown: task.breakdown } : {}),
         ...(task.updatedSince !== undefined ? { updatedSince: task.updatedSince } : {}),
+        ...(task.videoWindow !== undefined ? { videoWindow: task.videoWindow } : {}),
         ...(cursor !== undefined ? { cursor } : {}),
       },
     };
   },
 });
+
+/**
+ * ADR 0016 Checkpoint 8: the days a claimed per-video window requests (socialPlan.ts
+ * resolveVideoWindow); undefined = skipped (no stored video); "invalid" = not a well-formed
+ * video-analytics task of a platform that declares the capability (fails closed).
+ */
+async function claimedVideoWindow(
+  ctx: Ctx,
+  loaded: SocialLoaded,
+): Promise<{ from: DateKey; to: DateKey } | undefined | "invalid"> {
+  const { task, account } = loaded;
+  const video = providerRegistry().socialCapabilities(account.platform).videoAnalytics;
+  if (video === undefined || task.videoWindow === undefined || task.to === undefined) {
+    return "invalid";
+  }
+  return resolveVideoWindow({
+    window: task.videoWindow,
+    ...(task.from !== undefined ? { plannedFrom: task.from } : {}),
+    to: task.to,
+    oldestPublishedAt: await oldestSocialPostPublishedAt(ctx.db, {
+      orgId: account.orgId,
+      socialAccountId: account._id,
+    }),
+    dayTimeZone: video.dayTimeZone,
+  });
+}
 
 /** Loads a task for a worker callback; null when the claim is stale (discard silently). */
 async function loadClaimed(ctx: Ctx, taskId: Id<"syncTasks">, claimSeq: number) {
@@ -1362,6 +1413,9 @@ type SocialLoaded = Extract<Loaded, { kind: "social" }>;
  * - fetchPostMetrics: at maxPostsPerSnapshotTask posts (truncated: a warning)
  * - fetchAccountMetrics: a window whose days were not all returned counts the missing days
  *   as unresolved (the window is then not covered)
+ * - fetchVideoAnalytics (ADR 0016 Checkpoint 8): always one complete page; it replaces every
+ *   youtubeVideoAnalytics row of the (account, window) pair and records the window as synced
+ *   on the account's sync state (syncAccounts.videoAnalyticsWindows)
  * Removal marking (finalize) runs only after a complete, fully resolved, untruncated full
  * listing (R3, I-D13).
  */
@@ -1396,12 +1450,14 @@ export const commitSocialPage = internalMutation({
 
     const caps = providerRegistry().socialCapabilities(account.platform);
     const reportedUnresolved = "unresolved" in page ? page.unresolved : undefined;
+    // A per-video window report is always one complete page (its validator has no cursor).
+    const pageCursor = "nextCursor" in page ? page.nextCursor : undefined;
     const guard =
       page.kind !== SOCIAL_OPERATION_RECORD_KIND[operation]
         ? ("invalid_record" as const)
         : (checkPageShape({
             itemCount: page.items.length,
-            nextCursor: page.nextCursor,
+            nextCursor: pageCursor,
             requestCursor,
             previousCursor: task.previousCursor,
             pagesSoFar: task.pages,
@@ -1414,6 +1470,7 @@ export const commitSocialPage = internalMutation({
             accountExternalId: account.externalId,
             ...(task.from !== undefined ? { from: task.from } : {}),
             ...(task.to !== undefined ? { to: task.to } : {}),
+            ...(task.videoWindow !== undefined ? { videoWindow: task.videoWindow } : {}),
             capabilities: caps,
             now,
             ...(reportedUnresolved !== undefined ? { unresolved: reportedUnresolved } : {}),
@@ -1472,11 +1529,37 @@ export const commitSocialPage = internalMutation({
           now,
         );
         break;
+      case "youtubeVideoAnalytics": {
+        // ADR 0016 Checkpoint 8: the claim resolved the window; anything else fails closed.
+        const { videoWindow, from, to } = task;
+        if (videoWindow === undefined || from === undefined || to === undefined) {
+          await applyFailure(ctx, loaded, { source: "guard", kind: "out_of_scope" }, now);
+          return { ok: false, reason: "out_of_scope" };
+        }
+        const written = await replaceYouTubeVideoWindow(
+          ctx.db,
+          scope,
+          videoWindow,
+          page.items as ProviderYouTubeVideoAnalytics[],
+          now,
+        );
+        counts = written.counts;
+        // The window is synced for the channel: a stored video without a row is now "not in the
+        // top 200" for it (the read side), until the next report of the same window.
+        await ctx.db.patch(loaded.syncAccount._id, {
+          videoAnalyticsWindows: {
+            ...loaded.syncAccount.videoAnalyticsWindows,
+            [videoWindow]: { from, to, syncedAt: now, videos: written.videos },
+          },
+          updatedAt: now,
+        });
+        break;
+      }
     }
     counts.pages = 1;
     counts.unresolved += reportedUnresolved ?? 0;
 
-    let nextCursor = page.nextCursor;
+    let nextCursor = pageCursor;
     let truncated = false;
     let warning: SyncError | undefined;
     const pages = task.pages + 1;

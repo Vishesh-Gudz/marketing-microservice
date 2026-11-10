@@ -31,6 +31,7 @@ import type {
   ProviderSocialAccountDay,
   ProviderSocialPost,
   ProviderSocialPostSnapshot,
+  ProviderYouTubeVideoAnalytics,
 } from "../providers/social/types";
 import type { syncCountsValidator } from "../tables/sync";
 import { applyCaps } from "./guards";
@@ -50,6 +51,7 @@ import { buildResolver } from "./resolver";
  *   socialPosts                (orgId, socialAccountId, externalId)
  *   socialPostMetricSnapshots  (orgId, postId, capturedDate)
  *   socialAccountMetricsDaily  (orgId, socialAccountId, date) — column-group replace
+ *   youtubeVideoAnalytics      (orgId, postId, window) — the whole (account, window) replaced
  *
  * Uniqueness without SQL constraints: every write reads its natural-key index
  * range and writes in the SAME mutation. Convex mutations are serializable,
@@ -930,6 +932,98 @@ export async function writeSocialAccountDayPage(
     );
   }
   return counts;
+}
+
+/** Rows of one (account, window) a replace reads (a window holds at most 200). */
+const VIDEO_ANALYTICS_REPLACE_SCAN = 1_000;
+
+/**
+ * ADR 0016 Checkpoint 8: replaces EVERY youtubeVideoAnalytics row of the (account, window) pair
+ * with one complete window report, in one transaction: a listed video's row is replaced (or
+ * inserted), a video no longer listed loses its row (it fell out of the top 200). A record for
+ * a video that is not stored (deleted on YouTube, beyond the listing cap, or removed by
+ * retention) is dropped: a post is never created from analytics (F8), and it is not unresolved
+ * (YouTube may report videos the listing no longer returns). An empty report empties the
+ * window. Returns the counts and how many rows the window now holds.
+ */
+export async function replaceYouTubeVideoWindow(
+  db: DatabaseWriter,
+  scope: SocialAccountScope,
+  window: ProviderYouTubeVideoAnalytics["window"],
+  items: readonly ProviderYouTubeVideoAnalytics[],
+  now: number,
+): Promise<{ counts: SyncCounts; videos: number }> {
+  const counts = emptyCounts();
+  counts.records += items.length;
+  const existing = new Map<Id<"socialPosts">, Doc<"youtubeVideoAnalytics">>();
+  const stale: Doc<"youtubeVideoAnalytics">[] = [];
+  for (const row of await db
+    .query("youtubeVideoAnalytics")
+    .withIndex("by_org_account_window", (q) =>
+      q.eq("orgId", scope.orgId).eq("socialAccountId", scope.socialAccountId).eq("window", window),
+    )
+    .take(VIDEO_ANALYTICS_REPLACE_SCAN)) {
+    if (existing.has(row.postId)) stale.push(row);
+    else existing.set(row.postId, row);
+  }
+  let videos = 0;
+  for (const record of items) {
+    if (record.window !== window) throw new Error("Mixed analytics windows in one page");
+    const post = await db
+      .query("socialPosts")
+      .withIndex("by_org_account_external", (q) =>
+        q
+          .eq("orgId", scope.orgId)
+          .eq("socialAccountId", scope.socialAccountId)
+          .eq("externalId", record.postExternalId),
+      )
+      .first();
+    if (post === null) continue;
+    const {
+      accountExternalId: _account,
+      postExternalId: _post,
+      platform: _platform,
+      ...values
+    } = record;
+    const row = withoutUndefined({
+      ...values,
+      orgId: scope.orgId,
+      socialAccountId: scope.socialAccountId,
+      postId: post._id,
+      syncedAt: now,
+    });
+    const current = existing.get(post._id);
+    if (current !== undefined) {
+      existing.delete(post._id);
+      await db.replace(current._id, row);
+      counts.updated++;
+    } else {
+      await db.insert("youtubeVideoAnalytics", row);
+      counts.inserted++;
+    }
+    counts.metricRows++;
+    videos++;
+  }
+  for (const row of [...existing.values(), ...stale]) {
+    await db.delete(row._id);
+    counts.pruned++;
+  }
+  return { counts, videos };
+}
+
+/** publishedAt of the channel's oldest stored video (removed ones included), if any. */
+export async function oldestSocialPostPublishedAt(
+  db: DatabaseReader,
+  scope: Pick<SocialAccountScope, "orgId" | "socialAccountId">,
+): Promise<number | undefined> {
+  const oldest = await db
+    .query("socialPosts")
+    .withIndex("by_org_account_published", (q) =>
+      q.eq("orgId", scope.orgId).eq("socialAccountId", scope.socialAccountId),
+    )
+    .order("asc")
+    .first();
+  return oldest?.publishedAt;
 }
 
 export type SocialRemovalCursor = {

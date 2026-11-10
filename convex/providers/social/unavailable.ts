@@ -45,5 +45,6 @@ export function createUnavailableSocialProvider(
     listPosts: fail("listSocialPosts"),
     fetchPostMetrics: fail("fetchPostMetrics"),
     fetchAccountMetrics: fail("fetchAccountMetrics"),
+    fetchVideoAnalytics: fail("fetchVideoAnalytics"),
   });
 }

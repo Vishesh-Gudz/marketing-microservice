@@ -1,6 +1,7 @@
 # YouTube organic provider (ADR 0016)
 
-Status: **Checkpoints 1–3 implemented against mock and fake data only.**
+Status: **Checkpoints 1–8 implemented.** Checkpoints 1–7 run in production (released
+2026-10-28); Checkpoint 8 (per-video analytics) is implemented against mock and fake data only.
 
 - **Checkpoint 1:** the allowlisted read-only client, the `SocialProvider` for channel and video
   metadata, the mapping and boundary validation, the mock provider and the Node sync registry.
@@ -11,11 +12,21 @@ Status: **Checkpoints 1–3 implemented against mock and fake data only.**
   per-video lifetime statistics (`videos.list`), Pacific Time days, the 3-day reporting delay,
   7-day lookback, 31-day chunks, the 395-day history. Only values YouTube reports are stored; the
   organic analytics does not aggregate them yet ([Policy](#policy-and-the-organic-analytics)).
-- **Planned:** retention (3b), the v1 API (4), the `/social` dashboard and the connect UI (5),
-  verification and setup docs (6).
+- **Checkpoint 3b:** retention and deletion ([Retention](#retention-checkpoint-3b)).
+- **Checkpoint 4:** the tenant-scoped v1 API `v1/youtubeAnalytics`.
+- **Checkpoint 5:** the `/social` YouTube view and the `/connections` YouTube card.
+- **Checkpoint 6:** the end-to-end verification and the setup steps
+  ([Verification status](#verification-status-and-limitations-checkpoint-6)).
+- **Checkpoint 7:** no day-report task without `yt-analytics.readonly` (open question 13).
+- **Checkpoint 8:** per-video analytics: one top-200 report per window (last 28 days and
+  lifetime), stored in `youtubeVideoAnalytics`; `v1/youtubeAnalytics` adds the per-video windows,
+  the channel's range totals and its subscriber count
+  ([ADR 0016](../adr/0016-youtube-organic.md#checkpoint-8-per-video-analytics)).
 
-Nothing here has been validated against a real YouTube channel. Tests run against a fake Google
-API (`convex/providers/youtube/fakeYouTube.fixtures.ts`) and a deterministic mock provider
+One small real channel was connected, synced (initial and backfill runs), shown on `/social` and
+disconnected (with its data purged and the grant revoked) in production after the Checkpoint 7
+release. Everything else, including Checkpoint 8, is tested against a fake Google API
+(`convex/providers/youtube/fakeYouTube.fixtures.ts`) and a deterministic mock provider
 (`convex/providers/social/mock/youtube*.ts`) that model **documented** behavior only and are not
 evidence. Every item marked **[PROVISIONAL YRn]** stays provisional until checked on a real
 channel ([Real-channel validation](#real-channel-validation-required)).
@@ -56,18 +67,25 @@ duplicates), each value checked; required parameters present. Tokens travel only
 `Authorization: Bearer` header (Data API) or the form body (token endpoint), never in a URL. Every
 request takes one unit of an explicit per-call budget. Fetch exceptions are never propagated.
 
-| Route                                       | Parameters                                                                                                  |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `POST https://oauth2.googleapis.com/token`  | none (form body: the authorization-code grant with the PKCE verifier, or the refresh grant)                 |
-| `POST https://oauth2.googleapis.com/revoke` | none (form body: `token`; the documented `?token=` form is never used) [YR11]                               |
-| `GET …/youtube/v3/channels`                 | `part=snippet,statistics,contentDetails`, `mine=true`, `maxResults=50` (exact)                              |
-| `GET …/youtube/v3/playlistItems`            | `part=contentDetails`, `playlistId`, `maxResults` 1–50, optional `pageToken` (printable ASCII)              |
-| `GET …/youtube/v3/videos`                   | `part=snippet` or `snippet,statistics`, `id` = 1–50 distinct video ids                                      |
-| `GET youtubeanalytics…/v2/reports`          | `ids=channel==MINE`, `startDate`, `endDate` (date keys), `metrics` = the exact list below, `dimensions=day` |
+| Route                                       | Parameters                                                                                                                                           |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST https://oauth2.googleapis.com/token`  | none (form body: the authorization-code grant with the PKCE verifier, or the refresh grant)                                                          |
+| `POST https://oauth2.googleapis.com/revoke` | none (form body: `token`; the documented `?token=` form is never used) [YR11]                                                                        |
+| `GET …/youtube/v3/channels`                 | `part=snippet,statistics,contentDetails`, `mine=true`, `maxResults=50` (exact)                                                                       |
+| `GET …/youtube/v3/playlistItems`            | `part=contentDetails`, `playlistId`, `maxResults` 1–50, optional `pageToken` (printable ASCII)                                                       |
+| `GET …/youtube/v3/videos`                   | `part=snippet` or `snippet,statistics`, `id` = 1–50 distinct video ids                                                                               |
+| `GET youtubeanalytics…/v2/reports`          | `ids=channel==MINE`, `startDate`, `endDate` (date keys), `metrics` = the exact list below, `dimensions=day`                                          |
+| `GET youtubeanalytics…/v2/reports` (CP 8)   | `ids=channel==MINE`, `startDate`, `endDate` (date keys), `metrics` = the exact video list below, `dimensions=video`, `sort=-views`, `maxResults=200` |
 
-Refused: every other path or host (search, comments, captions, writes), any other report
-(another channel id, a content owner, filters, other dimensions or metrics, revenue), API keys
+The two report routes share a URL; a query must match one of them completely (their parameters
+never mix: a day report with `sort` or `maxResults` is refused, and so is the video report
+without them). Refused: every other path or host (search, comments, captions, writes), any other
+report (another channel id, a content owner, `filters`, `startIndex`, another sort or row cap,
+other dimensions such as `day,video`, other metrics or another metric order, revenue), API keys
 and any token parameter (also on the revocation endpoint).
+
+The exact per-video `metrics` value (Checkpoint 8):
+`views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained,subscribersLost`.
 
 ## Connection and OAuth (Checkpoint 2)
 
@@ -113,6 +131,30 @@ and any token parameter (also on the revocation endpoint).
 | `listPosts`           | first page 4: token + channel (uploads playlist) + `playlistItems.list` + `videos.list`; later 3 |
 | `fetchPostMetrics`    | like `listPosts`, with `videos.list` statistics; ends at the first upload before the window      |
 | `fetchAccountMetrics` | 2: token + ONE `reports.query` for the whole window (≤ 31 days); one record per requested day    |
+| `fetchVideoAnalytics` | 2: token + ONE per-video `reports.query` for one window; one record per listed video (≤ 200)     |
+
+**Per-video windows (Checkpoint 8, `fetchVideoAnalytics`, an optional `SocialProvider`
+operation behind the YouTube-only capability `videoAnalytics`):**
+
+- Planned on **initial and lookback runs only** (once a day), after every other task, and only
+  when the connection holds `yt-analytics.readonly` (the same check as the day reports). Never on
+  incremental, manual or backfill runs.
+- Two windows, both ending at `latest` = today in **Pacific Time** minus the 3-day reporting
+  delay:
+  - `last28`: `[latest − 27, latest]`;
+  - `lifetime`: from the Pacific Time publish day of the channel's **oldest stored upload** to
+    `latest`. The task is planned without a first day; its claim sets it (the listing of the same
+    run has committed by then, tasks run in order) and every retry keeps it.
+- A window is **skipped** (task status `skipped`, no request) when the channel has no stored
+  video, or when every stored video is newer than `latest`.
+- One complete page, never a cursor. The commit replaces **every** `youtubeVideoAnalytics` row of
+  the (channel, window) pair in one transaction: listed videos get their row replaced or inserted,
+  a video no longer listed loses its row, an empty report empties the window. A row for a video
+  that is not stored (deleted on YouTube, beyond the listing cap, removed by retention) is dropped
+  and is not `unresolved`; analytics never create a post. The window is then recorded as synced
+  on the sync state (`syncAccounts.videoAnalyticsWindows`: days, commit time, row count).
+- A failed report fails only its task (the run ends `partial`); the stored rows of that window
+  stay as they were.
 
 Before any request, every operation checks the configuration (`youtube_config_invalid`,
 `unknown`), the credential shape and OAuth client (`auth`), and that the requested channel is the
@@ -120,8 +162,9 @@ credential's channel (`permission` / `account_mismatch`). Access tokens are mint
 the stored refresh token and kept in memory only.
 
 **Without `yt-analytics.readonly`** (Checkpoint 7, ADR 0016 open question 13), the planner
-does not plan `fetchAccountMetrics` for the connection; this is the capability
-`accountMetricsScope`, checked against the connection's granted scopes.
+does not plan `fetchAccountMetrics` (nor, Checkpoint 8, `fetchVideoAnalytics`) for the
+connection; this is the capability `accountMetricsScope`, checked against the connection's
+granted scopes.
 
 - The preflight, the listings and the video statistics sync on the normal cadence, and the runs
   succeed.
@@ -129,13 +172,15 @@ does not plan `fetchAccountMetrics` for the connection; this is the capability
 - The connection stays `active`; reconnecting with the permission adds the day reports from
   the next run on.
 
-The provider's own check stays as a guard: called anyway, `fetchAccountMetrics` fails as
-`permission` / `analytics_scope_missing` before any request.
+The provider's own check stays as a guard: called anyway, `fetchAccountMetrics` and
+`fetchVideoAnalytics` fail as `permission` / `analytics_scope_missing` before any request.
 
 **Quota (estimate, default 10,000 Data API units per project per day):** a 500-upload channel
 costs about 70 units for the hourly incremental runs (3 per run) plus about 25 for the daily
 lookback (listing and snapshot pages): roughly 100 channels per Google Cloud project. Day
-reports use the separate Analytics API (1 request per window) [PROVISIONAL YR14].
+reports and the per-video reports use the separate Analytics API, not the Data API quota: 1
+request per day-report window, plus 2 per-video requests (last28 and lifetime) per channel per
+day (initial and lookback runs only) [PROVISIONAL YR14].
 
 ## Mapping (`semantics.ts`, `mapping.ts`)
 
@@ -186,9 +231,32 @@ snapshot per upload per UTC capture day):
   explicit 0 stays 0 [PROVISIONAL YR13].
 - **Fail closed (`data`):** an unknown column, a duplicate or out-of-window day, a row of the
   wrong width, or a value that is not a non-negative integer.
-- **Never requested:** `dislikes`, `engagedViews`, `averageViewPercentage` (a ratio),
+- **Never requested in the day report:** `dislikes`, `engagedViews`, `averageViewPercentage` (a
+  ratio: requested only per video and window, below, and never aggregated),
   `videosAddedToPlaylists`, revenue, demographics, traffic sources. **Never stored:** a follower
   change, reach, accounts engaged or total interactions.
+
+**Per-video report** (`fetchVideoAnalytics`, Checkpoint 8, `ids=channel==MINE`,
+`dimensions=video`, `sort=-views`, `maxResults=200`; table `youtubeVideoAnalytics`, one row per
+video and window):
+
+| Report metric                                                     | Stored as                          | Notes                                                                                              |
+| ----------------------------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `video`                                                           | `postId`                           | the stored upload with that id; a video that is not stored is dropped                              |
+| `views`, `estimatedMinutesWatched`, `likes`, `comments`, `shares` | the same names                     | non-negative integers                                                                              |
+| `subscribersGained`, `subscribersLost`                            | the same names                     | non-negative integers; no net change is stored                                                     |
+| `averageViewDuration`                                             | `averageViewDuration`              | seconds, YouTube's value for this video and window; never recomputed                               |
+| `averageViewPercentage`                                           | the same name                      | percent, a non-negative decimal (may exceed 100 on rewatches [PROVISIONAL YR16]); never aggregated |
+| (the request)                                                     | `window`, `from`, `to`, `syncedAt` | `last28` or `lifetime`; the Pacific Time days requested; the commit time                           |
+
+- **Top 200 only:** YouTube returns the channel's most viewed videos of the window, at most 200
+  rows [PROVISIONAL YR15]. A video without a row is "not in YouTube's top 200" for that window,
+  never 0.
+- **Missing is never zero:** a metric column the table leaves out, or a null cell, stays absent.
+- **Fail closed (`data`):** a header that is not exactly the `video` dimension plus known
+  metrics (`metric_unexpected` / `report_unexpected`), a row of the wrong width, a malformed or
+  repeated video id (`video_unexpected`), a count that is not a non-negative integer or a
+  percentage that is not a finite non-negative number (`metric_invalid`), more than 200 rows.
 
 ## Policy and the organic analytics
 
@@ -201,10 +269,18 @@ Until the open questions are answered:
 - the sync stores only values YouTube reports, under their own names;
 - `v1/youtubeAnalytics` (Checkpoint 4) exposes them one channel at a time:
   - `channelDays`: day by day on Pacific Time days;
-  - `videos` / `video`: lifetime statistics on UTC capture days;
+  - `videos` / `video`: lifetime statistics on UTC capture days and (Checkpoint 8) the
+    per-video windows exactly as YouTube's per-video report returned them;
 
-  nothing is summed, averaged, compared or combined
+  nothing is compared or combined across channels or platforms
   ([docs/analytics.md](../analytics.md#youtube-analytics-adr-0016-checkpoint-4));
+
+- **Checkpoint 8 (an approved product decision, not a policy answer):** `channelDays.totals`
+  sums ONE channel's reported days of the requested range (the Guide's "simple calculations":
+  addition, subtraction and one division), with `subscribersNet` = gained − lost and
+  `averageViewDuration` = watch time × 60 ÷ views over the days that report both. Nothing else
+  is derived; the per-video ratios (`averageViewDuration`, `averageViewPercentage`) are YouTube's
+  own values and are never summed or averaged across videos, windows or channels;
 
 - `v1/organicAnalytics` does **not** aggregate YouTube:
   - a single YouTube account reads as `unsupported` with no values;
@@ -230,7 +306,8 @@ leaves room for a failed daily run before the 30 days are reached.
 
 A purge HARD-deletes one YouTube channel's stored data, in this order:
 
-1. its videos, each after its lifetime snapshots;
+1. its videos, each after its lifetime snapshots and its per-video analytics rows
+   (`youtubeVideoAnalytics`, Checkpoint 8; a final pass removes any row whose video is gone);
 2. its day rows;
 3. its sync tasks and runs;
 4. its sync state;
@@ -323,7 +400,7 @@ refreshed (III.D.2.3's "users whose tokens cannot be refreshed").
 ### Videos no listing has refreshed
 
 The hourly sweep deletes YouTube videos whose `lastSeenAt` is more than 25 days old, together
-with their snapshots. The daily lookback runs a full listing that refreshes every listed upload.
+with their snapshots and per-video analytics rows. The daily lookback runs a full listing that refreshes every listed upload.
 Before deleting, the sweep re-verifies that the row is a YouTube row, and that the owning channel
 is a YouTube channel of the same org.
 
@@ -412,22 +489,23 @@ task once).
 
 ## Capabilities
 
-| Value                      | Setting                                         | Source                                   |
-| -------------------------- | ----------------------------------------------- | ---------------------------------------- |
-| account types              | `channel`                                       | Y-D2                                     |
-| posts                      | yes                                             | Checkpoint 1                             |
-| post metrics               | `views`, `likes`, `comments`                    | [doc] `videos.list` statistics           |
-| account metrics            | `views` (+ the reported extras)                 | [doc] the channel day report             |
-| snapshot window            | 90 days                                         | ours (Y-D8)                              |
-| snapshot page              | 50 (1,000 per task; truncation is reported)     | [doc] / ours                             |
-| listing page               | 50                                              | [doc] Data API page limit                |
-| listing pages              | 100 (5,000 uploads; truncation is reported)     | ours                                     |
-| requests per provider call | 4                                               | token + channel + playlistItems + videos |
-| account-metric horizon     | 395 days                                        | ours (Y-D7)                              |
-| account-metric lookback    | 7 days                                          | ours (Y-D7) [YR9]                        |
-| account-metric delay       | 3 days (`accountMetricsDelayDays`)              | [doc] 48–72 h latency                    |
-| account-metric chunk       | 31 days = 1 report                              | ours                                     |
-| account-metric scope       | `yt-analytics.readonly` (`accountMetricsScope`) | Checkpoint 7: no report task without it  |
+| Value                      | Setting                                                             | Source                                   |
+| -------------------------- | ------------------------------------------------------------------- | ---------------------------------------- |
+| account types              | `channel`                                                           | Y-D2                                     |
+| posts                      | yes                                                                 | Checkpoint 1                             |
+| post metrics               | `views`, `likes`, `comments`                                        | [doc] `videos.list` statistics           |
+| account metrics            | `views` (+ the reported extras)                                     | [doc] the channel day report             |
+| snapshot window            | 90 days                                                             | ours (Y-D8)                              |
+| snapshot page              | 50 (1,000 per task; truncation is reported)                         | [doc] / ours                             |
+| listing page               | 50                                                                  | [doc] Data API page limit                |
+| listing pages              | 100 (5,000 uploads; truncation is reported)                         | ours                                     |
+| requests per provider call | 4                                                                   | token + channel + playlistItems + videos |
+| account-metric horizon     | 395 days                                                            | ours (Y-D7)                              |
+| account-metric lookback    | 7 days                                                              | ours (Y-D7) [YR9]                        |
+| account-metric delay       | 3 days (`accountMetricsDelayDays`)                                  | [doc] 48–72 h latency                    |
+| account-metric chunk       | 31 days = 1 report                                                  | ours                                     |
+| account-metric scope       | `yt-analytics.readonly` (`accountMetricsScope`)                     | Checkpoint 7: no report task without it  |
+| per-video windows          | `last28`, `lifetime`; Pacific Time days; top 200 (`videoAnalytics`) | Checkpoint 8; same scope and delay       |
 
 ## Mock mode
 
@@ -435,14 +513,18 @@ task once).
 no Google credentials): instant consent with PKCE (`mock-yt-code.<user>.<fingerprint>`), one
 upload every second UTC day for 180 days, every 8th an `upcoming` premiere; lifetime statistics
 grow with age (one slot hides likes, one disables comments, today's upload has 0 views); day
-reports skip every 9th day (no row) and report every 11th as zeros. Users:
+reports skip every 9th day (no row) and report every 11th as zeros; per-video window reports
+(Checkpoint 8) list every upload published (Pacific Time) by the window's last day, most viewed
+first, with values that grow with its days in the window, `averageViewPercentage` with two
+decimals and about one video in eight above 100 %. Users:
 
 - data: `<n>` (a channel with a handle), `hidden` (hidden subscriber count), `empty` (no
   uploads), `edge` (an upload without a publish time);
-- consent: `limited` (`yt-analytics.readonly` unticked: day reports fail as `permission`),
-  `noyoutube` (`youtube.readonly`
-  unticked), `nochannel`, `norefresh` (no refresh token), `revoked` (a credential the mock
-  rejects as `invalid_grant`).
+- consent: `limited` (`yt-analytics.readonly` unticked: like a live connection without it, no
+  day or video report is planned; the mock's own guard fails a report called anyway as
+  `permission` / `analytics_scope_missing`), `noyoutube` (`youtube.readonly` unticked),
+  `nochannel`, `norefresh` (no refresh token), `revoked` (a credential the mock rejects as
+  `invalid_grant`).
 
 ## Real-channel validation required
 
@@ -462,6 +544,8 @@ reports skip every 9th day (no row) and report every 11th as zeros. Users:
 | YR12 | the consent screen shows both scopes; `scope` in the token response lists what was granted   |
 | YR13 | the report returns a row for days without activity; how late processing shows; value types   |
 | YR14 | quota use per channel per day in real use                                                    |
+| YR15 | the per-video report returns at most 200 rows, most viewed first; its value types            |
+| YR16 | `averageViewPercentage` is a decimal and may exceed 100 (rewatched Shorts)                   |
 
 ## Verification status and limitations (Checkpoint 6)
 
@@ -506,7 +590,11 @@ Limitations:
 - **Quota:** about 100 channels per Cloud project per day, an estimate [PROVISIONAL YR14].
 - **Google-side revocation** on disconnect is best effort and not confirmed in the UI. An
   inconclusive daily authorization check is audited but alerts no one (open question 9).
-- **No totals, comparisons or multi-channel figures** until the policy questions are answered.
+- **No comparisons or multi-channel figures** until the policy questions are answered. The
+  one-channel range totals of `channelDays` (Checkpoint 8) are the only figures we compute.
+- **Per-video windows** (Checkpoint 8) cover YouTube's top 200 videos by views per window; any
+  other video shows as "not in the top 200". They are read once a day (initial and lookback
+  runs) and are not verified on a real channel (YR15, YR16).
 
 ## Configuration
 
@@ -536,7 +624,7 @@ Then verify the real workflow (Checkpoint 6; not yet done with a real channel):
 
 6. Wait for the first sync. In `/social` → YouTube, check that the channel name and handle,
    the Pacific Time days (about 3 days behind) and the video statistics match YouTube Studio.
-   Work through YR1–YR14 below.
+   Work through YR1–YR16 below.
 7. Remove the app's access at `myaccount.google.com/permissions`. After the next sync the
    connection is `needs_reauth` and the YouTube view shows "Reconnect required". Reconnect
    the same channel; the next sync succeeds.

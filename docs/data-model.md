@@ -18,7 +18,8 @@ organizations (Phase 1, global)
  │   └─ actionMetricsDaily     long: entity × date × placement × action type × attribution window
  └─ socialAccounts             platform: instagram | facebook | youtube (also owns future inbox threads)
      ├─ socialPosts
-     │   └─ socialPostMetricSnapshots   cumulative lifetime values per capture day
+     │   ├─ socialPostMetricSnapshots   cumulative lifetime values per capture day
+     │   └─ youtubeVideoAnalytics       YouTube only: per-video values per window (last28 | lifetime)
      └─ socialAccountMetricsDaily
 creatives.instagramMediaExternalId ··· socialPosts.externalId   (soft link: promoted organic post)
 ```
@@ -62,16 +63,17 @@ External ids are **strings**. Google ids are int64 and exceed 2^53.
 
 Natural keys, which the Phase 5 write path (`convex/sync/upsert.ts`) uses through the matching index:
 
-| Table                                  | Natural key                                                        | Index                                 | Write rule                                                       |
-| -------------------------------------- | ------------------------------------------------------------------ | ------------------------------------- | ---------------------------------------------------------------- |
-| adAccounts                             | orgId, platform, externalId                                        | `by_org_platform_external`            | replace provider-owned fields (link: field update)               |
-| campaigns / adGroups / ads / creatives | orgId, adAccountId, externalId                                     | `by_org_account_external`             | replace provider-owned fields, keep `createdAt`                  |
-| metricsDaily                           | orgId, entityId, placement, date                                   | `by_org_entity_placement_date`        | **replace**, and delete rows that vanish from a re-synced window |
-| actionMetricsDaily                     | orgId, entityId, placement, date, rawActionType, attributionWindow | `by_org_entity_placement_date_action` | replace, and delete rows that vanish from a re-synced window     |
-| socialAccounts                         | orgId, platform, externalId                                        | `by_org_platform_external`            | patch                                                            |
-| socialPosts                            | orgId, socialAccountId, externalId                                 | `by_org_account_external`             | patch                                                            |
-| socialPostMetricSnapshots              | orgId, postId, capturedDate                                        | `by_org_post_date`                    | replace                                                          |
-| socialAccountMetricsDaily              | orgId, socialAccountId, date                                       | `by_org_account_date`                 | replace                                                          |
+| Table                                  | Natural key                                                        | Index                                 | Write rule                                                        |
+| -------------------------------------- | ------------------------------------------------------------------ | ------------------------------------- | ----------------------------------------------------------------- |
+| adAccounts                             | orgId, platform, externalId                                        | `by_org_platform_external`            | replace provider-owned fields (link: field update)                |
+| campaigns / adGroups / ads / creatives | orgId, adAccountId, externalId                                     | `by_org_account_external`             | replace provider-owned fields, keep `createdAt`                   |
+| metricsDaily                           | orgId, entityId, placement, date                                   | `by_org_entity_placement_date`        | **replace**, and delete rows that vanish from a re-synced window  |
+| actionMetricsDaily                     | orgId, entityId, placement, date, rawActionType, attributionWindow | `by_org_entity_placement_date_action` | replace, and delete rows that vanish from a re-synced window      |
+| socialAccounts                         | orgId, platform, externalId                                        | `by_org_platform_external`            | patch                                                             |
+| socialPosts                            | orgId, socialAccountId, externalId                                 | `by_org_account_external`             | patch                                                             |
+| socialPostMetricSnapshots              | orgId, postId, capturedDate                                        | `by_org_post_date`                    | replace                                                           |
+| socialAccountMetricsDaily              | orgId, socialAccountId, date                                       | `by_org_account_date`                 | replace                                                           |
+| youtubeVideoAnalytics                  | orgId, postId, window                                              | `by_org_post_window`                  | **replace the whole (account, window)** (`by_org_account_window`) |
 
 - **Why Meta and Google cannot collide:** account keys include the platform, and child keys include
   their ad account.
@@ -117,6 +119,9 @@ Which timezone defines a day:
 - **Campaign and ad group `startDate` / `endDate`:** also account-local days.
 - **Organic `publishedAt`:** an instant, grouped by the org timezone at read time.
 - **`socialPostMetricSnapshots.capturedDate`:** the UTC day of capture.
+- **YouTube days** (`socialAccountMetricsDaily.date` of a YouTube channel, and
+  `youtubeVideoAnalytics.from` / `to`): **Pacific Time** days, as YouTube Analytics reports them
+  ([providers/youtube.md](providers/youtube.md)).
 - **`socialAccountMetricsDaily.date`:** the **UTC day** Instagram insights were requested for
   (one `since`/`until` UTC-day window per request, Phase 10 Stage B). Whether this matches the
   Instagram app's day is [PROVISIONAL IR6/IR18]; see
@@ -207,7 +212,8 @@ money semantics are implemented provisionally and require validation on a real a
   - the discovery table `discoveredSocialAccounts` (org, connection, platform, externalId,
     username?, accountType, discoveredAt).
 - Linked accounts are upserted by natural key `(orgId, platform, externalId)` through
-  `sync/upsert.ts`, which is also the single write path for all four social tables (ESLint).
+  `sync/upsert.ts`, which is also the single write path for the social tables (ESLint; including
+  `youtubeVideoAnalytics`).
 - `name` is the username as a label until the first sync preflight (Stage B).
 - `socialPosts` stores the permalink as its only URL (validated host and format); captions are
   capped at 2,200 characters. No media, thumbnail or profile picture URL, biography, website,
@@ -224,6 +230,16 @@ money semantics are implemented provisionally and require validation on a real a
     `profileLinksTaps`) and `insightsSyncedAt` (when the day's insights were synced, also for an
     empty day, so "synced but not reported" differs from "not synced").
     `profileViews` and `websiteClicks` (deprecated by Instagram) are never written.
+- `youtubeVideoAnalytics` (ADR 0016 Checkpoint 8, YouTube only) stores one row per video and
+  window (`last28` or `lifetime`): `orgId`, `socialAccountId`, `postId`, `window`, the Pacific Time
+  days `from` / `to`, the nine values of YouTube's per-video report under their own names
+  (`views`, `estimatedMinutesWatched`, `averageViewDuration`, `averageViewPercentage` (a
+  decimal), `likes`, `comments`, `shares`, `subscribersGained`, `subscribersLost`; each optional,
+  missing = absent) and `syncedAt`. Indexes `by_org_post_window` and `by_org_account_window`.
+  Each sync replaces every row of an (account, window) pair, so only videos in YouTube's top 200
+  of the window have a row; the window's last sync is recorded on the sync state
+  (`syncAccounts.videoAnalyticsWindows`: `from`, `to`, `syncedAt`, `videos`). Rows go with their
+  video and with the channel (see Retention).
 - Paid and organic engagement are never merged. Their engagement rates use different denominators
   (per impression versus per reach).
 
@@ -245,8 +261,9 @@ money semantics are implemented provisionally and require validation on a real a
 
 **Implemented for YouTube only (ADR 0016, Checkpoint 3b).** YouTube channels are the only synced
 rows that are hard-deleted. On disconnect, unlink or a confirmed authorization failure, the
-channel's videos, snapshots, day rows, sync runs, tasks and state go, then the channel row. Videos
-that no listing has refreshed for 25 days go with their snapshots. Rows of every other platform
+channel's videos, snapshots, per-video analytics rows (Checkpoint 8), day rows, sync runs, tasks
+and state go, then the channel row. Videos that no listing has refreshed for 25 days go with their
+snapshots and per-video analytics rows. Rows of every other platform
 are kept on unlink and disconnect and are never deleted by sync. See
 [providers/youtube.md](providers/youtube.md#retention-checkpoint-3b).
 

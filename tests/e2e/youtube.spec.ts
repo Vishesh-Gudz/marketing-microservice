@@ -62,7 +62,7 @@ test.describe("with the local backend", () => {
       await expect(page.getByTestId("day-basis")).toContainText("Pacific Time");
       await expect(page.getByTestId("youtube-channel-summary")).toContainText("Source: YouTube");
       await expect(days.getByRole("heading", { name: /Pacific Time/ })).toBeVisible();
-      // Never a total, rate or comparison.
+      // Never an engagement rate or a comparison (the key metrics are the server's totals).
       await expect(page.getByText(/Engagement rate|compared with/)).toHaveCount(0);
       for (const link of await page.getByRole("link", { name: /Watch on YouTube/ }).all()) {
         await expect(link).toHaveAttribute("href", /^https:\/\/www\.youtube\.com\/watch\?v=/);

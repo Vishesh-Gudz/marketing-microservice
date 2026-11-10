@@ -182,4 +182,75 @@ describe("mock YouTube provider", () => {
     });
     expect(again).toEqual(page);
   });
+
+  it("Checkpoint 8: serves deterministic per-video windows through the real mapping", async () => {
+    const provider = createMockYouTubeSocialProvider();
+    const channel = mockYouTubeChannelId("1");
+    const window = (kind: "last28" | "lifetime", from: string) =>
+      provider.fetchVideoAnalytics!(ctx("1"), {
+        accountExternalId: channel,
+        window: kind,
+        from,
+        to: "2026-10-17",
+      });
+    const last28 = await window("last28", "2026-09-20");
+    const lifetime = await window("lifetime", "2026-04-01");
+    expect(await window("last28", "2026-09-20")).toEqual(last28);
+    expect(last28.nextCursor).toBeUndefined();
+    expect(last28.items.length).toBeGreaterThan(0);
+    // Older uploads keep getting views: every video of the window has a row in both, with more
+    // lifetime views than recent ones when it was published before the recent window.
+    const recentViews = new Map(last28.items.map((item) => [item.postExternalId, item.views!]));
+    expect(lifetime.items.map((item) => item.postExternalId).sort()).toEqual(
+      [...recentViews.keys()].sort(),
+    );
+    for (const item of lifetime.items) {
+      expect(item.views!).toBeGreaterThanOrEqual(recentViews.get(item.postExternalId)!);
+    }
+    expect(lifetime.items.some((item) => item.views! > recentViews.get(item.postExternalId)!)).toBe(
+      true,
+    );
+    for (const page of [last28, lifetime]) {
+      expect(page.items.length).toBeLessThanOrEqual(200);
+      // Most viewed first; every listed video is a published upload of the channel.
+      const views = page.items.map((item) => item.views!);
+      expect([...views].sort((a, b) => b - a)).toEqual(views);
+    }
+    const listed = new Set((await allPosts("1")).posts.map((post) => post.externalId));
+    for (const item of lifetime.items) expect(listed.has(item.postExternalId)).toBe(true);
+    expect(last28.items[0]).toMatchObject({
+      platform: "youtube",
+      accountExternalId: channel,
+      window: "last28",
+      from: "2026-09-20",
+      to: "2026-10-17",
+    });
+    // Decimals for the average percentage, some above 100 (rewatches); integers elsewhere.
+    expect(lifetime.items.some((item) => !Number.isInteger(item.averageViewPercentage))).toBe(true);
+    expect(lifetime.items.some((item) => item.averageViewPercentage! > 100)).toBe(true);
+    expect(lifetime.items.every((item) => Number.isInteger(item.estimatedMinutesWatched))).toBe(
+      true,
+    );
+    // Videos newer than the window's last day have no row.
+    const newest = (await allPosts("1")).posts[0]!;
+    expect(last28.items.some((item) => item.postExternalId === newest.externalId)).toBe(false);
+  });
+
+  it("Checkpoint 8: no uploads, no rows; the limited user lacks the analytics grant", async () => {
+    const provider = createMockYouTubeSocialProvider();
+    const request = (user: string) => ({
+      accountExternalId: mockYouTubeChannelId(user),
+      window: "last28" as const,
+      from: "2026-09-20",
+      to: "2026-10-17",
+    });
+    expect((await provider.fetchVideoAnalytics!(ctx("empty"), request("empty"))).items).toEqual([]);
+    const error = await provider.fetchVideoAnalytics!(ctx("limited"), request("limited")).catch(
+      (e: unknown) => e,
+    );
+    expect(isProviderError(error) && [error.kind, error.providerCode]).toEqual([
+      "permission",
+      "analytics_scope_missing",
+    ]);
+  });
 });

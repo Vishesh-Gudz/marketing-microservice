@@ -140,6 +140,7 @@ export const SOCIAL_OPERATION_RECORD_KIND = {
   listSocialPosts: "socialPost",
   fetchPostMetrics: "socialPostSnapshot",
   fetchAccountMetrics: "socialAccountDay",
+  fetchVideoAnalytics: "youtubeVideoAnalytics",
 } as const satisfies Record<SocialSyncOperation, SocialRecordKind>;
 
 /** Largest page each social operation may return (capabilities). */
@@ -156,6 +157,9 @@ export function socialMaxPageSize(
       return capabilities.postMetricsPageSize;
     case "fetchAccountMetrics":
       return capabilities.maxAccountMetricsRangeDays;
+    case "fetchVideoAnalytics":
+      // Not declared = nothing may be written.
+      return capabilities.videoAnalytics?.maxVideosPerWindow ?? 0;
   }
 }
 
@@ -165,6 +169,8 @@ export type SocialRecordScope = {
   accountExternalId: string;
   from?: string;
   to?: string;
+  /** fetchVideoAnalytics: the task's window. */
+  videoWindow?: string;
   capabilities: SocialProviderCapabilities;
   /** Commit time: snapshots must be captured today or yesterday (UTC). */
   now: number;
@@ -175,6 +181,7 @@ export type SocialRecordScope = {
 function socialNaturalKey(kind: SocialRecordKind, record: Record<string, unknown>): string {
   switch (kind) {
     case "socialPostSnapshot":
+    case "youtubeVideoAnalytics":
       return String(record.postExternalId);
     case "socialAccountDay":
       return String(record.date);
@@ -190,6 +197,7 @@ function socialNaturalKey(kind: SocialRecordKind, record: Record<string, unknown
  * - socialAccountDay: a day inside the requested window (never the profile group: the
  *   validator refuses followers and provenance fields)
  * - socialPostSnapshot: captured today or yesterday (UTC)
+ * - youtubeVideoAnalytics (ADR 0016 Checkpoint 8): exactly the task's window and days
  * Duplicate natural keys within one page are rejected. `unresolved` must be a small count.
  */
 export function checkSocialRecordsInScope(
@@ -232,6 +240,16 @@ export function checkSocialRecordsInScope(
     if (kind === "socialPostSnapshot") {
       const day = record.capturedDate as string;
       if (day !== today && day !== addDays(today, -1)) return "out_of_scope";
+    }
+    if (kind === "youtubeVideoAnalytics") {
+      if (
+        scope.videoWindow === undefined ||
+        record.window !== scope.videoWindow ||
+        record.from !== scope.from ||
+        record.to !== scope.to
+      ) {
+        return "out_of_scope";
+      }
     }
     const key = socialNaturalKey(kind, record);
     if (keys.has(key)) return "duplicate_keys";

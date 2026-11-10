@@ -6,6 +6,7 @@ import {
 } from "../domain/validators";
 import { SOCIAL_RECORD_VALIDATORS } from "../providers/social/validate";
 import { RECORD_VALIDATORS } from "../providers/validate";
+import { videoAnalyticsWindowValidator } from "../tables/social";
 import { syncOperationValidator } from "../tables/sync";
 
 /**
@@ -26,6 +27,8 @@ export const fetchRequestValidator = v.object({
   to: v.optional(v.string()),
   breakdown: v.optional(breakdownValidator),
   updatedSince: v.optional(v.number()),
+  /** ADR 0016 Checkpoint 8: the window of a fetchVideoAnalytics task. */
+  videoWindow: v.optional(videoAnalyticsWindowValidator),
   cursor: v.optional(v.string()),
 });
 export type FetchRequest = Infer<typeof fetchRequestValidator>;
@@ -112,6 +115,11 @@ export const socialPageValidator = v.union(
     kind: v.literal("socialAccountDay"),
     items: v.array(SOCIAL_RECORD_VALIDATORS.socialAccountDay),
     nextCursor,
+  }),
+  // ADR 0016 Checkpoint 8: one COMPLETE per-video window report (never a cursor).
+  v.object({
+    kind: v.literal("youtubeVideoAnalytics"),
+    items: v.array(SOCIAL_RECORD_VALIDATORS.youtubeVideoAnalytics),
   }),
 );
 export type SocialPageArg = Infer<typeof socialPageValidator>;

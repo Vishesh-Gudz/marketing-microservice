@@ -12,8 +12,9 @@ import type { SocialPostType } from "../../domain/types";
  *
  * Policy (YouTube API Services Developer Policies III.E.4.h, Checkpoint 3 review): ONLY values
  * YouTube reports are stored, under their own meaning; nothing here is calculated (no net
- * subscriber change, no ratio, no average of ours, no estimate). How stored values may be
- * aggregated or compared is an open compliance question for Checkpoint 4 (ADR 0016).
+ * subscriber change, no ratio, no average of ours, no estimate). Read-time range totals of the
+ * channel days are an approved Checkpoint 8 decision (ADR 0016) and live in the read layer
+ * (convex/analytics/organic/youtube.ts), never in storage.
  */
 
 // ---------------------------------------------------------------------------
@@ -128,7 +129,8 @@ export const POST_SNAPSHOT_WINDOW_DAYS = 90;
  * OWN YouTube name: `views` in the canonical column, the rest in `extras`.
  * - `averageViewDuration` is YouTube's own per-day value (seconds); it is not additive and is
  *   never recomputed by us.
- * - Never requested: `dislikes`, `engagedViews`, `averageViewPercentage` (a ratio),
+ * - Never requested here: `dislikes`, `engagedViews`, `averageViewPercentage` (a ratio: it is
+ *   requested ONLY per video and window, by the video report below, and never aggregated),
  *   `videosAddedToPlaylists`, revenue, demographics, traffic sources.
  * - Never stored: `followerDelta` (gained minus lost would be our calculation), reach,
  *   accounts engaged, total interactions.
@@ -169,3 +171,57 @@ export const ACCOUNT_METRICS_DELAY_DAYS = 3;
  * YouTube's day under the same key: a day is never converted to or from an instant.
  */
 export const REPORT_DAY_BASIS = "America/Los_Angeles";
+
+// ---------------------------------------------------------------------------
+// Per-video report (fetchVideoAnalytics, Checkpoint 8)
+// ---------------------------------------------------------------------------
+
+/**
+ * [doc] One `reports.query` per window: `ids=channel==MINE`, `dimensions=video`, these metrics,
+ * `sort=-views`, `maxResults=200` (the "Top videos" report: YouTube returns at most 200 rows,
+ * the channel's most viewed videos in the window). Same scope as the day report
+ * (yt-analytics.readonly), so no reconnect is needed. Every value lands under its OWN YouTube
+ * name in youtubeVideoAnalytics (one row per video and window, replaced per window):
+ * - counts (`views`, `estimatedMinutesWatched`, `likes`, `comments`, `shares`,
+ *   `subscribersGained`, `subscribersLost`) are non-negative integers;
+ * - `averageViewDuration` (seconds) and `averageViewPercentage` (percent of the video's length)
+ *   are YouTube's own values for that ONE video and window; they are never summed, averaged
+ *   across videos or recomputed by us. `averageViewPercentage` is a non-negative decimal and
+ *   may exceed 100 when viewers rewatch (Shorts loop) [PROVISIONAL YR16].
+ * A video the report does not list is "not in YouTube's top 200" for that window, never 0.
+ * [PROVISIONAL YR15] the exact row cap and ordering on a real channel.
+ */
+export const VIDEO_REPORT_DIMENSION = "video";
+export const VIDEO_REPORT_SORT = "-views";
+export const VIDEO_REPORT_MAX_RESULTS = 200;
+
+export const VIDEO_REPORT_COLUMNS = [
+  "views",
+  "estimatedMinutesWatched",
+  "averageViewDuration",
+  "averageViewPercentage",
+  "likes",
+  "comments",
+  "shares",
+  "subscribersGained",
+  "subscribersLost",
+] as const;
+export type VideoReportMetric = (typeof VIDEO_REPORT_COLUMNS)[number];
+
+/** Metrics that are decimals (everything else is a non-negative integer). */
+export const VIDEO_REPORT_DECIMAL_METRICS: ReadonlySet<VideoReportMetric> = new Set([
+  "averageViewPercentage",
+]);
+
+/** The exact `metrics` parameter of the video report (the allowlist accepts only this string). */
+export const VIDEO_REPORT_METRICS = VIDEO_REPORT_COLUMNS.join(",");
+
+/**
+ * [Y-D Checkpoint 8] The two windows, both ending at `latest` = today (Pacific Time) minus the
+ * reporting delay, fetched on initial and daily lookback runs only:
+ *   last28    [latest - 27, latest]
+ *   lifetime  [publish day (Pacific Time) of the oldest stored upload, latest]
+ */
+export const VIDEO_ANALYTICS_WINDOWS = ["last28", "lifetime"] as const;
+export type VideoAnalyticsWindow = (typeof VIDEO_ANALYTICS_WINDOWS)[number];
+export const VIDEO_RECENT_WINDOW_DAYS = 28;

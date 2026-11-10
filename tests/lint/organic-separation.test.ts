@@ -98,6 +98,8 @@ const SOCIAL_TABLES = [
   "socialPosts",
   "socialPostMetricSnapshots",
   "socialAccountMetricsDaily",
+  // ADR 0016 Checkpoint 8: YouTube per-video analytics are organic data too.
+  "youtubeVideoAnalytics",
 ];
 const tableLiterals = (source: string, tables: string[]) =>
   tables.filter((table) => source.includes(`"${table}"`));

@@ -1,8 +1,19 @@
 import { describe, expect, it } from "vitest";
+import { INSTAGRAM_CAPABILITIES } from "../providers/instagram/capabilities";
 import { META_MOCK_CAPABILITIES } from "../providers/mock/meta";
 import type { ProviderMetricRow } from "../providers/types";
+import { YOUTUBE_CAPABILITIES } from "../providers/youtube/capabilities";
 import { SYNC_LIMITS } from "./config";
-import { applyCaps, checkPageShape, checkRecordsInScope, type RecordScope } from "./guards";
+import {
+  applyCaps,
+  checkPageShape,
+  checkRecordsInScope,
+  checkSocialRecordsInScope,
+  SOCIAL_OPERATION_RECORD_KIND,
+  socialMaxPageSize,
+  type RecordScope,
+  type SocialRecordScope,
+} from "./guards";
 
 const shape = {
   itemCount: 10,
@@ -132,6 +143,56 @@ describe("records in scope", () => {
       checkRecordsInScope("adAccount", [{ ...account, externalId: "1002" }], accountScope),
     ).toBe("out_of_scope");
     expect(checkRecordsInScope("adAccount", [], accountScope)).toBe("out_of_scope");
+  });
+});
+
+describe("per-video analytics records in scope (ADR 0016 Checkpoint 8)", () => {
+  const CHANNEL = "UCfakeChannel0000000000a";
+  const record = (overrides: Record<string, unknown> = {}) => ({
+    platform: "youtube",
+    accountExternalId: CHANNEL,
+    postExternalId: "vid00000000",
+    window: "last28",
+    from: "2026-09-20",
+    to: "2026-10-17",
+    views: 10,
+    averageViewPercentage: 41.5,
+    ...overrides,
+  });
+  const scope: SocialRecordScope = {
+    operation: "fetchVideoAnalytics",
+    platform: "youtube",
+    accountExternalId: CHANNEL,
+    from: "2026-09-20",
+    to: "2026-10-17",
+    videoWindow: "last28",
+    capabilities: YOUTUBE_CAPABILITIES,
+    now: Date.UTC(2026, 9, 20, 12),
+  };
+  const check = (records: unknown[], overrides: Partial<SocialRecordScope> = {}) =>
+    checkSocialRecordsInScope("youtubeVideoAnalytics", records, { ...scope, ...overrides });
+
+  it("accepts records of exactly the task's channel, window and days", () => {
+    expect(SOCIAL_OPERATION_RECORD_KIND.fetchVideoAnalytics).toBe("youtubeVideoAnalytics");
+    expect(check([record(), record({ postExternalId: "vid00000001" })])).toBeUndefined();
+    expect(check([])).toBeUndefined(); // an empty report empties the window
+  });
+
+  it("rejects another window, other days, another channel, duplicates and smuggled fields", () => {
+    expect(check([record({ window: "lifetime" })])).toBe("out_of_scope");
+    expect(check([record({ from: "2026-09-21" })])).toBe("out_of_scope");
+    expect(check([record({ to: "2026-10-16" })])).toBe("out_of_scope");
+    expect(check([record()], { videoWindow: undefined })).toBe("out_of_scope");
+    expect(check([record({ accountExternalId: "UCotherChannel000000000a" })])).toBe("out_of_scope");
+    expect(check([record(), record()])).toBe("duplicate_keys");
+    expect(check([record({ orgId: "x" })])).toBe("invalid_record");
+    expect(check([record({ postId: "x" })])).toBe("invalid_record");
+    expect(check([record({ views: -1 })])).toBe("invalid_record");
+  });
+
+  it("allows at most the declared top-N rows per page (none for a platform without it)", () => {
+    expect(socialMaxPageSize("fetchVideoAnalytics", YOUTUBE_CAPABILITIES)).toBe(200);
+    expect(socialMaxPageSize("fetchVideoAnalytics", INSTAGRAM_CAPABILITIES)).toBe(0);
   });
 });
 

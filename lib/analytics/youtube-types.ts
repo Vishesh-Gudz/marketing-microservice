@@ -19,3 +19,16 @@ export type YouTubeVideosPage = FunctionReturnType<YouTube["videos"]>;
 export type YouTubeVideo = YouTubeVideosPage["page"][number];
 export type YouTubeVideoStatistics = NonNullable<YouTubeVideo["latest"]>;
 export type YouTubeVideoMetric = keyof YouTubeVideoStatistics["metrics"];
+
+// ADR 0016 Checkpoint 8: range totals, the subscriber count, per-video windows and captures.
+export type YouTubeTotals = YouTubeChannelDays["totals"];
+export type YouTubeTotalMetric = keyof YouTubeTotals["metrics"];
+export type YouTubeTotalReason = YouTubeTotals["unavailableMetrics"][number]["reason"];
+export type YouTubeVideoAnalytics = YouTubeVideo["analytics"];
+export type YouTubeVideoWindowName = keyof YouTubeVideoAnalytics;
+export type YouTubeVideoWindow = NonNullable<YouTubeVideoAnalytics["last28"]>;
+export type YouTubeWindowMetric = keyof YouTubeVideoWindow["metrics"];
+
+export type YouTubeVideoDetailArgs = FunctionArgs<YouTube["video"]>;
+export type YouTubeVideoDetail = FunctionReturnType<YouTube["video"]>;
+export type YouTubeVideoCapture = YouTubeVideoDetail["captures"][number];

@@ -1,7 +1,12 @@
-import { addDays, diffDays, eachDay, type DateKey } from "../../../lib/dates";
+import { addDays, diffDays, eachDay, toDateKey, type DateKey } from "../../../lib/dates";
 import { fnv1a, seededRandom } from "../../hash";
 import type { RawChannel, RawReport, RawVideo } from "../../youtube/schemas";
-import { ACCOUNT_REPORT_METRICS } from "../../youtube/semantics";
+import {
+  ACCOUNT_REPORT_METRICS,
+  REPORT_DAY_BASIS,
+  VIDEO_REPORT_MAX_RESULTS,
+  VIDEO_REPORT_METRICS,
+} from "../../youtube/semantics";
 
 /**
  * Deterministic mock YouTube data (ADR 0016, Y-D12), for PROVIDER_MODE=mock (local
@@ -160,4 +165,62 @@ export function mockYouTubeReport(user: string, from: DateKey, to: DateKey): Raw
     rows.push([day, ...metrics.map((metric) => values[metric]!)]);
   }
   return rows.length > 0 ? { columnHeaders, rows } : { columnHeaders };
+}
+
+/**
+ * Checkpoint 8: the per-video `reports.query` table of `user` for [from, to] (Pacific Time days;
+ * `dimensions=video`, the provider's exact metric list, `sort=-views`, at most 200 rows). Every
+ * upload published (Pacific Time) on or before `to` has a row; its values grow with the number
+ * of its days inside the window. `averageViewPercentage` is a decimal (two places); about one
+ * video in eight is rewatched above 100 %. `listedOn` is the UTC day the uploads are listed for
+ * (the mock listing's today).
+ */
+export function mockYouTubeVideoReport(
+  user: string,
+  from: DateKey,
+  to: DateKey,
+  listedOn: DateKey,
+): RawReport {
+  const metrics = VIDEO_REPORT_METRICS.split(",");
+  const columnHeaders = [
+    { name: "video", columnType: "DIMENSION", dataType: "STRING" },
+    ...metrics.map((name) => ({
+      name,
+      columnType: "METRIC",
+      dataType: name === "averageViewPercentage" ? "FLOAT" : "INTEGER",
+    })),
+  ];
+  const rows: { id: string; views: number; cells: (string | number)[] }[] = [];
+  for (const video of mockYouTubeVideos(user, listedOn)) {
+    const published = video.snippet?.publishedAt;
+    if (published === undefined || video.snippet?.liveBroadcastContent === "upcoming") continue;
+    const publishedDay = toDateKey(Date.parse(published), REPORT_DAY_BASIS);
+    if (publishedDay > to) continue;
+    const firstDay = publishedDay > from ? publishedDay : from;
+    const days = diffDays(firstDay, to) + 1;
+    const seed = `mock-yt-report:${user}:${video.id}`;
+    const views = days * (5 + count(`${seed}:views`, 40));
+    // Whole hundredths (2_000 + n) / 100: exactly two decimal places, like YouTube's value.
+    const percentBase = (2_000 + count(`${seed}:percent`, 6_000)) / 100;
+    const values: Record<string, number> = {
+      views,
+      estimatedMinutesWatched: Math.floor((views * (2 + count(`${seed}:minutes`, 6))) / 3),
+      averageViewDuration: 30 + count(`${seed}:duration`, 240),
+      averageViewPercentage:
+        count(`${seed}:loop`, 8) === 0
+          ? (Math.round(percentBase * 100) + 8_000) / 100
+          : percentBase,
+      likes: Math.floor(views / 25),
+      comments: Math.floor(views / 150),
+      shares: Math.floor(views / 300),
+      subscribersGained: Math.floor(views / 400),
+      subscribersLost: Math.floor(views / 2_000),
+    };
+    rows.push({ id: video.id, views, cells: [video.id, ...metrics.map((m) => values[m]!)] });
+  }
+  const top = rows
+    .sort((a, b) => b.views - a.views || (a.id < b.id ? -1 : 1))
+    .slice(0, VIDEO_REPORT_MAX_RESULTS)
+    .map((row) => row.cells);
+  return top.length > 0 ? { columnHeaders, rows: top } : { columnHeaders };
 }

@@ -18,7 +18,7 @@ import {
 } from "./config";
 import { decodeYouTubeCursor, encodeYouTubeCursor, youtubeRequestFingerprint } from "./cursor";
 import { youtubeError } from "./errors";
-import { mapChannel, mapReportDays, mapVideo, mapVideoSnapshot } from "./mapping";
+import { mapChannel, mapReportDays, mapVideo, mapVideoReport, mapVideoSnapshot } from "./mapping";
 import { YOUTUBE_ANALYTICS_SCOPE } from "./oauth";
 import {
   parseRaw,
@@ -28,7 +28,7 @@ import {
   rawVideo,
   type RawVideo,
 } from "./schemas";
-import { LISTING_PAGE_SIZE } from "./semantics";
+import { LISTING_PAGE_SIZE, VIDEO_ANALYTICS_WINDOWS } from "./semantics";
 import { bodyOf, createYouTubeSession, ownedChannelOf, type YouTubeSession } from "./session";
 
 /**
@@ -54,6 +54,10 @@ import { bodyOf, createYouTubeSession, ownedChannelOf, type YouTubeSession } fro
  *   fetchAccountMetrics  2 requests: token + ONE `reports.query` for the whole window (at most
  *                        31 days); one record per requested day. Without the
  *                        yt-analytics.readonly grant it fails as `permission` before any request.
+ *   fetchVideoAnalytics  Checkpoint 8, 2 requests: token + ONE per-video `reports.query`
+ *                        (`dimensions=video`, `sort=-views`, `maxResults=200`) for one window
+ *                        ("last28" or "lifetime"); one record per row, i.e. per video among the
+ *                        window's top 200 by views. Same scope guard as the day report.
  *
  * Semantics and mapping: ./semantics.ts, ./mapping.ts. "upcoming" broadcasts are skipped;
  * uploads that `videos.list` no longer returns (deleted or made inaccessible between the two
@@ -316,6 +320,50 @@ export function createYouTubeSocialProvider(
       });
       for (const item of items) {
         assertValidSocialRecord("socialAccountDay", item, "youtube", operation);
+      }
+      return { items };
+    },
+
+    async fetchVideoAnalytics(ctx, request) {
+      const operation = "fetchVideoAnalytics" as const;
+      const session = verify(operation, ctx, request.accountExternalId);
+      const { from, to, window } = request;
+      if (
+        !(VIDEO_ANALYTICS_WINDOWS as readonly string[]).includes(window) ||
+        !isDateKey(from) ||
+        !isDateKey(to) ||
+        compareDateKeys(from, to) > 0
+      ) {
+        throw youtubeError("invalid_request", operation, "window_invalid", "Invalid window");
+      }
+      if (request.cursor !== undefined) {
+        // One report covers the whole window: any cursor is foreign.
+        throw youtubeError("invalid_request", operation, "cursor_invalid", "Unexpected cursor");
+      }
+      if (!session.credential.scopes.includes(YOUTUBE_ANALYTICS_SCOPE)) {
+        throw youtubeError(
+          "permission",
+          operation,
+          "analytics_scope_missing",
+          "YouTube Analytics access was not granted",
+        );
+      }
+      const budget = new YouTubeRequestBudget(2);
+      const token = await youtube.accessToken(session, operation, budget);
+      const body = bodyOf(
+        await client.queryVideoReport(token, { startDate: from, endDate: to }, budget),
+        operation,
+      );
+      const items = mapVideoReport({
+        operation,
+        accountExternalId: request.accountExternalId,
+        window,
+        from,
+        to,
+        report: parseRaw(rawReport, body, operation, "report"),
+      });
+      for (const item of items) {
+        assertValidSocialRecord("youtubeVideoAnalytics", item, "youtube", operation);
       }
       return { items };
     },

@@ -1,4 +1,5 @@
 import type { DateRange } from "@/convex/analytics/periods";
+import { filterParamsOnly } from "./filters";
 
 /**
  * Organic dashboard URL state (/social). The global filters (preset, from/to, compare,
@@ -8,6 +9,7 @@ import type { DateRange } from "@/convex/analytics/periods";
  *   platform "youtube" for the YouTube view (absent -> Instagram, the original page)
  *   account  the selected social account id (absent -> the first listed account)
  *   pdir     post / video order by publish time: "desc" (default) or "asc"
+ *   vwin     YouTube videos table period: "lifetime" (absent -> the last 28 days)
  */
 
 /** Mirrors the API limits (checked against convex/analytics/organic/config in tests/unit). */
@@ -35,6 +37,44 @@ export function parseSocialParams(params: URLSearchParams): SocialParams {
     ...(account !== undefined && ACCOUNT_ID.test(account) ? { account } : {}),
     postOrder: pdir === "asc" ? "asc" : "desc",
   };
+}
+
+/** The YouTube videos table's period (ADR 0016 Checkpoint 8): last 28 days unless `vwin`. */
+export type VideoWindow = "last28" | "lifetime";
+
+export function parseVideoWindow(params: URLSearchParams): VideoWindow {
+  return params.get("vwin") === "lifetime" ? "lifetime" : "last28";
+}
+
+/** The YouTube list's own parameters, besides the global filters (kept when drilling down). */
+const YOUTUBE_LIST_PARAMS = ["account", "pdir", "vwin"] as const;
+
+function withListParams(query: URLSearchParams, params: URLSearchParams): URLSearchParams {
+  for (const name of YOUTUBE_LIST_PARAMS) {
+    const value = params.get(name);
+    if (value !== null) query.set(name, value);
+  }
+  return query;
+}
+
+/**
+ * A YouTube video's page: the global filters and the list's channel, order and period ride
+ * along, so the page's back link returns to the same list.
+ */
+export function youtubeVideoHref(
+  video: { id: string; socialAccountId: string },
+  params: URLSearchParams,
+): string {
+  const query = withListParams(filterParamsOnly(params), params);
+  query.set("account", video.socialAccountId);
+  return `/social/youtube/videos/${encodeURIComponent(video.id)}?${query.toString()}`;
+}
+
+/** The YouTube list a video page was opened from (`params`: the video page's query). */
+export function youtubeListHref(params: URLSearchParams): string {
+  const query = filterParamsOnly(params);
+  query.set("platform", "youtube");
+  return `/social?${withListParams(query, params).toString()}`;
 }
 
 /**

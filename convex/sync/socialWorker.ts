@@ -5,6 +5,7 @@ import { internal } from "../_generated/api";
 import { internalAction } from "../_generated/server";
 import { withConnectionCredential } from "../connections/credentialStore";
 import { isSocialConnectionProvider } from "../domain/types";
+import { ProviderError } from "../providers/errors";
 import { socialProviderFor } from "../providers/social/nodeRegistry";
 import type { SocialProvider } from "../providers/social/types";
 import type { ProviderContext } from "../providers/types";
@@ -79,6 +80,30 @@ async function callSocialProvider(
         items: result.items,
         ...(result.nextCursor !== undefined ? { nextCursor: result.nextCursor } : {}),
       };
+    }
+    case "fetchVideoAnalytics": {
+      // ADR 0016 Checkpoint 8: an optional operation, planned only for platforms declaring it.
+      if (request.from === undefined || request.to === undefined || !request.videoWindow) {
+        throw new SubjectMismatchError();
+      }
+      if (provider.fetchVideoAnalytics === undefined) {
+        throw new ProviderError({
+          kind: "unsupported",
+          platform: provider.platform,
+          operation: "fetchVideoAnalytics",
+          message: `${provider.platform} provider does not support video analytics`,
+        });
+      }
+      const result = await provider.fetchVideoAnalytics(ctx, {
+        ...account,
+        ...paging,
+        window: request.videoWindow,
+        from: request.from,
+        to: request.to,
+      });
+      // One complete window report: a provider cursor is never followed.
+      if (result.nextCursor !== undefined) throw new SubjectMismatchError();
+      return { kind: "youtubeVideoAnalytics", items: result.items };
     }
     default:
       // An ads operation never runs here.

@@ -46,12 +46,14 @@ app/(dashboard)/layout.tsx        Suspense + AppShell (OrgGate, nav, header)
   breakdowns/ conversions/ accounts/
   social/page.tsx                 Organic: Instagram (Phase 10 Stage B) | YouTube (ADR 0016)
   social/posts/[postId]/page.tsx  One Instagram post
+  social/youtube/videos/[videoId]/page.tsx  One YouTube video (ADR 0016, Checkpoint 8)
   connections/page.tsx            Google Ads + Meta Ads + YouTube connections
   loading.tsx error.tsx not-found.tsx
 components/dashboard/             shell, filters, KPI cards, charts, tables, notices, views/
 components/dashboard/organic/     organic-only KPI grid, series chart, posts table, account
                                   picker, coverage notes, Instagram link; platform switch and
-                                  YouTube channel days, videos table, YouTube link
+                                  YouTube key metrics, daily chart, channel days, videos table,
+                                  YouTube link
 components/dashboard/connections/ one provider-aware card per ad platform (Google Ads, Meta Ads):
                                   status, Connect/Reconnect/Disconnect, discovered accounts +
                                   link, linked accounts' sync status; the YouTube card
@@ -79,8 +81,9 @@ lib/analytics/                    pure logic: types, format, filters, deltas, st
 | `/conversions`                                  | Action groups by action type, one row per attribution window; level account/campaign     | `actions`                                                                                                                 |
 | `/accounts`                                     | Accounts with KPIs, currency, time zone, link/connection health, coverage, last sync     | `breakdown(account)`, `adAccounts:list`, `connections:list`                                                               |
 | `/social` (nav "Organic")                       | One Instagram account: 6 headline + 7 detail KPIs, UTC series, posts (lifetime totals)   | `socialAccounts:list`/`get`, `organicAnalytics:overview`/`accountSeries`, `socialPosts:list`, `connections:list`          |
-| `/social?platform=youtube`                      | One YouTube channel: Pacific Time day table (as reported), videos (lifetime statistics)  | `socialAccounts:list`, `youtubeAnalytics:channelDays`/`videos`                                                            |
+| `/social?platform=youtube`                      | One YouTube channel: key metrics, daily chart, Pacific Time days, videos by period       | `socialAccounts:list`, `youtubeAnalytics:channelDays`/`videos`                                                            |
 | `/social/posts/[postId]`                        | One post: caption, latest lifetime totals, lifetime totals at each capture               | `socialPosts:get`                                                                                                         |
+| `/social/youtube/videos/[videoId]`              | One YouTube video: last 28 days and lifetime, public counts, counts at each capture      | `youtubeAnalytics:video`                                                                                                  |
 | `/connections`                                  | Google Ads, Meta Ads, YouTube, Instagram: status, Connect/Reconnect/Disconnect, link     | `connections:list`/`listDiscoveredAssets`/`beginConnect`/`linkAdAccounts`/`refreshAssets`/`disconnect`, `adAccounts:list` |
 |                                                 | YouTube: status, Connect/Reconnect, link the channel, Disconnect + data deletion         | `connections:list`/`listDiscoveredSocialAccounts`/`beginConnect`/`linkSocialAccounts`/`disconnect`, `socialAccounts:list` |
 | `/whatsapp`                                     | WhatsApp inbox: conversations, newest activity first, reply window                       | `whatsapp:listConversations`                                                                                              |
@@ -130,6 +133,7 @@ parameters. Invalid values fall back to defaults (`lib/analytics/filters.ts`, un
 | `platform`                            | `/social`: `youtube` for the YouTube view (default: Instagram)           |
 | `account`                             | `/social`: the selected account / channel id (default: the first listed) |
 | `pdir`                                | `/social`: post / video order by publish time, `asc` (default: newest)   |
+| `vwin`                                | `/social`: YouTube videos period, `lifetime` (default: last 28 days)     |
 | `status`, `warning`, `error`          | `/connections`: the OAuth callback result; read once, then removed       |
 | `connection`                          | `/connections`: the callback's connection id; read once, then removed    |
 
@@ -227,35 +231,63 @@ granularity for any valid range.
   `/connections`; editors and viewers read "Ask an admin to reconnect Instagram." Other accounts
   in the picker are unaffected.
 
-### Organic YouTube (ADR 0016, Checkpoint 5)
+### Organic YouTube (ADR 0016, Checkpoints 5 and 8)
 
 `/social?platform=youtube` (the **Instagram | YouTube** switch on `/social`; Instagram stays the
-default and is unchanged). Every value comes from `v1/youtubeAnalytics` exactly as YouTube
-reported it; the dashboard never adds, averages, compares or combines anything: no totals, no
-engagement rate, no percent change, no score, no cross-channel or cross-platform figure
-(`lib/analytics/youtube-values.ts`; the no-arithmetic scan of
-`tests/lint/organic-dashboard-boundary.test.ts` covers YouTube's metric names too).
+default and is unchanged). Every value comes from `v1/youtubeAnalytics`: YouTube's own values, or
+(Checkpoint 8) the server's range totals of the one channel. The dashboard never adds, averages,
+compares or combines anything: no engagement rate, no percent change, no score, no
+cross-channel or cross-platform figure (`lib/analytics/youtube-values.ts` only turns a value
+into text: seconds as m:ss, minutes as hours, YouTube's percent number as a percent; the
+no-arithmetic scan of `tests/lint/organic-dashboard-boundary.test.ts` covers YouTube's metric
+names too).
 
 - **One channel at a time** (picker "YouTube channel"). The summary shows **Source: YouTube**,
   the handle, the link state and "Channel days synced through … (Pacific Time)".
 - **Filter bar:** date range only (no comparison, no account filter); presets use Pacific Time.
+- **Key metrics** (Checkpoint 8, `channelDays.totals` and `subscribers`), 2 or 4 per row:
+  Subscribers (the latest count, rounded by YouTube, "as of" its capture), Views, Watch time
+  (hours, with the server's est. minutes below), Avg. view duration (m:ss), Net subscribers
+  (signed, with the gained and lost totals below), Likes, Comments, Shares. A line says how many
+  reported Pacific Time days the totals cover; a partly synced range marks them partial (\*). A
+  missing value is "—" with its reason: hidden by the channel (subscribers), "Not reported by
+  YouTube for any day of this range", "this range has no views" (`zero_views`), YouTube
+  Analytics access missing, or nothing synced yet. The access and coverage notices sit here.
+- **Daily chart:** one metric per Pacific Time day (Views, Watch time (minutes), Subscribers
+  gained, Subscribers lost; the picker is UI state), exactly the day values below; days without a
+  value are gaps, never 0. "View as table" lists each day with its status.
 - **Daily channel metrics:** one row per Pacific Time day, newest first, with YouTube's names:
   Views, Likes, Comments, Shares, Est. minutes watched, Avg. view duration (YouTube's own per-day
   value, shown as m:ss), Subscribers gained, Subscribers lost. Each row has a status:
   **Reported**; **Not reported** (synced, YouTube reported nothing); **Unknown** (not synced
   yet; YouTube reports days about 3 days late). A metric a reported day lacks is "—" with its
   reason; a reported 0 stays 0; unknown and not-reported days show "—", never 0. There is no
-  total row.
+  total row. The table surface scrolls both ways (a keyboard tab stop) with its header in view.
 - **Notices** (from the API): partial or unsynced ranges ("N Pacific Time days of this range not
-  synced yet"); `scope_missing` (YouTube Analytics access not granted: the daily metrics stay unknown,
-  while the videos and their statistics keep syncing, ADR 0016 open question 13);
-  `reauth_required`; `not_linked`; each links to `/connections` where that helps.
-- **Videos:** paginated (25/50/100, cursor stack), by publish time in the org time zone; lifetime
-  Views, Likes and Comments at the latest capture (UTC capture day), "not daily performance".
-  A hidden like count or disabled comments are "—" with the reason, never 0; a never-captured
-  video shows "Not synced". "Watch on YouTube" opens a new tab (`rel="noopener noreferrer"`)
-  only for a URL that passes `safeYouTubeWatchUrl` (exactly
-  `https://www.youtube.com/watch?v=<11-character id>`). No thumbnail or image.
+  synced yet"); `scope_missing` (YouTube Analytics access not granted: the daily metrics and the
+  video analytics stay unknown, while the videos and their public counts keep syncing, ADR 0016
+  open question 13); `reauth_required`; `not_linked`; each links to `/connections` where that
+  helps.
+- **Videos** (Checkpoint 8): paginated (25/50/100, cursor stack), by publish time in the org time
+  zone, with a **Last 28 days | Lifetime** switch (URL `vwin`, default the last 28 days) and the
+  period's Pacific Time days in the description. Columns: Views, Watch time (hours), Avg. view
+  duration, Avg. % viewed, Likes, Comments, Shares, Subscribers gained, as YouTube reported them
+  for its 200 most-viewed videos of the period. A video outside them shows one cell "Not in
+  YouTube's top 200", one never synced for the period (or published after it) "Not synced yet";
+  never a row of zeros. On phones the video column stays put and the values scroll inside the
+  table, as for Instagram posts. The title opens the video page (the filters, channel, order and
+  period ride along); "Watch on YouTube" opens a new tab (`rel="noopener noreferrer"`) only for a
+  URL that passes `safeYouTubeWatchUrl` (exactly
+  `https://www.youtube.com/watch?v=<11-character id>`). No thumbnail or image. The public
+  lifetime counts moved to the video page.
+- **Video page** `/social/youtube/videos/[videoId]` (`v1/youtubeAnalytics:video`; the id is the
+  API's video id): title, publish time (org time zone), Watch on YouTube, a "YouTube" breadcrumb
+  back to the same list; **YouTube Analytics** with the Last 28 days and Lifetime cards side by
+  side from 1024 px (stacked below), each with its nine values and Pacific Time dates, or "Not in
+  YouTube's top 200" / "Not synced yet"; **Public counts** (views, likes, comments) as of the
+  latest UTC capture day ("—" with the reason when hidden; "Not captured yet" before a capture);
+  and the public counts at each capture as a chart with a table view (lifetime counts, never
+  differenced). An unknown or foreign id renders the dashboard's not-found page.
 - **Deletion:** a channel being deleted (status `disconnected`) shows a deletion notice instead
   of data; the page points to the Connections page for disconnecting.
 

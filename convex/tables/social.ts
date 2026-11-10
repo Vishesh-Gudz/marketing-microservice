@@ -16,6 +16,14 @@ import { entityLifecycleFields, orgIdField } from "./common";
 // Instagram direct messages hang off socialAccounts through instagramMessagingAccounts
 // (tables/instagramMessaging.ts, ADR 0017).
 
+/**
+ * ADR 0016 Checkpoint 8: the two YouTube per-video analytics windows (Pacific Time days, both
+ * ending at today minus the reporting delay): the last 28 days and the channel's lifetime.
+ */
+export const videoAnalyticsWindowValidator = v.union(v.literal("last28"), v.literal("lifetime"));
+
+const optionalNumber = v.optional(v.number());
+
 export const socialTables = {
   socialAccounts: defineTable({
     orgId: orgIdField,
@@ -108,4 +116,37 @@ export const socialTables = {
      */
     insightsSyncedAt: v.optional(v.number()),
   }).index("by_org_account_date", ["orgId", "socialAccountId", "date"]),
+
+  /**
+   * ADR 0016 Checkpoint 8: YouTube per-video analytics, one row per (video, window), values
+   * exactly as YouTube's per-video report returned them (each under its own YouTube name; a
+   * value YouTube left out stays absent). Written ONLY by convex/sync/upsert.ts: a sync replaces
+   * every row of an (account, window) pair, so a video that fell out of YouTube's top 200 loses
+   * its row (it is "not in the top 200", never 0). Deleted with its video (retention) and with
+   * the channel (disconnect purge).
+   */
+  youtubeVideoAnalytics: defineTable({
+    orgId: orgIdField,
+    socialAccountId: v.id("socialAccounts"),
+    postId: v.id("socialPosts"),
+    window: videoAnalyticsWindowValidator,
+    /** Inclusive Pacific Time days the report covered. */
+    from: dateKeyValidator,
+    to: dateKeyValidator,
+    views: optionalNumber,
+    estimatedMinutesWatched: optionalNumber,
+    /** YouTube's own value for this video and window (seconds); never recomputed. */
+    averageViewDuration: optionalNumber,
+    /** YouTube's own value for this video and window (percent, a decimal); never aggregated. */
+    averageViewPercentage: optionalNumber,
+    likes: optionalNumber,
+    comments: optionalNumber,
+    shares: optionalNumber,
+    subscribersGained: optionalNumber,
+    subscribersLost: optionalNumber,
+    /** When the window report this row came from was committed. */
+    syncedAt: v.number(),
+  })
+    .index("by_org_post_window", ["orgId", "postId", "window"])
+    .index("by_org_account_window", ["orgId", "socialAccountId", "window"]),
 };
