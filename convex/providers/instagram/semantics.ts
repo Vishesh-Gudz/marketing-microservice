@@ -93,6 +93,15 @@ export const READER_POST_METRIC_COLUMNS = {
 
 export const READER_POST_METRICS = Object.keys(READER_POST_METRIC_COLUMNS);
 
+/**
+ * O1 Unified Login (graph.facebook.com): the SDK's five and the reader's two metrics in ONE
+ * lifetime insights request per post (1 request instead of 3), mapped by the same two tables.
+ */
+export const UNIFIED_POST_METRIC_NAMES: readonly string[] = [
+  ...Object.keys(SDK_POST_METRIC_COLUMNS),
+  ...READER_POST_METRICS,
+];
+
 /** The canonical post metric columns the Instagram provider fills (capabilities). */
 export const INSTAGRAM_POST_METRICS: readonly SocialPostMetricKey[] = [
   ...Object.values(SDK_POST_METRIC_COLUMNS),

@@ -320,6 +320,32 @@ export const SOCIAL_ACCOUNTS = [
   connectionId: `c-${account.id}`,
 }));
 
+/**
+ * O2: an Instagram account connected through Meta's Unified Login without
+ * instagram_manage_insights (`organicSync`), so /social explains the missing permission.
+ */
+export const INSIGHTS_PERMISSION_MISSING_ACCOUNT = {
+  id: "s3",
+  platform: "instagram",
+  externalId: "17841400000000003",
+  username: "gudz.unified",
+  name: "gudz.unified",
+  accountType: "business",
+  status: "active",
+  linked: true,
+  connectionId: "c-s3",
+  linkedAt: at(-2 * DAY),
+  organicSync: "insights_permission_missing",
+};
+
+/** /social with only that account (the social account list and the account itself). */
+export async function withInsightsPermissionMissing(page: Page) {
+  await answerQueries(page, {
+    "v1/socialAccounts:list": () => page1([INSIGHTS_PERMISSION_MISSING_ACCOUNT]),
+    "v1/socialAccounts:get": () => INSIGHTS_PERMISSION_MISSING_ACCOUNT,
+  });
+}
+
 export const AVAILABILITY: Record<string, unknown> = {
   s1: { availability: "active", accountId: "m1" },
   s2: { availability: "ready" },

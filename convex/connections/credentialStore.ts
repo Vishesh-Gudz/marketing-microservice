@@ -22,7 +22,9 @@ import {
 } from "../lib/crypto";
 import type { AuditChanges } from "../lib/validation";
 import { PROVIDER_ERROR_KINDS } from "../providers/errors";
-import { OAUTH_GRANT_TTL_MS } from "./config";
+import { instagramOrganicSyncAllowed } from "../providers/instagram/config";
+import { ensureSocialSyncAccountsOfConnection } from "../sync/state";
+import { OAUTH_GRANT_TTL_MS, providerRegistry } from "./config";
 
 /**
  * THE credential store. The only module that reads or writes the `credentials`
@@ -469,6 +471,19 @@ export const claimGrant = internalMutation({
     // on this connection in the same transaction (no stale hold).
     if (existing && grant.provider === "instagram") {
       await stopMessagingWithoutPermission(ctx.db, claimant, connectionId, grant.grantedScopes);
+      // O1: a reconnect that allows organic sync (e.g. a Unified Login connection now granted
+      // instagram_manage_insights) gives its linked accounts a schedule, or resumes a parked one.
+      if (instagramOrganicSyncAllowed(grant.grantedScopes)) {
+        await ensureSocialSyncAccountsOfConnection(
+          ctx.db,
+          { _id: connectionId, orgId: grant.orgId },
+          {
+            horizonDays:
+              providerRegistry().socialCapabilities("instagram").accountMetricsHorizonDays,
+          },
+          now,
+        );
+      }
     }
     return { ok: true as const, connectionId, reconnected: existing !== null };
   },

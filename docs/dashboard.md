@@ -217,6 +217,15 @@ granularity for any valid range.
   values, never differenced into daily performance.
 - **Instagram accounts only:** the picker lists the org's Instagram accounts; YouTube channels
   have their own view (below).
+- **Missing insights permission (O2):** when `v1/socialAccounts` reports the selected account's
+  `organicSync` as `insights_permission_missing` (an Instagram connection through Meta's Unified
+  Login without `instagram_manage_insights`, which is never synced), the page shows one amber
+  notice, "Instagram analytics need one more permission" ("Add instagram_manage_insights to the
+  Meta login configuration, then reconnect Instagram on Connections. Direct messages keep working
+  meanwhile."), instead of the "History loading" line, the filter bar, the key metrics, the chart
+  and the posts table (they could only show "—"). Admins get an **Open Connections** link to
+  `/connections`; editors and viewers read "Ask an admin to reconnect Instagram." Other accounts
+  in the picker are unaffected.
 
 ### Organic YouTube (ADR 0016, Checkpoint 5)
 

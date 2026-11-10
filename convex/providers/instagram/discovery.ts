@@ -7,6 +7,7 @@ import { instagramError } from "./errors";
 import { createInstagramGraphReader } from "./graphReader";
 import { RequestBudget } from "./transport";
 import { readUnifiedAccounts } from "./unified";
+import { UNIFIED_ACCOUNT_TYPE } from "./unifiedOrganic";
 
 /**
  * Instagram account discovery (Phase 10, Stage 0 decision): from the OAuth IDENTITY, in the
@@ -55,8 +56,8 @@ export function createInstagramDiscovery(
           ...(account.username !== undefined ? { username: account.username } : {}),
           // PROVISIONAL: graph.facebook.com has no account_type field [doc: IG User], and
           // Unified Login requires a professional account; business vs creator is unknown.
-          // Display only: organic sync never runs on a Unified Login connection.
-          accountType: "business",
+          // Organic sync (O1, when granted instagram_manage_insights) keeps the same value.
+          accountType: UNIFIED_ACCOUNT_TYPE,
         };
         assertValidSocialRecord("discoveredSocialAccount", record, "instagram", operation);
         return { items: [record] };

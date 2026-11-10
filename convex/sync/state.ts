@@ -133,3 +133,36 @@ export async function ensureSocialSyncAccount(
   }
   return existing._id;
 }
+
+/**
+ * O1: called when a connection is reconnected with what organic sync needs (an Instagram
+ * Unified Login connection granted instagram_manage_insights). Every social account linked to
+ * it gets, or resumes, its sync schedule under ensureSocialSyncAccount's rules: a missing or
+ * parked schedule is planned on the next tick; one already scheduled is left unchanged.
+ * Accounts whose stored data is being deleted (status "disconnected") are skipped.
+ */
+export async function ensureSocialSyncAccountsOfConnection(
+  db: DatabaseWriter,
+  connection: Pick<Doc<"connections">, "_id" | "orgId">,
+  options: { horizonDays: number },
+  now: number,
+): Promise<number> {
+  const linked = await db
+    .query("socialAccounts")
+    .withIndex("by_org_connection", (q) =>
+      q.eq("orgId", connection.orgId).eq("connectionId", connection._id),
+    )
+    .collect();
+  let ensured = 0;
+  for (const account of linked) {
+    if (account.status === "disconnected") continue;
+    await ensureSocialSyncAccount(
+      db,
+      account,
+      { relinked: false, horizonDays: options.horizonDays },
+      now,
+    );
+    ensured++;
+  }
+  return ensured;
+}

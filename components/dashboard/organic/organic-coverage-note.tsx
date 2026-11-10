@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import type { ReactNode } from "react";
+import { Button } from "@/components/ui/button";
 import { formatDateKey } from "@/lib/analytics/chart-data";
 import { useOrg } from "@/lib/analytics/org-context";
 import type { OrganicCoverage, SocialAccount } from "@/lib/analytics/organic-types";
@@ -10,8 +12,42 @@ import { Notice } from "../notices";
 /**
  * Organic data freshness and coverage, straight from the API (the dashboard computes no
  * coverage): the account's covered UTC days and last successful sync (v1/socialAccounts:get),
- * and the range's synced/unsynced UTC days (v1/organicAnalytics:overview).
+ * the range's synced/unsynced UTC days (v1/organicAnalytics:overview), and (O2) why an account
+ * is never synced (v1/socialAccounts `organicSync`).
  */
+
+/** O2: the account's organic data cannot sync (v1/socialAccounts `organicSync`). */
+export function organicSyncBlocked(account: Pick<SocialAccount, "organicSync"> | undefined) {
+  return account?.organicSync === "insights_permission_missing";
+}
+
+/**
+ * O2: an Instagram connection made through Meta's Unified Login without
+ * instagram_manage_insights: nothing will sync until it is reconnected with that permission, so
+ * this replaces the history-loading line and the empty key metrics, chart and posts. Admins get
+ * the way to Connections; other roles are told who can fix it.
+ */
+export function InsightsPermissionNotice() {
+  const { role } = useOrg();
+  return (
+    <div data-testid="insights-permission-notice">
+      <Notice tone="warning" label="Instagram analytics need one more permission">
+        <h2 className="font-medium">Instagram analytics need one more permission</h2>
+        <p className="mt-1">
+          Add instagram_manage_insights to the Meta login configuration, then reconnect Instagram on
+          Connections. Direct messages keep working meanwhile.
+        </p>
+        {role === "admin" ? (
+          <Button asChild size="sm" variant="outline" className="mt-3">
+            <Link href="/connections">Open Connections</Link>
+          </Button>
+        ) : (
+          <p className="mt-1">Ask an admin to reconnect Instagram.</p>
+        )}
+      </Notice>
+    </div>
+  );
+}
 
 function OrganicNotice({
   tone,

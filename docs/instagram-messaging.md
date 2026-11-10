@@ -125,8 +125,11 @@ Login). The configuration needs `instagram_basic` (account lookup) and
 | Payload      | `object: instagram`, `entry[].id` = account id, echoes in `messages`  | **[assume]**  |
 
 Differences from Instagram Login: the token never expires and is never refreshed (no expiry is
-stored); a Unified connection gets **no organic sync** (its token cannot read
-`graph.instagram.com`; a leftover schedule is parked); discovery records the account type as
+stored); a Unified connection syncs organic data **only when it was granted
+`instagram_manage_insights`** (O1: its own reads on `graph.facebook.com/v26.0`, see
+[providers/instagram.md](providers/instagram.md#unified-login-organic-sync-o1); without the
+permission there is no schedule, a leftover one is parked, and `/social` says the permission is
+missing; a reconnect with it resumes the sync); discovery records the account type as
 `business` (PROVISIONAL: `graph.facebook.com` has no `account_type`); there is no platform
 revoke (the client removes the app in Business Settings > Integrations > Connected apps). Not
 covered yet: the deauthorize / data-deletion callbacks cannot match a Unified connection (no

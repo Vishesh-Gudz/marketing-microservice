@@ -23,8 +23,10 @@ export type InstagramCredential = {
  * Instagram API with Unified Login (config.ts): a Business Integration System User access
  * token from the Facebook Login for Business configuration. It belongs to the client's
  * business portfolio, does not expire with the configuration we use, and is never refreshed;
- * it stops working when the client removes the app [doc]. Only the messaging paths and
- * discovery accept it: organic sync and token refresh accept Instagram Login tokens only.
+ * it stops working when the client removes the app [doc]. The messaging paths, discovery and
+ * (O1) organic sync accept it, the last only through the Unified organic reader
+ * (unifiedOrganic.ts, never the SDK) and only for connections granted instagram_manage_insights
+ * (config.ts). Token refresh never does: it accepts Instagram Login tokens only.
  */
 export type InstagramUnifiedCredential = {
   kind: "instagram";

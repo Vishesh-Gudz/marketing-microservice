@@ -114,3 +114,19 @@ Details: [docs/providers/instagram.md](../providers/instagram.md).
 - A Graph version bump is coupled to an SDK upgrade.
 - Two inventory tests changed additively (the schema inventory and the v1 surface), and one sync
   test received type-only non-null assertions because `adAccountId` became optional.
+
+## Addendum (2026-11-09): Unified Login organic sync (O1, O2)
+
+Production connects Instagram through Meta's Unified Login (system-user token,
+`graph.facebook.com/v26.0`), which was built for direct messages only and never synced organic
+data. It now does, on its own allowlisted read path without the SDK
+(`providers/instagram/unifiedOrganic.ts`): profile, media pages, ONE lifetime insights request
+per post (the SDK's five metrics plus `views` and `total_interactions`) and the same two account
+day requests. The mapping, tables, windows and "not reported" semantics above are unchanged, so
+rows are identical to the Instagram Login path's. A Unified connection syncs only when granted
+`instagram_manage_insights`; without it the account is never scheduled (a leftover schedule is
+parked) and `v1/socialAccounts` reports the additive `organicSync: "insights_permission_missing"`,
+which `/social` explains. A reconnect with the permission schedules or resumes the account.
+PROVISIONAL: insights reads without `pages_read_engagement`, the account-insight response shape on
+`graph.facebook.com`, and the account type `business`. Details:
+[providers/instagram.md](../providers/instagram.md#unified-login-organic-sync-o1).

@@ -27,7 +27,9 @@ Legend used below:
 ## Scope
 
 - Instagram **organic** data only, for Business and Creator accounts, through **Instagram
-  Login**. The `instagram` connection is separate from the Meta connection (I-D1).
+  Login**, or through **Unified Login** when granted `instagram_manage_insights`
+  ([O1](#unified-login-organic-sync-o1)). The `instagram` connection is separate from the Meta
+  connection (I-D1).
 - Instagram **ads** stay Meta ads (Meta provider, placement `instagram`), unchanged.
 - The organic and paid trees are separate tables. Organic values never enter ad metrics.
 - Not in Phase 10 (deferred): comments and commenters, stories, DMs, WhatsApp, messaging,
@@ -273,6 +275,55 @@ unknown) and follower captures carry `followersCapturedAt`.
   `limited`, `personal`).
 - **Other outcomes:** `auth` moves the connection to `needs_reauth`. Disconnecting cancels the
   active run and parks the account.
+
+## Unified Login organic sync (O1)
+
+Production connects Instagram through Meta's **Unified Login** (`INSTAGRAM_LOGIN_CONFIG_ID`;
+credential `{setup: "unified", tokenType: "system_user"}`; see
+[instagram-messaging.md](../instagram-messaging.md)). Its system-user token cannot read
+`graph.instagram.com`, so organic sync has its own read path on `graph.facebook.com/v26.0`:
+`providers/instagram/unifiedOrganic.ts`, default runtime, **no SDK** (the SDK stays Instagram
+Login only). The provider (`node/provider.ts`) accepts both credentials and maps both through the
+same `mapping.ts` / `semantics.ts`, so the rows are identical in shape (same columns, caption
+cap, permalink rule, product-type rules, AD/STORY skipped, missing values absent, empty days
+"not reported").
+
+**Routes** (transport caller `graph_reader`, exact parameter names and values; Bearer header
+only, as Unified discovery and messaging send it; no `appsecret_proof`):
+
+| Read            | Request                                                                                                      | Budget                            |
+| --------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------- |
+| profile         | `GET /{ig-id}?fields=id,username,name,followers_count,media_count`                                           | 1 per preflight                   |
+| media page      | `GET /{ig-id}/media?fields=id,caption,media_type,media_product_type,permalink,timestamp&limit=n[&after]`     | 1 per page (100, or 10 for posts) |
+| post insights   | `GET /{media-id}/insights?metric=likes,comments,saved,shares,reach,views,total_interactions&period=lifetime` | **1 per post** (was 3)            |
+| account day (A) | the Instagram Login reader's request A (`period=day&metric_type=total_value&since&until`)                    | 1 per UTC day                     |
+| account day (B) | `follows_and_unfollows&breakdown=follow_type`, same day window                                               | 1 per UTC day                     |
+
+A post-metrics call costs 1 listing + 10 posts = 11 requests (≤ 31). Ad-inclusive `total_*`
+metrics (other than `total_interactions`) and deprecated metrics stay refused on every shape;
+the Instagram Login allowlist on `graph.instagram.com` is unchanged. Errors use the same
+classification (code 10 → `permission`, 190 → `auth`, a deleted post → skipped as unresolved).
+Meta's `paging.next` URL is never followed; only `paging.cursors.after` travels, inside an
+`ig1.` cursor bound to the Unified request.
+
+**Gate.** `UNIFIED_INSIGHTS_PERMISSION = "instagram_manage_insights"` (`config.ts`,
+`instagramOrganicSyncAllowed`). A Unified connection gets a sync schedule when an account is
+linked (`connections/socialAssets.ts`), and is planned (`sync/planner.ts`), **only** when its
+granted scopes include it. Without it nothing fails: no schedule, a leftover one is parked, no
+run, no reconnect banner; `v1/socialAccounts` reports `organicSync:
+"insights_permission_missing"` and `/social` says why. A reconnect that grants it
+(`credentialStore.claimGrant` → `sync/state.ts` `ensureSocialSyncAccountsOfConnection`) gives
+the linked account its schedule, or resumes the parked one, for the next planner tick. Token
+refresh still never touches a Unified token.
+
+**PROVISIONAL (no real-account evidence yet):**
+
+- a system-user token with `instagram_manage_insights` reads these insights without
+  `pages_read_engagement`;
+- account insight responses on `graph.facebook.com` have the `graph.instagram.com` shape
+  (`total_value`, the `follow_type` breakdown);
+- the account type stays `business` (no `account_type` on `graph.facebook.com`);
+- runs record the provider id `instagram-login/v25.0` for both setups (run metadata only).
 
 ## Data flow (B1 → B2 → B3)
 

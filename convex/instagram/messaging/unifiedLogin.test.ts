@@ -9,7 +9,9 @@ import {
   FAKE_UNIFIED_CONFIG_ID,
   FAKE_UNIFIED_TOKEN_MARKER,
   type FakeUnified,
+  type FakeUnifiedOrganic,
 } from "../../providers/instagram/fakeUnified.fixtures";
+import { NEVER_REQUESTED_METRICS } from "../../providers/instagram/semantics";
 import { ensureSocialSyncAccount } from "../../sync/state";
 import {
   as,
@@ -17,6 +19,7 @@ import {
   ISSUER_CRM,
   linkSocial,
   newBackend,
+  planAndDrain,
   redirectParams,
   RETURN_URL,
   setupSyncOrg,
@@ -33,8 +36,8 @@ import {
 
 // Instagram API with Unified Login end to end, in-process (convex-test) against a fake of the
 // documented graph.facebook.com endpoints: connect through the Facebook Login for Business
-// dialog, link without organic sync, turn messaging on (subscription), receive a signed webhook
-// delivery, reply, and disconnect. Nothing reaches Meta.
+// dialog, link (organic sync only with instagram_manage_insights, O1), turn messaging on
+// (subscription), receive a signed webhook delivery, reply, and disconnect. Nothing reaches Meta.
 
 vi.setConfig({ testTimeout: 120_000 });
 const NOW = new Date("2026-10-31T12:00:00Z").getTime();
@@ -42,11 +45,76 @@ const IG = "17841400000000301"; // the fake client's assigned account
 const CUSTOMER = "5550000000000001";
 const CRM = { issuer: ISSUER_CRM };
 
+/** O1: the account's organic data on the fake graph.facebook.com. */
+const MEDIA = {
+  image: "17900000000000301",
+  reel: "17900000000000302",
+  ad: "17900000000000303",
+  story: "17900000000000304",
+};
+const ORGANIC: FakeUnifiedOrganic = {
+  name: "Fake Unified",
+  followers: 1234,
+  media: [
+    {
+      id: MEDIA.image,
+      caption: "Launch",
+      media_type: "IMAGE",
+      media_product_type: "FEED",
+      permalink: "https://www.instagram.com/p/Cu1/",
+      timestamp: "2026-10-30T09:00:00+0000",
+      insights: {
+        likes: 12,
+        comments: 3,
+        saved: 1,
+        shares: 2,
+        reach: 140,
+        views: 300,
+        total_interactions: 18,
+      },
+    },
+    {
+      id: MEDIA.reel,
+      media_type: "VIDEO",
+      media_product_type: "REELS",
+      permalink: "https://www.instagram.com/reel/Cu2/",
+      timestamp: "2026-10-20T09:00:00+0000",
+      insights: { likes: 40, reach: 900, views: 2500 },
+    },
+    {
+      id: MEDIA.ad,
+      media_type: "IMAGE",
+      media_product_type: "AD",
+      timestamp: "2026-10-18T09:00:00+0000",
+      insights: { likes: 999 },
+    },
+    {
+      id: MEDIA.story,
+      media_type: "IMAGE",
+      media_product_type: "STORY",
+      timestamp: "2026-10-17T09:00:00+0000",
+      insights: { reach: 999 },
+    },
+  ],
+  accountInsights: {
+    "2026-10-30": {
+      reach: 500,
+      views: 1200,
+      accounts_engaged: 40,
+      total_interactions: 60,
+      likes: 50,
+      profile_links_taps: 3,
+    },
+    "2026-10-29": {},
+  },
+  follows: { "2026-10-30": { FOLLOWER: 6, NON_FOLLOWER: 2 } },
+};
+
 let fake: FakeUnified;
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
-  fake = createFakeUnified();
+  fake = createFakeUnified({ organic: { [IG]: ORGANIC } });
   vi.stubEnv("PROVIDER_MODE", "live");
   vi.stubEnv("INSTAGRAM_APP_ID", FAKE_UNIFIED_APP_ID);
   vi.stubEnv("INSTAGRAM_APP_SECRET", FAKE_UNIFIED_APP_SECRET);
@@ -66,13 +134,23 @@ async function drain(t: Backend) {
   await t.finishAllScheduledFunctions(() => vi.advanceTimersByTime(1_000), 1_000);
 }
 
-/** The real connect flow: beginConnect -> dialog -> /oauth/callback -> completeConnect. */
-async function connect(t: Backend, who: Who = {}) {
+/**
+ * The real connect flow: beginConnect -> dialog -> /oauth/callback -> completeConnect. `client`
+ * picks the fake configuration ("messaging": no insights permission; "insights": with it).
+ */
+async function connect(
+  t: Backend,
+  who: Who = {},
+  options: { client?: string; reconnectConnectionId?: string } = {},
+) {
   await setupSyncOrg(t, who);
   const { authorizeUrl } = await as(t, who).action(api.v1.connections.beginConnect, {
     provider: "instagram",
     returnUrl: RETURN_URL,
     instagramMessaging: true,
+    ...(options.reconnectConnectionId !== undefined
+      ? { reconnectConnectionId: options.reconnectConnectionId }
+      : {}),
   });
   const dialog = new URL(authorizeUrl);
   const state = dialog.searchParams.get("state")!;
@@ -80,7 +158,7 @@ async function connect(t: Backend, who: Who = {}) {
     t,
     redirectParams(
       await t.fetch(
-        `/oauth/callback?state=${encodeURIComponent(state)}&code=${encodeURIComponent(fake.issueCode())}`,
+        `/oauth/callback?state=${encodeURIComponent(state)}&code=${encodeURIComponent(fake.issueCode(options.client))}`,
         { method: "GET", redirect: "manual" },
       ),
     ),
@@ -192,7 +270,7 @@ describe("Unified Login connect", () => {
     expect(dto!.missingScopes).toEqual([]);
   });
 
-  it("links the account without an organic sync schedule, and parks a leftover one", async () => {
+  it("without instagram_manage_insights: no organic schedule, a leftover one parked, and v1 says why", async () => {
     const t = newBackend();
     const { connectionId } = await connect(t);
     const [social] = await linkSocial(t, connectionId, [IG]);
@@ -216,6 +294,176 @@ describe("Unified Login connect", () => {
     const row = (await t.run((ctx) => ctx.db.get(rowId)))!;
     expect(row.state).toBe("parked");
     expect(await t.run((ctx) => ctx.db.query("syncRuns").collect())).toEqual([]);
+
+    // No failing run, no reconnect banner: the connection stays active, with no error.
+    const connection = (await t.run((ctx) => ctx.db.get(connectionId)))!;
+    expect(connection.status).toBe("active");
+    expect(connection.lastError).toBeUndefined();
+    expect(fake.requests.filter((r) => /\/v26\.0\/\d+(\/(media|insights))?$/.test(r.path))).toEqual(
+      [],
+    );
+    // O2: the reason is public (v1/socialAccounts), for the list and the account alike.
+    const dto = await as(t).query(api.v1.socialAccounts.get, { socialAccountId });
+    expect(dto.organicSync).toBe("insights_permission_missing");
+    const { page } = await as(t).query(api.v1.socialAccounts.list, {
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+    expect(page.map((a) => a.organicSync)).toEqual(["insights_permission_missing"]);
+  });
+});
+
+describe("Unified Login organic sync (O1, with instagram_manage_insights)", () => {
+  async function linked(t: Backend) {
+    const { connectionId } = await connect(t, {}, { client: "insights" });
+    const [social] = await linkSocial(t, connectionId, [IG]);
+    return { connectionId, socialAccountId: social!.id as Id<"socialAccounts"> };
+  }
+
+  async function organicState(t: Backend) {
+    return await t.run(async (ctx) => ({
+      accounts: await ctx.db.query("syncAccounts").collect(),
+      runs: await ctx.db.query("syncRuns").collect(),
+      tasks: await ctx.db.query("syncTasks").collect(),
+      connections: await ctx.db.query("connections").collect(),
+      socialAccounts: await ctx.db.query("socialAccounts").collect(),
+      posts: await ctx.db.query("socialPosts").collect(),
+      snapshots: await ctx.db.query("socialPostMetricSnapshots").collect(),
+      daily: await ctx.db.query("socialAccountMetricsDaily").collect(),
+    }));
+  }
+
+  it("links with a schedule and syncs profile, posts, snapshots and days from graph.facebook.com", async () => {
+    const t = newBackend();
+    const { socialAccountId } = await linked(t);
+    expect(
+      (await t.run((ctx) => ctx.db.query("syncAccounts").collect())).map((r) => r.socialAccountId),
+    ).toEqual([socialAccountId]);
+    fake.reset();
+
+    expect((await planAndDrain(t)).started).toBe(1);
+    const db = await organicState(t);
+    expect(db.runs).toHaveLength(1);
+    expect(db.runs[0]).toMatchObject({ socialAccountId, kind: "initial", status: "succeeded" });
+    expect(db.tasks.every((task) => task.status === "succeeded")).toBe(true);
+    expect(db.connections[0]).toMatchObject({ status: "active" });
+
+    // Profile (preflight): same columns as Instagram Login; no URL stored.
+    expect(db.socialAccounts[0]).toMatchObject({
+      name: "Fake Unified",
+      username: "fake_unified",
+      followersCount: 1234,
+      accountType: "business",
+    });
+    expect(db.socialAccounts[0]!.profilePictureUrl).toBeUndefined();
+
+    // Posts: AD and STORY never ingested.
+    expect(db.posts.map((p) => [p.externalId, p.type]).sort()).toEqual(
+      [
+        [MEDIA.image, "image"],
+        [MEDIA.reel, "reel"],
+      ].sort(),
+    );
+    const byPost = new Map(db.posts.map((p) => [p._id, p.externalId]));
+    const snaps = new Map(db.snapshots.map((s) => [byPost.get(s.postId), s]));
+    expect(snaps.get(MEDIA.image)).toMatchObject({
+      capturedDate: "2026-10-31",
+      likes: 12,
+      comments: 3,
+      saves: 1,
+      shares: 2,
+      reach: 140,
+      views: 300,
+      totalInteractions: 18,
+    });
+    expect(snaps.get(MEDIA.reel)).toMatchObject({ likes: 40, reach: 900, views: 2500 });
+    expect(snaps.get(MEDIA.reel)!.comments).toBeUndefined();
+
+    // Days: every requested UTC day has insights provenance; today has the follower capture.
+    expect(db.daily).toHaveLength(30);
+    const byDate = new Map(db.daily.map((d) => [d.date, d]));
+    expect(byDate.get("2026-10-30")).toMatchObject({
+      reach: 500,
+      views: 1200,
+      accountsEngaged: 40,
+      totalInteractions: 60,
+      followerDelta: 4,
+      extras: { likes: 50, profileLinksTaps: 3 },
+    });
+    expect(byDate.get("2026-10-29")!.reach).toBeUndefined();
+    expect(byDate.get("2026-10-31")).toMatchObject({ followers: 1234 });
+    expect(db.accounts[0]).toMatchObject({ state: "idle", coveredThrough: "2026-10-31" });
+
+    // Exact requests: profile 1, listings 2, one insights request per organic post, 2 per day.
+    expect(fake.count(`/v26.0/${IG}/media`)).toBe(2);
+    expect(fake.count(`/v26.0/${MEDIA.image}/insights`)).toBe(1);
+    expect(fake.count(`/v26.0/${MEDIA.reel}/insights`)).toBe(1);
+    expect(fake.count(`/v26.0/${MEDIA.ad}`)).toBe(0);
+    expect(fake.count(`/v26.0/${MEDIA.story}`)).toBe(0);
+    expect(fake.count(`/v26.0/${IG}/insights`)).toBe(60);
+    expect(fake.requests).toHaveLength(1 + 2 + 2 + 60);
+    for (const request of fake.requests) {
+      expect(request.bearer).toBe(true);
+      expect(request.params).not.toContain("access_token");
+    }
+    for (const metric of fake.requestedMetrics()) {
+      expect(NEVER_REQUESTED_METRICS).not.toContain(metric);
+    }
+    expect(JSON.stringify(db)).not.toContain(FAKE_UNIFIED_TOKEN_MARKER);
+
+    const dto = await as(t).query(api.v1.socialAccounts.get, { socialAccountId });
+    expect(dto.organicSync).toBe("active");
+    expect(dto.coverage?.through).toBe("2026-10-31");
+  });
+
+  it("a reconnect with the permission schedules and resumes a parked account; dropping it parks again", async () => {
+    const t = newBackend();
+    const { connectionId } = await connect(t);
+    const [social] = await linkSocial(t, connectionId, [IG]);
+    const socialAccountId = social!.id as Id<"socialAccounts">;
+    // A leftover schedule, parked by the planner while the permission is missing.
+    const rowId = await t.run(async (ctx) =>
+      ensureSocialSyncAccount(
+        ctx.db,
+        (await ctx.db.get(socialAccountId))!,
+        { relinked: false, horizonDays: 90 },
+        NOW,
+      ),
+    );
+    await t.mutation(internal.sync.planner.tick, {});
+    expect((await t.run((ctx) => ctx.db.get(rowId)))!.state).toBe("parked");
+
+    // Reconnect through a configuration that grants instagram_manage_insights.
+    const again = await connect(t, {}, { client: "insights", reconnectConnectionId: connectionId });
+    expect(again.connectionId).toBe(connectionId);
+    const resumed = (await t.run((ctx) => ctx.db.get(rowId)))!;
+    expect(resumed.state).toBe("idle");
+    expect(resumed.nextPlanAt).toBe(NOW);
+    expect((await as(t).query(api.v1.socialAccounts.get, { socialAccountId })).organicSync).toBe(
+      "active",
+    );
+    expect((await planAndDrain(t)).started).toBe(1);
+    expect((await organicState(t)).runs[0]).toMatchObject({ status: "succeeded" });
+
+    // Reconnected without it again: the next tick parks the schedule; nothing fails.
+    vi.setSystemTime(NOW + 2 * 24 * 3_600_000);
+    await connect(t, {}, { client: "messaging", reconnectConnectionId: connectionId });
+    await planAndDrain(t);
+    const db = await organicState(t);
+    expect(db.accounts[0]!.state).toBe("parked");
+    expect(db.runs).toHaveLength(1);
+    expect(db.connections[0]).toMatchObject({ status: "active" });
+  });
+
+  it("an account linked without the permission gets its first schedule on a reconnect with it", async () => {
+    const t = newBackend();
+    const { connectionId } = await connect(t);
+    await linkSocial(t, connectionId, [IG]);
+    expect(await t.run((ctx) => ctx.db.query("syncAccounts").collect())).toEqual([]);
+    await connect(t, {}, { client: "insights", reconnectConnectionId: connectionId });
+    const rows = await t.run((ctx) => ctx.db.query("syncAccounts").collect());
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ state: "idle", nextPlanAt: NOW });
+    expect((await planAndDrain(t)).started).toBe(1);
   });
 });
 

@@ -35,6 +35,12 @@ accounts of people who have a role on the app and the verified business's own as
 
 ## 3. Real test (production)
 
+**Organic analytics (O1):** the Facebook Login for Business configuration
+(`INSTAGRAM_LOGIN_CONFIG_ID`) must include `instagram_manage_insights` besides `instagram_basic`
+and `instagram_manage_messages`. Without it the account still links and direct messages work, but
+`/social` shows "Instagram analytics need one more permission" and nothing is synced; after
+adding it, reconnect Instagram on `/connections` (the sync starts on the next planner tick).
+
 1. `/connections` → Instagram → Connect, choose the professional account, allow every permission.
 2. Link the account, then Instagram DMs → Settings → **Turn on direct messages**.
 3. From another Instagram account, send a DM. It appears in `/instagram/messages` and `/inbox`.
@@ -50,6 +56,7 @@ App Dashboard → App Review → Permissions and features. Request, with the use
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `instagram_basic`           | To identify the Instagram professional account the business connects, and show its username in the dashboard.                                                                                                                                                  |
 | `instagram_manage_messages` | To receive the direct messages customers send the business and let the business's team answer them from a shared inbox, within Meta's windows.                                                                                                                 |
+| `instagram_manage_insights` | To show the business its own organic Instagram results (reach, views, interactions, follower changes and per-post lifetime totals) on the Organic page of the dashboard. Read-only; nothing is published or changed on Instagram.                              |
 | Human Agent (feature)       | So a member of the business's team can still answer a customer's question personally for up to 7 days, when the answer needs more than 24 hours (for example checking stock or an order). Only people send these replies; nothing is automated or promotional. |
 
 **Screencast** (one per permission is fine; 1-3 minutes, English captions):
@@ -63,7 +70,9 @@ App Dashboard → App Review → Permissions and features. Request, with the use
    the phone.
 5. Human Agent: show a conversation older than 24 hours, the "Human agent window" note and a
    personal reply from a team member, and explain who may send it.
-6. Show Disconnect / Turn off direct messages and the Data Deletion page.
+6. Insights: open Organic (`/social`) for the linked account after its first sync; show the key
+   metrics, the daily chart and the posts table with lifetime totals.
+7. Show Disconnect / Turn off direct messages and the Data Deletion page.
 
 **Reviewer access:** give the reviewer a test user (App roles → Testers) and an Instagram test
 account they can message from, with written steps matching the screencast.

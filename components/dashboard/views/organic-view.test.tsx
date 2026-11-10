@@ -188,6 +188,82 @@ describe("OrganicView", () => {
     expect(screen.getByRole("generic", { name: "History loading" })).toBeInTheDocument();
   });
 
+  describe("an account that cannot sync (O2: insights permission missing)", () => {
+    const blocked = (overrides = {}) =>
+      socialAccount({
+        lastSyncedAt: undefined,
+        coverage: undefined,
+        organicSync: "insights_permission_missing",
+        ...overrides,
+      });
+
+    beforeEach(() => {
+      queryResults.set("v1/socialAccounts:list", accounts([blocked()]));
+      queryResults.set("v1/socialAccounts:get", () => blocked());
+    });
+
+    it("says why and how instead of history loading and empty metrics (admin)", () => {
+      renderWithOrg(<OrganicView />);
+      const notice = screen.getByRole("status", {
+        name: "Instagram analytics need one more permission",
+      });
+      expect(
+        within(notice).getByRole("heading", {
+          level: 2,
+          name: "Instagram analytics need one more permission",
+        }),
+      ).toBeInTheDocument();
+      expect(notice).toHaveTextContent(
+        "Add instagram_manage_insights to the Meta login configuration, then reconnect Instagram on Connections. Direct messages keep working meanwhile.",
+      );
+      expect(within(notice).getByRole("link", { name: "Open Connections" })).toHaveAttribute(
+        "href",
+        "/connections",
+      );
+      expect(notice).not.toHaveTextContent("Ask an admin");
+      // The account stays identified; nothing that could only show "—" is rendered or queried.
+      expect(screen.getByTestId("social-account-summary")).toHaveTextContent("@mock_1");
+      expect(screen.queryByRole("generic", { name: "History loading" })).toBeNull();
+      expect(screen.queryByText(/History loading/)).toBeNull();
+      expect(screen.queryByTestId("organic-totals")).toBeNull();
+      expect(screen.queryByTestId("filter-bar")).toBeNull();
+      expect(screen.queryByRole("img", { name: "Views by day (UTC)" })).toBeNull();
+      expect(screen.queryByText(/Data not synced/)).toBeNull();
+      expect(lastArgs("v1/organicAnalytics:overview")).toBeUndefined();
+      expect(lastArgs("v1/organicAnalytics:accountSeries")).toBeUndefined();
+      expect(lastArgs("v1/socialPosts:list")).toBeUndefined();
+    });
+
+    it.each(["editor", "viewer"] as const)("asks a %s to get an admin to reconnect", (role) => {
+      renderWithOrg(<OrganicView />, { ...ORG, role });
+      const notice = screen.getByRole("status", {
+        name: "Instagram analytics need one more permission",
+      });
+      expect(notice).toHaveTextContent("Ask an admin to reconnect Instagram.");
+      expect(within(notice).queryByRole("link")).toBeNull();
+      expect(screen.queryByRole("link", { name: "Open Connections" })).toBeNull();
+    });
+
+    it("only the affected account: another account in the picker renders its data", () => {
+      queryResults.set(
+        "v1/socialAccounts:list",
+        accounts([blocked(), socialAccount({ id: SOCIAL_ACCOUNT_ID_2, username: "mock_small" })]),
+      );
+      queryResults.set("v1/socialAccounts:get", (args: Record<string, unknown>) =>
+        args.socialAccountId === SOCIAL_ACCOUNT_ID_2
+          ? socialAccount({ id: SOCIAL_ACCOUNT_ID_2, organicSync: "active" })
+          : blocked(),
+      );
+      setUrl("/social", `account=${SOCIAL_ACCOUNT_ID_2}`);
+      renderWithOrg(<OrganicView />);
+      expect(screen.queryByTestId("insights-permission-notice")).toBeNull();
+      expect(screen.getByTestId("organic-totals")).toBeInTheDocument();
+      expect(lastArgs("v1/organicAnalytics:overview")).toMatchObject({
+        socialAccountIds: [SOCIAL_ACCOUNT_ID_2],
+      });
+    });
+  });
+
   it("a failed section shows the mapped error without breaking the page", () => {
     queryResults.set("v1/organicAnalytics:overview", () => {
       throw apiError("INVALID_ARGUMENT", "Too many rows", { reason: "too_many_rows" });

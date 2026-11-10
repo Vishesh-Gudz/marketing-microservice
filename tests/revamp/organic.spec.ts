@@ -1,5 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
-import { expect, settled, test } from "./support";
+import { withInsightsPermissionMissing } from "./fixtures";
+import { expect, settled, test, volatile } from "./support";
 
 // The organic pages (revamp Phase 8): Instagram and YouTube read top to bottom like the paid
 // workspaces, post rows carry a type glyph (never media from the platform), and no page
@@ -66,6 +67,47 @@ test.describe("large screens", () => {
     ).toHaveAttribute("href", "/connections");
   });
 });
+
+// O2: an Instagram account whose Unified Login connection lacks instagram_manage_insights
+// (answered on the socket, fixtures.ts) explains why instead of showing empty metrics.
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 375, height: 812 },
+]) {
+  test.describe(`missing insights permission at ${viewport.width} px`, () => {
+    test.use({ viewport });
+
+    test("says why and how, with no empty metrics, chart or posts", async ({ page }) => {
+      await withInsightsPermissionMissing(page);
+      await page.goto("/social");
+      await settled(page);
+      const notice = page.getByRole("status", {
+        name: "Instagram analytics need one more permission",
+      });
+      await expect(notice).toBeVisible();
+      await expect(notice).toContainText(
+        "Add instagram_manage_insights to the Meta login configuration, then reconnect Instagram on Connections. Direct messages keep working meanwhile.",
+      );
+      await expect(notice.getByRole("link", { name: "Open Connections" })).toHaveAttribute(
+        "href",
+        "/connections",
+      );
+      // The notice follows the account it is about.
+      expect(await top(notice)).toBeGreaterThan(
+        await top(page.getByTestId("social-account-picker")),
+      );
+      for (const testId of ["filter-bar", "organic-totals", "organic-series"]) {
+        await expect(page.getByTestId(testId)).toHaveCount(0);
+      }
+      await expect(page.getByText(/History loading|Data not synced/)).toHaveCount(0);
+      await noSidewaysScroll(page);
+      await expect(page).toHaveScreenshot(`social-insights-permission-${viewport.width}.png`, {
+        fullPage: true,
+        mask: volatile(page),
+      });
+    });
+  });
+}
 
 test.describe("phones", () => {
   test.use({ viewport: { width: 375, height: 812 } });

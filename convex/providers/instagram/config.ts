@@ -62,6 +62,11 @@ export const UNIFIED_BASIC_PERMISSION = "instagram_basic";
 /** [doc] Sending and receiving messages under Unified Login. */
 export const UNIFIED_MESSAGING_PERMISSION = "instagram_manage_messages";
 /**
+ * [doc] Account and media insights under Unified Login (Facebook-login path; besides
+ * `instagram_basic`). Organic sync of a Unified Login connection runs only when it was granted.
+ */
+export const UNIFIED_INSIGHTS_PERMISSION = "instagram_manage_insights";
+/**
  * [doc] Webhook fields listed for Unified Login (`message_edit` and `message_echoes` are not
  * listed, so they are not requested; echoes are expected under `messages`).
  */
@@ -92,6 +97,18 @@ export function isUnifiedInstagramGrant(grantedScopes: readonly string[]): boole
   return (
     grantedScopes.includes(UNIFIED_BASIC_PERMISSION) &&
     !grantedScopes.includes("instagram_business_basic")
+  );
+}
+
+/**
+ * O1: whether an Instagram connection may run organic sync. Instagram Login connections always
+ * may (their insights scope is required at connect); a Unified Login connection only when it was
+ * granted `instagram_manage_insights`. Without it the account gets no sync schedule and a
+ * leftover one is parked: no failing runs, no reconnect banner.
+ */
+export function instagramOrganicSyncAllowed(grantedScopes: readonly string[]): boolean {
+  return (
+    !isUnifiedInstagramGrant(grantedScopes) || grantedScopes.includes(UNIFIED_INSIGHTS_PERMISSION)
   );
 }
 

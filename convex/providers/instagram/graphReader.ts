@@ -1,7 +1,13 @@
 import type { SocialAccountType } from "../../domain/types";
 import { addDays, type DateKey } from "../../lib/dates";
 import type { ProviderOperation } from "../types";
-import { GRAPH_ORIGIN, INSTAGRAM_GRAPH_VERSION, isInstagramId } from "./config";
+import {
+  GRAPH_ORIGIN,
+  INSTAGRAM_GRAPH_VERSION,
+  isInstagramId,
+  UNIFIED_GRAPH_ORIGIN,
+  UNIFIED_GRAPH_VERSION,
+} from "./config";
 import { classifyInstagramFailure, instagramError, instagramProviderError } from "./errors";
 import {
   ACCOUNT_INSIGHT_METRICS,
@@ -32,6 +38,10 @@ import { READER_IDENTITY_FIELDS, sendInstagram, type RequestBudget } from "./tra
  *                          &breakdown=follow_type
  * Insight values are returned under Instagram's metric names; a metric Instagram does not
  * report is simply absent ([doc] "empty data set instead of 0"). Mapping is ./mapping.ts.
+ *
+ * O1: with `graph: "unified"` the same insight reads go to graph.facebook.com/v26.0 (Unified
+ * Login), on that host's own "graph_reader" routes (transport.ts); readPostInsights then asks
+ * for the Unified metric list (./unifiedOrganic.ts). readIdentity has no Unified route.
  */
 
 export type InstagramIdentity = {
@@ -165,11 +175,19 @@ function breakdownValues(
   return values;
 }
 
-const POST_METRICS = new Set(READER_POST_METRICS);
 const ACCOUNT_METRICS = new Set(ACCOUNT_INSIGHT_METRICS);
 const FOLLOWS = new Set([FOLLOWS_METRIC]);
 
-export function createInstagramGraphReader(options: { timeoutMs: number }) {
+/** The Graph a reader talks to: Instagram Login (default) or Unified Login (O1). */
+export type ReaderGraph = "instagram_login" | "unified";
+
+const GRAPHS: Readonly<Record<ReaderGraph, { origin: string; version: string }>> = {
+  instagram_login: { origin: GRAPH_ORIGIN, version: INSTAGRAM_GRAPH_VERSION },
+  unified: { origin: UNIFIED_GRAPH_ORIGIN, version: UNIFIED_GRAPH_VERSION },
+};
+
+export function createInstagramGraphReader(options: { timeoutMs: number; graph?: ReaderGraph }) {
+  const { origin, version } = GRAPHS[options.graph ?? "instagram_login"];
   async function get(url: URL, accessToken: string, call: ReaderCall): Promise<unknown> {
     const result = await sendInstagram(
       "graph_reader",
@@ -194,7 +212,7 @@ export function createInstagramGraphReader(options: { timeoutMs: number }) {
     if (!isInstagramId(id)) {
       throw instagramError("invalid_request", call.operation, "id_invalid", "Invalid id");
     }
-    const url = new URL(`${GRAPH_ORIGIN}/${INSTAGRAM_GRAPH_VERSION}/${id}/insights`);
+    const url = new URL(`${origin}/${version}/${id}/insights`);
     for (const [name, value] of Object.entries(params)) url.searchParams.set(name, value);
     return url;
   }
@@ -202,7 +220,7 @@ export function createInstagramGraphReader(options: { timeoutMs: number }) {
   return Object.freeze({
     /** GET /v25.0/me?fields=user_id,username,account_type */
     async readIdentity(accessToken: string, call: ReaderCall): Promise<InstagramIdentity> {
-      const url = new URL(`${GRAPH_ORIGIN}/${INSTAGRAM_GRAPH_VERSION}/me`);
+      const url = new URL(`${origin}/${version}/me`);
       url.searchParams.set("fields", READER_IDENTITY_FIELDS);
       const body = await get(url, accessToken, call);
       const raw = parseRaw(rawIdentity, body, call.operation, "identity", call.stage);
@@ -229,23 +247,27 @@ export function createInstagramGraphReader(options: { timeoutMs: number }) {
       return { userId, ...(username !== undefined ? { username } : {}), accountType };
     },
 
-    /** [doc] Lifetime `views` / `total_interactions` of one media item (1 request). */
+    /**
+     * [doc] Lifetime `views` / `total_interactions` of one media item (1 request); `metrics`
+     * replaces the list only for the Unified Login request (O1).
+     */
     async readPostInsights(
       accessToken: string,
       mediaId: string,
       call: ReaderCall,
+      metrics: readonly string[] = READER_POST_METRICS,
     ): Promise<Record<string, number>> {
       const url = insightsUrl(
         mediaId,
         {
-          metric: READER_POST_METRICS.join(","),
+          metric: metrics.join(","),
           period: "lifetime",
         },
         call,
       );
       const entries = insightEntries(
         await get(url, accessToken, call),
-        POST_METRICS,
+        new Set(metrics),
         call.operation,
       );
       const values: Record<string, number> = {};

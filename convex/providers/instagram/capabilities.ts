@@ -16,7 +16,8 @@ import { INSTAGRAM_ACCOUNT_METRICS, INSTAGRAM_POST_METRICS } from "./semantics";
  * - request budget                 approved I-D6: 3 requests per post per day (2 SDK + 1 reader),
  *                                  at most 3 in flight, 1,000 posts per snapshot task,
  *                                  100 listing pages (10K media limit [doc]), 31 requests
- *                                  per provider call (10 posts x 3 + 1 listing request)
+ *                                  per provider call (10 posts x 3 + 1 listing request);
+ *                                  O1 Unified Login spends 1 per post (10 + 1 = 11)
  */
 export const INSTAGRAM_CAPABILITIES: SocialProviderCapabilities = Object.freeze({
   accountTypes: Object.freeze(["business", "creator"] as const),

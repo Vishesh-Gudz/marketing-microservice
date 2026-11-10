@@ -1,6 +1,11 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
-import { INSTAGRAM_CLOSED, WHATSAPP_CLOSED, withMessagingData } from "./fixtures";
+import {
+  INSTAGRAM_CLOSED,
+  WHATSAPP_CLOSED,
+  withInsightsPermissionMissing,
+  withMessagingData,
+} from "./fixtures";
 import { expect, firstLink, settled, test } from "./support";
 
 // Accessibility (axe: WCAG 2.2 A/AA plus axe's best practices). Each page or open state keeps
@@ -27,6 +32,8 @@ type Case = {
   whatsapp?: Record<string, unknown>;
   /** With `data`: changes to the open Instagram conversation. */
   instagram?: Record<string, unknown>;
+  /** Other socket answers (fixtures.ts), set up before the page loads. */
+  answers?: (page: Page) => Promise<void>;
   /** Open a form, dialog or sheet before the check. */
   open?: (page: Page) => Promise<void>;
 };
@@ -160,6 +167,8 @@ const STATES: Case[] = [
       await page.getByRole("dialog").waitFor();
     },
   },
+  // O2: an Instagram account that cannot sync without instagram_manage_insights.
+  { name: "social-insights-permission", path: "/social", answers: withInsightsPermissionMissing },
 ];
 
 const PHONE: Case[] = [
@@ -184,6 +193,7 @@ const PHONE: Case[] = [
     whatsapp: WHATSAPP_CLOSED,
   },
   { name: "instagram-templates-list", path: "/instagram/messages/templates", data: true },
+  { name: "social-insights-permission", path: "/social", answers: withInsightsPermissionMissing },
   {
     name: "menu-sheet",
     path: "/",
@@ -224,6 +234,7 @@ async function summary(page: Page): Promise<string> {
 
 async function check(page: Page, c: Case, file: string) {
   if (c.data) await withMessagingData(page, c.whatsapp, c.instagram);
+  if (c.answers) await c.answers(page);
   const path = typeof c.path === "string" ? c.path : await c.path(page);
   await page.goto(path);
   if (c.name.endsWith("not-found")) {

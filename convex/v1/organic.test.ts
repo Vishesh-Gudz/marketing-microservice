@@ -118,6 +118,8 @@ describe("v1/socialAccounts", () => {
       followersCount: mockFollowers("1"),
       lastSyncedAt: NOW.toISOString(),
       coverage: { from: "2026-08-30", through: TODAY },
+      // O2: an Instagram Login connection always syncs.
+      organicSync: "active",
     };
     expect(page).toEqual([expected]);
     expect(await as(t).query(api.v1.socialAccounts.get, { socialAccountId: id! })).toEqual(

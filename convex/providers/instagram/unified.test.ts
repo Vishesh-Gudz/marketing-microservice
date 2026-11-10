@@ -385,8 +385,9 @@ describe("discovery and credential separation", () => {
     issuedAt: NOW,
   } as const;
 
-  it("keeps the two credential types apart (organic sync and refresh accept Instagram Login only)", () => {
+  it("keeps the two credential types apart (refresh and the SDK take Instagram Login only; O1 organic sync reads Unified through its own reader)", () => {
     const token = { ...unified, accessToken: `${FAKE_UNIFIED_TOKEN_MARKER}-1` };
+    // Never an Instagram Login credential: the SDK session and token refresh refuse it.
     expect(isInstagramCredential(token)).toBe(false);
     expect(isInstagramUnifiedCredential(token)).toBe(true);
     expect(isInstagramMessagingCredential(token)).toBe(true);
@@ -397,7 +398,7 @@ describe("discovery and credential separation", () => {
     expect(isInstagramCredential({ ...legacy, setup: "unified" })).toBe(false);
   });
 
-  it("discovers the credential's account from the assigned accounts (business, PROVISIONAL)", async () => {
+  it("discovers the credential's account from the assigned accounts (business, PROVISIONAL; organic sync keeps it)", async () => {
     const fake = createFakeUnified();
     stub(fake);
     const code = fake.issueCode();

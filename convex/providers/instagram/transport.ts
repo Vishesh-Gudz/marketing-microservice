@@ -43,10 +43,15 @@ import {
  *                   app token): Meta documents only these GET forms, so they are approved
  *                   secret-in-URL exceptions like the two above (built right before the fetch,
  *                   never logged, persisted or carried by an error)
- * - "graph_reader": GET /v26.0/me/assigned_instagram_accounts?fields=id,username
+ * - "graph_reader": GET /v26.0/me/assigned_instagram_accounts?fields=id,username, and (O1, organic
+ *                   sync) GET /v26.0/{id}?fields=id,username,name,followers_count,media_count,
+ *                   GET /v26.0/{id}/media?fields=<UNIFIED_MEDIA_FIELDS>&limit[&after],
+ *                   GET /v26.0/{id}/insights?metric=<UNIFIED_POST_METRICS>&period=lifetime and
+ *                   the reader's two account day shapes (request A and B below)
  * - "messaging":    POST /v26.0/{id}/subscribed_apps (`subscribed_fields` = messages,
  *                   messaging_seen) and POST /v26.0/{id}/messages (JSON body)
- * - "sdk":          nothing (organic sync never runs on a Unified Login token)
+ * - "sdk":          nothing (the SDK stays Instagram Login only; Unified organic reads use the
+ *                   reader routes above)
  * The token travels as `Authorization: Bearer` here too ([assume] for Unified Login: Meta's
  * samples use the access_token parameter).
  *
@@ -235,6 +240,33 @@ const SDK_ROUTES: readonly RouteSpec[] = [
  *                       breakdown=follow_type, since + until
  * `time_series` and every other breakdown are refused.
  */
+/** Account request A (shared by both setups' readers). */
+const ACCOUNT_DAY_ROUTE: RouteSpec = {
+  segments: [":id", "insights"],
+  params: {
+    metric: metricList(READER_ACCOUNT_METRICS),
+    period: exact("day"),
+    metric_type: exact("total_value"),
+    since: UNIX_SECONDS,
+    until: UNIX_SECONDS,
+  },
+  required: ["metric", "period", "metric_type", "since", "until"],
+};
+
+/** Account request B (shared by both setups' readers). */
+const FOLLOWS_DAY_ROUTE: RouteSpec = {
+  segments: [":id", "insights"],
+  params: {
+    metric: exact(READER_FOLLOWS_METRIC),
+    period: exact("day"),
+    metric_type: exact("total_value"),
+    breakdown: exact(READER_BREAKDOWN),
+    since: UNIX_SECONDS,
+    until: UNIX_SECONDS,
+  },
+  required: ["metric", "period", "metric_type", "breakdown", "since", "until"],
+};
+
 const READER_ROUTES: readonly RouteSpec[] = [
   { segments: ["me"], params: { fields: exact(READER_IDENTITY_FIELDS) }, required: ["fields"] },
   {
@@ -242,29 +274,8 @@ const READER_ROUTES: readonly RouteSpec[] = [
     params: { metric: metricList(READER_MEDIA_METRICS), period: exact("lifetime") },
     required: ["metric", "period"],
   },
-  {
-    segments: [":id", "insights"],
-    params: {
-      metric: metricList(READER_ACCOUNT_METRICS),
-      period: exact("day"),
-      metric_type: exact("total_value"),
-      since: UNIX_SECONDS,
-      until: UNIX_SECONDS,
-    },
-    required: ["metric", "period", "metric_type", "since", "until"],
-  },
-  {
-    segments: [":id", "insights"],
-    params: {
-      metric: exact(READER_FOLLOWS_METRIC),
-      period: exact("day"),
-      metric_type: exact("total_value"),
-      breakdown: exact(READER_BREAKDOWN),
-      since: UNIX_SECONDS,
-      until: UNIX_SECONDS,
-    },
-    required: ["metric", "period", "metric_type", "breakdown", "since", "until"],
-  },
+  ACCOUNT_DAY_ROUTE,
+  FOLLOWS_DAY_ROUTE,
 ];
 
 /**
@@ -311,8 +322,21 @@ const GRAPH_ROUTES: Readonly<Record<Exclude<InstagramCaller, "oauth">, readonly 
 
 /** [doc] The fields of the Unified Login account lookup. */
 export const UNIFIED_ACCOUNT_FIELDS = "id,username";
+/** [doc] O1: the Instagram account profile read under Unified Login (organic preflight). */
+export const UNIFIED_PROFILE_FIELDS = "id,username,name,followers_count,media_count";
+/** [doc] O1: the media listing fields under Unified Login (the SDK's list without username). */
+export const UNIFIED_MEDIA_FIELDS = "id,caption,media_type,media_product_type,permalink,timestamp";
+/**
+ * [doc] O1: ONE lifetime insights request per media item under Unified Login: the five the SDK
+ * reads plus the reader's two (never an ad-inclusive total_* or a deprecated metric).
+ */
+export const UNIFIED_POST_METRICS = "likes,comments,saved,shares,reach,views,total_interactions";
 
-/** Unified Login (graph.facebook.com/v26.0): discovery, the subscription and a text reply. */
+/**
+ * Unified Login (graph.facebook.com/v26.0): discovery, the subscription and a text reply, and
+ * (O1) the organic reads: profile, media pages, one lifetime insights request per post, and the
+ * same two account day requests as the Instagram Login reader.
+ */
 const UNIFIED_GRAPH_ROUTES: Readonly<
   Record<Exclude<InstagramCaller, "oauth">, readonly RouteSpec[]>
 > = {
@@ -322,7 +346,21 @@ const UNIFIED_GRAPH_ROUTES: Readonly<
       params: { fields: exact(UNIFIED_ACCOUNT_FIELDS) },
       required: ["fields"],
     },
+    { segments: [":id"], params: { fields: exact(UNIFIED_PROFILE_FIELDS) }, required: ["fields"] },
+    {
+      segments: [":id", "media"],
+      params: { fields: exact(UNIFIED_MEDIA_FIELDS), limit: PAGE_LIMIT, after: PAGING_CURSOR },
+      required: ["fields", "limit"],
+    },
+    {
+      segments: [":id", "insights"],
+      params: { metric: exact(UNIFIED_POST_METRICS), period: exact("lifetime") },
+      required: ["metric", "period"],
+    },
+    ACCOUNT_DAY_ROUTE,
+    FOLLOWS_DAY_ROUTE,
   ],
+  // The SDK stays Instagram Login only: Unified organic reads go through the reader above.
   sdk: [],
   messaging: [
     {

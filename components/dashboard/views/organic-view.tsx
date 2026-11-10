@@ -13,7 +13,12 @@ import { cn } from "@/lib/utils";
 import { EmptyState } from "../empty-state";
 import { FilterBar } from "../filter-bar";
 import { ReauthBanner } from "../notices";
-import { OrganicCoverageNotice, OrganicFreshness } from "../organic/organic-coverage-note";
+import {
+  InsightsPermissionNotice,
+  OrganicCoverageNotice,
+  OrganicFreshness,
+  organicSyncBlocked,
+} from "../organic/organic-coverage-note";
 import { OrganicKpiGrid, OrganicKpiGridSkeleton } from "../organic/organic-kpi-grid";
 import { OrganicSeriesPanel } from "../organic/organic-series-panel";
 import { SocialAccountPicker } from "../organic/social-account-picker";
@@ -41,7 +46,8 @@ function AccountSummary({ socialAccountId }: { socialAccountId: string }) {
         <Badge variant="secondary">{humanize(data.accountType)}</Badge>
         {!data.linked && <Badge variant="outline">Unlinked — history only</Badge>}
       </div>
-      <OrganicFreshness account={data} />
+      {/* O2: an account that cannot sync gets the permission notice instead (OrganicView). */}
+      {!organicSyncBlocked(data) && <OrganicFreshness account={data} />}
     </div>
   );
 }
@@ -144,6 +150,25 @@ export function OrganicView({ switcher }: { switcher?: ReactNode } = {}) {
     );
   }
 
+  const identity = (
+    <IdentityBar>
+      {picker}
+      <QueryBoundary resetKey={`account:${selectedId}`} title="Account">
+        <AccountSummary socialAccountId={selectedId} />
+      </QueryBoundary>
+    </IdentityBar>
+  );
+  // O2: the account can never sync as connected: say why instead of an empty, all-"—" page.
+  if (organicSyncBlocked(list.find((account) => account.id === selectedId))) {
+    return (
+      <>
+        {header}
+        {identity}
+        <InsightsPermissionNotice />
+      </>
+    );
+  }
+
   const overviewArgs: OrganicOverviewArgs = {
     range: scope.range,
     ...(scope.compare ? { compare: scope.compare } : {}),
@@ -157,12 +182,7 @@ export function OrganicView({ switcher }: { switcher?: ReactNode } = {}) {
   return (
     <>
       {header}
-      <IdentityBar>
-        {picker}
-        <QueryBoundary resetKey={`account:${selectedId}`} title="Account">
-          <AccountSummary socialAccountId={selectedId} />
-        </QueryBoundary>
-      </IdentityBar>
+      {identity}
       <FilterBar dayBasis="utc" accounts={false} granularity />
       <QueryBoundary resetKey={JSON.stringify(overviewArgs)} title="Key metrics">
         <OrganicTotals args={overviewArgs} />
