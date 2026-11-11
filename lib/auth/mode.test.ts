@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isBareRoot,
   isClerkPublishableKey,
   isPublicAuthPath,
   isPublicInfoPath,
@@ -74,5 +75,20 @@ describe("auth paths", () => {
     expect(isSessionTaskPath("/session-tasks/choose-organization")).toBe(true);
     expect(isSessionTaskPath("/session-tasksx")).toBe(false);
     expect(isSessionTaskPath("/")).toBe(false);
+  });
+});
+
+describe("isBareRoot", () => {
+  it("is the site root without a query string", () => {
+    expect(isBareRoot("/", "")).toBe(true);
+  });
+
+  it.each([
+    ["/", "?platform=youtube"],
+    ["/campaigns", ""],
+    ["/sign-in", ""],
+    ["//", ""],
+  ])("refuses %j with %j", (pathname, search) => {
+    expect(isBareRoot(pathname, search)).toBe(false);
   });
 });

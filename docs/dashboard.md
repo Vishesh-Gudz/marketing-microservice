@@ -19,7 +19,9 @@ disconnect)`) and the org gate's `ensure`.
     invitations and roles on `/organization` (Clerk's embedded organization profile). The Convex
     token is Clerk's `convex` JWT template for the active organization
     (`lib/auth/use-clerk-convex-auth.ts`); `proxy.ts` sends visitors to sign-in or to choose an
-    organization, as a navigation convenience only: Convex verifies every call. Without a valid
+    organization, as a navigation convenience only: Convex verifies every call. Sign-in is always
+    the app's own `/sign-in` page, never Clerk's hosted one: the bare site address (`/`, no query)
+    opens `/sign-in` directly, and any other page adds a `redirect_url` back to itself. Without a valid
     `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` the dashboard stays signed out ("Not signed in").
   - **Dev token** (a development build with `NEXT_PUBLIC_DEV_AUTH_TOKEN`, minted by
     `npm run dev:auth setup` for org `dev-org`, role `admin`): Clerk is not loaded at all. Local

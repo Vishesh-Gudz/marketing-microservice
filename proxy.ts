@@ -3,9 +3,12 @@ import { NextResponse, type NextFetchEvent, type NextRequest } from "next/server
 import { CLERK_ENABLED } from "@/lib/auth/config";
 import {
   CHOOSE_ORGANIZATION_PATH,
+  isBareRoot,
   isPublicAuthPath,
   isPublicInfoPath,
   isSessionTaskPath,
+  SIGN_IN_PATH,
+  SIGN_UP_PATH,
 } from "@/lib/auth/mode";
 
 // Next.js 16 "proxy" (formerly middleware). With Clerk configured it keeps the session in sync
@@ -13,21 +16,33 @@ import {
 // organization yet, D5). This is a navigation convenience, not the security boundary: every
 // Convex call verifies the token and the organization itself. Dev-token builds and builds
 // without Clerk keys pass every request through untouched.
+//
+// Sign-in is the app's own /sign-in page (the same one ClerkProvider uses), never Clerk's hosted
+// Account Portal: without `signInUrl` here, redirectToSignIn falls back to the hosted page.
 
 const clerk =
   CLERK_ENABLED && process.env.CLERK_SECRET_KEY
-    ? clerkMiddleware(async (auth, request) => {
-        const path = request.nextUrl.pathname;
-        // Sign-in / sign-up, and the Privacy Policy and Data Deletion pages (public by design).
-        if (isPublicAuthPath(path) || isPublicInfoPath(path)) return;
-        const { userId, sessionStatus, redirectToSignIn } = await auth({
-          treatPendingAsSignedOut: false,
-        });
-        if (!userId) return redirectToSignIn({ returnBackUrl: request.url });
-        if (sessionStatus === "pending" && !isSessionTaskPath(path)) {
-          return NextResponse.redirect(new URL(CHOOSE_ORGANIZATION_PATH, request.url));
-        }
-      })
+    ? clerkMiddleware(
+        async (auth, request) => {
+          const path = request.nextUrl.pathname;
+          // Sign-in / sign-up, and the Privacy Policy and Data Deletion pages (public by design).
+          if (isPublicAuthPath(path) || isPublicInfoPath(path)) return;
+          const { userId, sessionStatus, redirectToSignIn } = await auth({
+            treatPendingAsSignedOut: false,
+          });
+          if (!userId) {
+            // The bare site address opens the sign-in page itself (a clean /sign-in URL).
+            if (isBareRoot(path, request.nextUrl.search)) {
+              return NextResponse.redirect(new URL(SIGN_IN_PATH, request.url));
+            }
+            return redirectToSignIn({ returnBackUrl: request.url });
+          }
+          if (sessionStatus === "pending" && !isSessionTaskPath(path)) {
+            return NextResponse.redirect(new URL(CHOOSE_ORGANIZATION_PATH, request.url));
+          }
+        },
+        { signInUrl: SIGN_IN_PATH, signUpUrl: SIGN_UP_PATH },
+      )
     : null;
 
 export default function proxy(request: NextRequest, event: NextFetchEvent) {

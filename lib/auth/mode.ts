@@ -33,6 +33,14 @@ function under(pathname: string, base: string): boolean {
   return pathname === base || pathname.startsWith(`${base}/`);
 }
 
+/**
+ * The site root with no query string. A signed-out visitor there goes straight to the sign-in
+ * page without a return URL: after signing in they land on "/" anyway.
+ */
+export function isBareRoot(pathname: string, search: string): boolean {
+  return pathname === "/" && search === "";
+}
+
 /** Pages anyone may open without a session (Clerk's own sign-in and sign-up flows). */
 export function isPublicAuthPath(pathname: string): boolean {
   return under(pathname, SIGN_IN_PATH) || under(pathname, SIGN_UP_PATH);
